@@ -22,6 +22,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
+  IconCpu,
   IconEdit,
   IconEye,
   IconPlus,
@@ -37,6 +38,10 @@ type Host = {
   ip_address: string;
   ssh_port: number;
   os_type: string;
+  node_role: "standalone" | "control_plane" | "worker";
+  baseline_state: "unknown" | "fresh" | "prepared" | "initialized";
+  last_detection_at?: string | null;
+  baseline_facts?: Record<string, boolean>;
   enabled: boolean;
   credential: number | null;
   credential_name?: string;
@@ -48,6 +53,7 @@ type HostFormData = {
   ip_address: string;
   ssh_port: number;
   os_type: string;
+  node_role: "standalone" | "control_plane" | "worker";
   enabled: boolean;
   credential: number | null;
 };
@@ -67,6 +73,7 @@ const emptyForm: HostFormData = {
   ip_address: "",
   ssh_port: 22,
   os_type: "",
+  node_role: "standalone",
   enabled: true,
   credential: null,
 };
@@ -83,12 +90,27 @@ export default function HostsList() {
   const [loadingHosts, setLoadingHosts] = useState(true);
   const [loadingCredentials, setLoadingCredentials] = useState(true);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [detectingId, setDetectingId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
   const enabledHostsCount = useMemo(
     () => hosts.filter((host) => host.enabled).length,
     [hosts]
   );
+
+  const filteredHosts = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return hosts;
+    }
+
+    return hosts.filter((host) =>
+      [host.name, host.hostname, host.ip_address, host.credential_name, host.node_role]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query))
+    );
+  }, [hosts, search]);
 
   async function fetchHosts() {
     setLoadingHosts(true);
@@ -152,6 +174,7 @@ export default function HostsList() {
       ip_address: host.ip_address,
       ssh_port: host.ssh_port,
       os_type: host.os_type,
+      node_role: host.node_role,
       enabled: host.enabled,
       credential: host.credential,
     });
@@ -215,6 +238,10 @@ export default function HostsList() {
   }
 
   async function handleDelete(id: number) {
+    if (!window.confirm("Delete this host from the inventory?")) {
+      return;
+    }
+
     setDeletingId(id);
     setError("");
     try {
@@ -249,6 +276,47 @@ export default function HostsList() {
     }
   }
 
+  function getBaselineColor(state: Host["baseline_state"]) {
+    if (state === "prepared") {
+      return "teal";
+    }
+    if (state === "initialized") {
+      return "yellow";
+    }
+    if (state === "fresh") {
+      return "blue";
+    }
+    return "gray";
+  }
+
+  async function handleDetectState(host: Host) {
+    setDetectingId(host.id);
+    setError("");
+
+    try {
+      const response = await fetch(`${BASE_URL}/api/hosts/${host.id}/detect/`, {
+        method: "POST",
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Host state detection failed.");
+      }
+
+      notifications.show({
+        title: "Detection completed",
+        message: `${host.name} detected as ${data.host?.baseline_state || "unknown"}.`,
+        color: "teal",
+      });
+
+      await fetchHosts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Host state detection failed.");
+    } finally {
+      setDetectingId(null);
+    }
+  }
+
   return (
     <Container size="xl" py="xl">
       <Stack gap="lg">
@@ -273,6 +341,9 @@ export default function HostsList() {
                 </Badge>
                 <Badge color="teal" variant="light">
                   Enabled: {enabledHostsCount}
+                </Badge>
+                <Badge color="blue" variant="light">
+                  Prepared: {hosts.filter((host) => host.baseline_state === "prepared").length}
                 </Badge>
                 <Badge color="gray" variant="outline">
                   Credentials: {credentials.length}
@@ -316,13 +387,19 @@ export default function HostsList() {
               </Badge>
             </Group>
 
+            <TextInput
+              placeholder="Search by name, IP, hostname, role, or credential"
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+            />
+
             {loadingHosts ? (
               <Text c="dimmed">Loading hosts...</Text>
-            ) : hosts.length === 0 ? (
+            ) : filteredHosts.length === 0 ? (
               <Text c="dimmed">No hosts found.</Text>
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-                {hosts.map((host) => (
+                {filteredHosts.map((host) => (
                   <Card key={host.id} className="host-panel" padding="lg">
                     <Stack gap="sm">
                       <Group justify="space-between" align="flex-start">
@@ -338,6 +415,17 @@ export default function HostsList() {
                         <Badge color={host.enabled ? "teal" : "gray"} variant="light">
                           {host.enabled ? "enabled" : "disabled"}
                         </Badge>
+                      </Group>
+
+                      <Group gap="xs">
+                        <Badge color={getBaselineColor(host.baseline_state)} variant="light">
+                          {host.baseline_state}
+                        </Badge>
+                        {host.last_detection_at && (
+                          <Text size="xs" c="dimmed">
+                            detected {new Date(host.last_detection_at).toLocaleString()}
+                          </Text>
+                        )}
                       </Group>
 
                       <Box className="terminal-code">
@@ -362,6 +450,10 @@ export default function HostsList() {
                             <Table.Td>{host.os_type || "-"}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
+                            <Table.Td c="dimmed">Role</Table.Td>
+                            <Table.Td>{host.node_role}</Table.Td>
+                          </Table.Tr>
+                          <Table.Tr>
                             <Table.Td c="dimmed">Credential</Table.Td>
                             <Table.Td>{host.credential_name || "-"}</Table.Td>
                           </Table.Tr>
@@ -369,6 +461,14 @@ export default function HostsList() {
                       </Table>
 
                       <Group grow>
+                        <Button
+                          variant="default"
+                          leftSection={<IconCpu size={16} />}
+                          onClick={() => void handleDetectState(host)}
+                          loading={detectingId === host.id}
+                        >
+                          Detect
+                        </Button>
                         <Button
                           variant="default"
                           leftSection={<IconEye size={16} />}
@@ -452,6 +552,23 @@ export default function HostsList() {
             />
 
             <Select
+              label="Node Role"
+              data={[
+                { value: "standalone", label: "Standalone" },
+                { value: "control_plane", label: "Control Plane" },
+                { value: "worker", label: "Worker" },
+              ]}
+              value={formData.node_role}
+              onChange={(value) =>
+                handleChange(
+                  "node_role",
+                  (value as HostFormData["node_role"]) || "standalone"
+                )
+              }
+              allowDeselect={false}
+            />
+
+            <Select
               label="Credential"
               placeholder={loadingCredentials ? "Loading credentials..." : "Select a credential"}
               data={credentials.map((credential) => ({
@@ -524,8 +641,28 @@ export default function HostsList() {
                   <Table.Td>{selectedHost.os_type || "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
+                  <Table.Td c="dimmed">Node Role</Table.Td>
+                  <Table.Td>{selectedHost.node_role}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
                   <Table.Td c="dimmed">Credential</Table.Td>
                   <Table.Td>{selectedHost.credential_name || "-"}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td c="dimmed">Baseline State</Table.Td>
+                  <Table.Td>
+                    <Badge color={getBaselineColor(selectedHost.baseline_state)} variant="light">
+                      {selectedHost.baseline_state}
+                    </Badge>
+                  </Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td c="dimmed">Last Detection</Table.Td>
+                  <Table.Td>
+                    {selectedHost.last_detection_at
+                      ? new Date(selectedHost.last_detection_at).toLocaleString()
+                      : "-"}
+                  </Table.Td>
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td c="dimmed">Status</Table.Td>
@@ -539,6 +676,14 @@ export default function HostsList() {
             </Table>
 
             <Group justify="flex-end">
+              <Button
+                variant="default"
+                leftSection={<IconCpu size={16} />}
+                onClick={() => void handleDetectState(selectedHost)}
+                loading={detectingId === selectedHost.id}
+              >
+                Detect State
+              </Button>
               <Button
                 variant="default"
                 leftSection={<IconEdit size={16} />}

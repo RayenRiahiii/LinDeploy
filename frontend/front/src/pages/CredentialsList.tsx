@@ -69,7 +69,7 @@ function maskSecret(value: string) {
     return "-";
   }
 
-  return "•".repeat(Math.min(10, Math.max(4, value.length)));
+  return "*".repeat(Math.min(10, Math.max(4, value.length)));
 }
 
 export default function CredentialsList() {
@@ -83,6 +83,7 @@ export default function CredentialsList() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
   const passwordAuthCount = useMemo(
     () => credentials.filter((credential) => credential.auth_type === "password").length,
@@ -93,6 +94,18 @@ export default function CredentialsList() {
     () => credentials.filter((credential) => credential.auth_type === "ssh_key").length,
     [credentials]
   );
+
+  const filteredCredentials = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return credentials;
+    }
+
+    return credentials.filter((credential) =>
+      [credential.name, credential.username, credential.auth_type]
+        .some((value) => value.toLowerCase().includes(query))
+    );
+  }, [credentials, search]);
 
   async function fetchCredentials() {
     setLoadingCredentials(true);
@@ -206,6 +219,10 @@ export default function CredentialsList() {
   }
 
   async function handleDelete(id: number) {
+    if (!window.confirm("Delete this credential?")) {
+      return;
+    }
+
     setDeletingId(id);
     setError("");
     try {
@@ -307,13 +324,19 @@ export default function CredentialsList() {
               </Badge>
             </Group>
 
+            <TextInput
+              placeholder="Search by credential name, username, or auth type"
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+            />
+
             {loadingCredentials ? (
               <Text c="dimmed">Loading credentials...</Text>
-            ) : credentials.length === 0 ? (
+            ) : filteredCredentials.length === 0 ? (
               <Text c="dimmed">No credentials found.</Text>
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-                {credentials.map((credential) => (
+                {filteredCredentials.map((credential) => (
                   <Card key={credential.id} className="host-panel" padding="lg">
                     <Stack gap="sm">
                       <Group justify="space-between" align="flex-start">

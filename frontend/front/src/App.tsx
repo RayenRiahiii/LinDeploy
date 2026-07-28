@@ -37,7 +37,7 @@ export default function App() {
                   auto-K8S
                 </Title>
                 <Text c="dimmed" size="sm" mt={8}>
-                  Kubernetes automation workspace for host inventory and controlled rollout.
+                  Cluster automation workspace for host inventory, installer selection, and controlled rollout.
                 </Text>
               </div>
 
@@ -72,7 +72,7 @@ export default function App() {
                   justify="space-between"
                   rightSection={<Text size="xs">Execution</Text>}
                 >
-                  Run Playbook
+                  Installers
                 </Button>
               </Stack>
             </Stack>
@@ -88,21 +88,21 @@ export default function App() {
                     ? "Infrastructure Inventory"
                     : page === "credentials"
                       ? "Access Management"
-                      : "Execution Console"}
+                      : "Installer Console"}
                 </Badge>
                 <Title order={2} className="hero-title">
                   {page === "hosts"
                     ? "Manage targets with a clean operator workflow"
                     : page === "credentials"
                       ? "Maintain reusable SSH credentials safely and clearly"
-                      : "Launch Kubernetes installation with traceable output"}
+                      : "Launch cluster installers with a future-ready workflow"}
                 </Title>
                 <Text c="dimmed" maw={760}>
                   {page === "hosts"
                     ? "Review host definitions, credentials linkage, and machine properties from a structured CRUD workspace."
                     : page === "credentials"
                       ? "Create and edit password-based or key-based SSH credentials used by your host inventory."
-                      : "Run the selected playbook on approved targets, inspect timings, and read exact Ansible output from one place."}
+                      : "Choose an installer, apply the required configuration, monitor execution live, and inspect exact automation output from one place."}
                 </Text>
               </Stack>
 
@@ -113,7 +113,7 @@ export default function App() {
                     ? "hosts_registry"
                     : page === "credentials"
                       ? "credentials_vault"
-                      : "playbook_runner"}
+                      : "installer_runner"}
                 </Text>
               </Box>
             </Group>
