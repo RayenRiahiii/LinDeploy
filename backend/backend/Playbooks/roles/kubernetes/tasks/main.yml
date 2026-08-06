@@ -1,0 +1,135 @@
+---
+# ==================================================
+# 1. Add official Kubernetes repository
+# ==================================================
+- name: Add Kubernetes repository
+  yum_repository:
+    name: "{{ kubernetes_repo_name }}"
+    description: "{{ kubernetes_repo_description }}"
+    baseurl: "{{ kubernetes_repo_baseurl }}"
+    enabled: true
+    gpgcheck: true
+    gpgkey: "{{ kubernetes_repo_gpgkey }}"
+    exclude: "{{ kubernetes_repo_exclude | join(' ') }}"
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Ensure Kubernetes apt keyring directory exists
+  file:
+    path: "{{ kubernetes_apt_keyring_dir }}"
+    state: directory
+    mode: "0755"
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Check Kubernetes apt repository key age
+  stat:
+    path: "{{ kubernetes_apt_keyring_path }}.asc"
+  register: kubernetes_apt_repo_key_stat
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Download Kubernetes apt repository key
+  get_url:
+    url: "{{ kubernetes_apt_repo_key_url }}"
+    dest: "{{ kubernetes_apt_keyring_path }}.asc"
+    mode: "0644"
+    timeout: "{{ kubernetes_repo_download_timeout }}"
+    force: true
+  register: kubernetes_apt_repo_key_download
+  until: kubernetes_apt_repo_key_download is succeeded
+  retries: "{{ kubernetes_repo_download_retries }}"
+  delay: "{{ kubernetes_repo_download_retry_delay }}"
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - >
+      (not kubernetes_apt_repo_key_stat.stat.exists | default(false))
+      or
+      (
+        (lookup('pipe', 'date +%s') | int) - (kubernetes_apt_repo_key_stat.stat.mtime | default(0) | int)
+      ) >= (kubernetes_apt_repo_key_refresh_max_age_seconds | int)
+
+- name: Check Kubernetes apt keyring state
+  stat:
+    path: "{{ kubernetes_apt_keyring_path }}"
+  register: kubernetes_apt_keyring_stat
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Convert Kubernetes apt repository key to gpg keyring
+  command:
+    cmd: "gpg --dearmor --yes -o {{ kubernetes_apt_keyring_path }} {{ kubernetes_apt_keyring_path }}.asc"
+  register: kubernetes_apt_keyring_convert
+  changed_when: kubernetes_apt_keyring_convert.rc == 0
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - >
+      (kubernetes_apt_repo_key_download is defined and kubernetes_apt_repo_key_download.changed | default(false))
+      or
+      (not kubernetes_apt_keyring_stat.stat.exists | default(false))
+
+- name: Add Kubernetes apt repository
+  apt_repository:
+    repo: "deb [signed-by={{ kubernetes_apt_keyring_path }}] {{ kubernetes_apt_repo_url }} /"
+    filename: kubernetes
+    state: present
+    update_cache: false
+  register: kubernetes_apt_repository
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Refresh apt cache when Kubernetes repository state changed
+  apt:
+    update_cache: true
+    cache_valid_time: 0
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - >
+      (kubernetes_apt_repo_key_download is defined and kubernetes_apt_repo_key_download.changed | default(false))
+      or
+      (kubernetes_apt_keyring_convert is defined and kubernetes_apt_keyring_convert.changed | default(false))
+      or
+      (kubernetes_apt_repository is defined and kubernetes_apt_repository.changed | default(false))
+
+# ==================================================
+# 2. Install kubelet, kubeadm and kubectl
+# ==================================================
+- name: Install Kubernetes packages
+  dnf:
+    name: "{{ kubernetes_packages }}"
+    state: present
+    update_cache: "{{ kubernetes_redhat_update_cache }}"
+    disable_excludes: "{{ kubernetes_repo_name }}"
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Install Kubernetes packages on Debian family
+  apt:
+    name: "{{ kubernetes_packages }}"
+    state: present
+    lock_timeout: "{{ kubernetes_apt_lock_timeout }}"
+    update_cache: false
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Read currently held Debian packages
+  command: apt-mark showhold
+  register: kubernetes_apt_mark_showhold
+  changed_when: false
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Track Debian Kubernetes packages that still need hold
+  set_fact:
+    kubernetes_packages_to_hold: "{{ kubernetes_packages | difference(kubernetes_apt_mark_showhold.stdout_lines | default([])) }}"
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Hold Kubernetes packages on Debian family
+  command:
+    argv: "{{ ['apt-mark', 'hold'] + (kubernetes_packages_to_hold | default([])) }}"
+  changed_when: true
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - (kubernetes_packages_to_hold | default([]) | length) > 0
+
+# ==================================================
+# 3. Enable and start kubelet
+# ==================================================
+- name: Enable and start kubelet
+  systemd:
+    name: "{{ kubernetes_kubelet_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true

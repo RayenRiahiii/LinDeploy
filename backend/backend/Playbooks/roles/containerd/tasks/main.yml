@@ -1,0 +1,172 @@
+---
+# ==================================================
+# 1. Install tools required to manage repositories
+# ==================================================
+- name: Install dnf plugins
+  dnf:
+    name: dnf-plugins-core
+    state: present
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Ensure apt keyrings directory exists
+  file:
+    path: "{{ containerd_apt_keyring_dir }}"
+    state: directory
+    mode: "0755"
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Check Docker apt repository key age
+  stat:
+    path: "{{ containerd_apt_keyring_path }}"
+  register: containerd_apt_keyring_stat
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Download Docker apt repository key
+  get_url:
+    url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
+    dest: "{{ containerd_apt_keyring_path }}"
+    mode: "0644"
+    force: true
+  register: containerd_apt_key_download
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - >
+      (not containerd_apt_keyring_stat.stat.exists | default(false))
+      or
+      (
+        (lookup('pipe', 'date +%s') | int) - (containerd_apt_keyring_stat.stat.mtime | default(0) | int)
+      ) >= (containerd_apt_key_refresh_max_age_seconds | int)
+
+# ==================================================
+# 2. Add Docker repository for containerd.io
+# ==================================================
+- name: Add Docker CE repository
+  yum_repository:
+    name: "{{ containerd_repo_name }}"
+    description: "{{ containerd_repo_description }}"
+    baseurl: "{{ containerd_repo_baseurl }}"
+    enabled: true
+    gpgcheck: true
+    gpgkey: "{{ containerd_repo_gpgkey }}"
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Add Docker apt repository
+  apt_repository:
+    repo: "deb [arch={{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else ansible_facts['architecture'] }} signed-by={{ containerd_apt_keyring_path }}] {{ containerd_apt_repo_url }} {{ containerd_apt_repo_distribution }} {{ containerd_apt_repo_components }}"
+    filename: docker
+    state: present
+    update_cache: false
+  register: containerd_apt_repository
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Refresh apt cache when Docker repository state changed
+  apt:
+    update_cache: true
+    cache_valid_time: 0
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - >
+      (containerd_apt_key_download is defined and containerd_apt_key_download.changed | default(false))
+      or
+      (containerd_apt_repository is defined and containerd_apt_repository.changed | default(false))
+
+# ==================================================
+# 3. Install containerd
+# ==================================================
+- name: Install containerd package
+  dnf:
+    name: "{{ containerd_package_name_redhat }}"
+    state: present
+    update_cache: "{{ containerd_redhat_update_cache }}"
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Install containerd package on Debian family
+  apt:
+    name: "{{ containerd_package_name_debian }}"
+    state: present
+    update_cache: false
+    lock_timeout: "{{ containerd_apt_lock_timeout }}"
+  when: ansible_facts["os_family"] == "Debian"
+
+# ==================================================
+# 4. Ensure containerd config directory exists
+# ==================================================
+- name: Create containerd config directory
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+
+# ==================================================
+# 5. Generate default config.toml
+# ==================================================
+- name: Check existing containerd config
+  stat:
+    path: "{{ containerd_config_path }}"
+  register: containerd_config_stat
+
+- name: Generate default containerd config
+  command: containerd config default
+  register: containerd_default_config
+  changed_when: false
+  when: not containerd_config_stat.stat.exists
+
+- name: Write containerd config
+  copy:
+    dest: "{{ containerd_config_path }}"
+    content: "{{ containerd_default_config.stdout }}"
+    mode: '0644'
+  notify: Restart containerd
+  when: not containerd_config_stat.stat.exists
+
+# ==================================================
+# 6. Set SystemdCgroup=true
+# ==================================================
+- name: Enable SystemdCgroup in containerd config
+  replace:
+    path: "{{ containerd_config_path }}"
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  notify: Restart containerd
+
+- name: Re-enable CRI plugin in legacy containerd config
+  replace:
+    path: "{{ containerd_config_path }}"
+    regexp: '^\s*disabled_plugins\s*=\s*\[\s*"cri"\s*\]\s*$'
+    replace: 'disabled_plugins = []'
+  notify: Restart containerd
+
+# ==================================================
+# 7. Enable and start containerd service
+# ==================================================
+- name: Enable and start containerd
+  systemd:
+    name: "{{ containerd_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ==================================================
+# 8. Apply pending containerd restart before kubeadm
+# ==================================================
+- name: Flush containerd handlers
+  meta: flush_handlers
+
+- name: Wait for containerd socket
+  wait_for:
+    path: "{{ containerd_socket_path }}"
+    state: present
+    timeout: 30
+
+- name: Inspect containerd plugin inventory
+  command: ctr plugins ls
+  register: containerd_plugins
+  changed_when: false
+
+- name: Fail when containerd CRI plugin is unavailable
+  fail:
+    msg: >-
+      containerd is running but the CRI plugin is unavailable. Verify
+      {{ containerd_config_path }} does not disable "cri" and that the installed
+      containerd package supports the CRI v1 runtime API.
+  when: containerd_plugins.stdout is not search('io\.containerd\.grpc\.v1\s+cri\s+')

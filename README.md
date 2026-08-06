@@ -1,139 +1,199 @@
-# Auto-K8S
+# LinDeploy
 
-`Auto-K8S` is a Django + React control plane for launching Ansible-based Kubernetes installation workflows on remote machines.
+LinDeploy is a web control plane for deploying and removing Linux cluster platforms on remote machines through Ansible.
 
-## What It Includes
+The current release supports:
 
-- Django REST API for hosts, credentials, templates, and installation history
-- React + Mantine operator UI for CRUD, SSH verification, and playbook execution
-- Celery + Redis background execution for long-running Ansible tasks
-- Ansible playbook repository integration through either WSL or native Linux
+- Kubernetes with kubeadm, containerd, and Calico;
+- K3s;
+- one independent single-node cluster per selected target;
+- multi-target execution with per-host results and partial-success reporting;
+- SSH connectivity checks before execution;
+- Kubernetes reset and full uninstall workflows;
+- K3s cleanup and uninstall;
+- conflict protection between Kubernetes and K3s;
+- live execution progress, history, cancellation, and diagnostics.
 
-## Project Layout
+OpenShift Single Node is visible in the product roadmap but is not implemented yet.
+
+> **Current maturity:** LinDeploy is suitable for controlled labs, workshops, and development environments. Do not expose it directly to an untrusted network. See [Security](SECURITY.md).
+
+## Architecture
 
 ```text
-auto-K8S/
-  backend/
-    auto_K8S/
-    backend/
-    manage.py
-    requirements.txt
-  frontend/
-    front/
+Browser
+   |
+   v
+React + Vite frontend
+   |
+   v
+Django REST API ---- PostgreSQL or SQLite
+   |
+   v
+Celery worker ---- Redis
+   |
+   v
+Ansible controller (Linux or Windows + WSL)
+   |
+   +---- SSH ---- Target 1 -> independent single-node cluster
+   +---- SSH ---- Target 2 -> independent single-node cluster
+   +---- SSH ---- Target N -> independent single-node cluster
 ```
 
-## Backend Setup
+LinDeploy does **not** currently combine selected hosts into one multi-node cluster. Every selected host receives its own control plane and runs workloads locally.
 
-1. Create and activate a virtual environment:
+## Repository Layout
+
+```text
+LinDeploy/
+|-- backend/
+|   |-- auto_K8S/                 # Django domain models, API, services, tasks
+|   |-- backend/                  # Django project settings and Celery config
+|   |   `-- Playbooks/            # Embedded Ansible repository
+|   |       |-- ansible.cfg
+|   |       |-- playbooks/
+|   |       `-- roles/
+|   |-- manage.py
+|   `-- requirements.txt
+|-- frontend/                     # React, TypeScript, Mantine, Vite
+|   `-- src/
+|       |-- components/           # Reusable CRUD, deployment, host, and credential UI
+|       |-- features/             # Domain catalogs and presentation rules
+|       |-- lib/                  # Shared API helpers
+|       `-- pages/                # Route-level composition only
+|-- docs/
+|   |-- ARCHITECTURE.md
+|   |-- INSTALLATION.md
+|   |-- MANUEL_UTILISATION.md
+|   `-- TROUBLESHOOTING.md
+|-- SECURITY.md
+`-- README.md
+```
+
+The internal Django application is still named `auto_K8S` for migration compatibility. The product and repository name are LinDeploy.
+
+## Supported Controller Modes
+
+- Windows with WSL: Django and the frontend run on Windows; Ansible runs in WSL.
+- Native Linux: Django, Celery, Redis, and Ansible run directly on Linux.
+
+## Supported Targets
+
+The playbooks contain package and service handling for:
+
+- Red Hat family: CentOS Stream 9, Rocky Linux 9, and compatible RHEL 9 systems;
+- Debian family: Ubuntu and compatible Debian-based systems.
+
+The target must provide:
+
+- SSH access;
+- Python 3;
+- a user allowed to use `sudo`;
+- outbound access to the package and container registries used by the selected installer;
+- at least 2 vCPU and 2 GB RAM; 4 vCPU and 4 GB RAM are recommended for a more reliable Kubernetes lab.
+
+## Quick Start
+
+Detailed prerequisites and platform-specific commands are in [Installation Guide](docs/INSTALLATION.md).
+
+### 1. Configure the backend
 
 ```powershell
 cd backend
 python -m venv .venv
-.\.venv\Scripts\activate
-```
-
-2. Install dependencies:
-
-```powershell
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-3. Copy the environment example and adjust values:
-
-```powershell
-copy .env.example .env
-```
-
-4. Run database migrations:
-
-```powershell
+Copy-Item .env.example .env
 python manage.py migrate
-```
-
-5. Start Django:
-
-```powershell
 python manage.py runserver
 ```
 
-## Frontend Setup
+### 2. Start Redis and Celery
 
-1. Install dependencies:
+Redis must be reachable at the URL configured by `CELERY_BROKER_URL`.
 
-```powershell
-cd frontend\front
-npm install
-```
-
-2. Copy the frontend environment example:
+From a second terminal in `backend/`:
 
 ```powershell
-copy .env.example .env
-```
-
-3. Start Vite:
-
-```powershell
-npm run dev
-```
-
-## Redis And Celery
-
-Start Redis, then start the Celery worker from `backend/`:
-
-```powershell
+.\.venv\Scripts\Activate.ps1
 celery -A backend worker --loglevel=info --pool=solo
 ```
 
-`--pool=solo` is recommended on Windows.
+Use the default prefork worker on native Linux:
 
-## Ansible Controller Configuration
-
-The backend expects an Ansible repo root containing:
-
-- `ansible.cfg`
-- `roles/`
-- `playbooks/`
-
-Configure it with `.env`:
-
-```env
-ANSIBLE_RUNNER_BACKEND=wsl
-ANSIBLE_WSL_DISTRO=Ubuntu
-ANSIBLE_REPO_ROOT=C:\Users\ASUS\Desktop\auto-K8S\backend\backend\Playbooks\k8s-single-noded\k8s-single-noded
+```bash
+celery -A backend worker --loglevel=info
 ```
 
-If you run on Linux instead of Windows + WSL:
+### 3. Start the frontend
 
-```env
-ANSIBLE_RUNNER_BACKEND=linux
-ANSIBLE_REPO_ROOT=/opt/k8s-single-noded
+```powershell
+cd frontend
+npm ci
+Copy-Item .env.example .env
+npm run dev
 ```
 
-## Recommended First Run
+Open `http://localhost:5173`.
 
-1. Create credentials
-2. Create hosts and link credentials
-3. Create at least one installation template
-4. Verify SSH from the UI
-5. Launch the playbook
-6. Review installation history, timings, and bottleneck hints
+## First Deployment
 
-## Current Improvements Added
+1. Create an SSH credential.
+2. Register one or more target hosts and associate the credential.
+3. Open **Installers**, then select Kubernetes or K3s.
+4. Select the targets.
+5. Run **Verify SSH**.
+6. Start the playbook.
+7. Follow progress from the deployment monitor.
+8. Review the result for every target.
+9. Use **Reset Cluster**, **Full Uninstall**, or K3s cleanup only when required.
 
-- richer installation tracking in database
-- automatic SSH validation inside the background task
-- dashboard summary endpoint
-- installation history polling in frontend
-- recent timings and bottleneck reporting
-- support for both password and SSH key inventory generation
-- template deployment types (`prepare_node`, `single_node`)
-- host role field for future multi-node support
+See the complete [Manuel d'utilisation](docs/MANUEL_UTILISATION.md).
 
-## Next Recommended Production Work
+## Validation Commands
 
-- encrypt credentials at rest
-- add pagination and filtering to installation history
-- add worker join and control-plane join playbooks
-- use a local package mirror and container registry
-- split node preparation from cluster initialization across all templates
+Backend:
+
+```powershell
+cd backend
+python manage.py check
+python manage.py test
+```
+
+Frontend:
+
+```powershell
+cd frontend
+npm run lint
+npm run build
+```
+
+Ansible from Linux or WSL:
+
+```bash
+cd backend/backend/Playbooks
+ansible-playbook --syntax-check playbooks/k8s_single_node.yml
+ansible-playbook --syntax-check playbooks/k3s_single_node.yml
+ansible-playbook --syntax-check playbooks/k8s_cleanup.yml
+ansible-playbook --syntax-check playbooks/k8s_full_uninstall.yml
+ansible-playbook --syntax-check playbooks/k3s_cleanup.yml
+```
+
+## Documentation
+
+- [Installation and local development](docs/INSTALLATION.md)
+- [Operator manual](docs/MANUEL_UTILISATION.md)
+- [Technical architecture](docs/ARCHITECTURE.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Security policy and current limitations](SECURITY.md)
+
+## Roadmap
+
+- application authentication and role-based access control;
+- encryption of stored credentials;
+- secret redaction and external secret-store integration;
+- one shared multi-node Kubernetes or K3s cluster;
+- HA topology and private registry support;
+- air-gapped installation;
+- OpenShift Single Node provisioning on KVM/libvirt;
+- workshop-level provisioning and teardown for multiple SNO clusters.

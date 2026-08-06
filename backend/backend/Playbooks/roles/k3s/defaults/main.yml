@@ -1,0 +1,108 @@
+---
+k3s_install_script_url: https://get.k3s.io
+k3s_install_script_checksum: ""
+k3s_install_script_path: /usr/local/bin/k3s-install.sh
+k3s_install_script_timeout: 120
+k3s_install_script_retries: 3
+k3s_install_script_delay: 5
+
+k3s_binary_path: /usr/local/bin/k3s
+k3s_service_name: k3s
+k3s_service_unit_path: /etc/systemd/system/k3s.service
+k3s_config_dir: /etc/rancher/k3s
+k3s_config_path: /etc/rancher/k3s/config.yaml
+k3s_registries_config_path: /etc/rancher/k3s/registries.yaml
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+k3s_uninstall_script_path: /usr/local/bin/k3s-uninstall.sh
+k3s_killall_script_path: /usr/local/bin/k3s-killall.sh
+
+k3s_root_kubeconfig_dir: /root/.kube
+k3s_root_kubeconfig_path: /root/.kube/config
+
+k3s_manage_kubectl_wrapper: true
+k3s_kubectl_wrapper_path: /usr/local/bin/kubectl
+k3s_copy_kubeconfig_to_remote_user: true
+k3s_manage_remote_user_shell_env: true
+k3s_remote_user_shell_rc_path: ".bashrc"
+k3s_refresh_kubectl_access_on_existing_install: true
+k3s_node_name: "{{ ansible_facts['hostname'] | lower }}"
+k3s_write_kubeconfig_mode: "0600"
+k3s_enable_selinux: true
+k3s_hide_sensitive_config: true
+k3s_server_args: ""
+k3s_version: ""
+k3s_channel: stable
+k3s_extra_config: {}
+k3s_registries: {}
+k3s_disable_components: []
+k3s_node_labels: []
+k3s_node_taints: []
+k3s_tls_sans: []
+k3s_system_default_registry: ""
+k3s_cluster_cidr: ""
+k3s_service_cidr: ""
+k3s_flannel_backend: ""
+k3s_token: ""
+k3s_server_env: {}
+
+k3s_fail_on_conflicting_kubernetes: true
+k3s_collect_service_logs_on_failure: true
+k3s_diagnostics_log_path: /tmp/k3s-ansible-diagnostics.log
+k3s_existing_install_api_probe: true
+k3s_existing_install_api_probe_retries: 3
+k3s_existing_install_api_probe_delay: 3
+k3s_validate_existing_install_deep: false
+k3s_kubectl_request_timeout: 10s
+k3s_require_install_script_checksum: false
+k3s_enforce_minimum_requirements: true
+k3s_min_server_vcpus: 2
+k3s_min_server_memory_mb: 2048
+k3s_remediate_incomplete_install: true
+k3s_startup_retries: 24
+k3s_startup_delay: 5
+
+k3s_stale_install_cleanup_paths:
+  - /etc/rancher/k3s
+  - /var/lib/rancher/k3s
+  - /var/lib/kubelet
+  - /etc/cni/net.d
+  - /var/lib/cni
+  - /run/flannel
+  - /var/lib/calico
+
+k3s_stale_install_remove_paths:
+  - /usr/local/bin/k3s
+  - /usr/local/bin/k3s-killall.sh
+  - /usr/local/bin/k3s-uninstall.sh
+  - /etc/systemd/system/k3s.service
+  - /etc/systemd/system/k3s.service.env
+
+k3s_wait_for_kubeconfig_timeout: 180
+k3s_wait_for_apiserver_timeout: 180
+k3s_healthcheck_timeout: 300s
+k3s_healthcheck_retries: 30
+k3s_healthcheck_delay: 10
+
+k3s_manage_firewalld_rules: true
+k3s_required_listen_ports:
+  - 6443
+  - 10250
+k3s_firewalld_zone: "{{ common_firewalld_zone | default('public') }}"
+k3s_firewalld_trusted_zone: "{{ common_firewalld_trusted_zone | default('trusted') }}"
+k3s_firewalld_ports:
+  - 6443/tcp
+  - 10250/tcp
+k3s_firewalld_flannel_ports:
+  vxlan:
+    - 8472/udp
+  wireguard-native:
+    - 51820/udp
+  wireguard:
+    - 51820/udp
+k3s_firewalld_trusted_sources:
+  - 10.42.0.0/16
+  - 10.43.0.0/16
+
+k3s_validate_coredns: true
+k3s_validate_local_path_provisioner: true
+k3s_validate_metrics_server: true

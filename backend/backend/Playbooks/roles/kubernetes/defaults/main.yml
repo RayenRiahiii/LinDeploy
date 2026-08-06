@@ -1,0 +1,51 @@
+---
+kubernetes_version_minor: v1.36
+
+kubernetes_repo_name: kubernetes
+kubernetes_repo_description: Kubernetes
+kubernetes_repo_baseurl: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/rpm/"
+kubernetes_repo_gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/rpm/repodata/repomd.xml.key"
+kubernetes_apt_repo_url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/deb/"
+kubernetes_apt_repo_key_url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/deb/Release.key"
+kubernetes_apt_keyring_dir: /etc/apt/keyrings
+kubernetes_apt_keyring_path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+kubernetes_apt_repo_key_refresh_max_age_seconds: 604800
+kubernetes_repo_download_timeout: 60
+kubernetes_repo_download_retries: 5
+kubernetes_repo_download_retry_delay: 5
+kubernetes_apt_lock_timeout: 120
+kubernetes_apt_cache_valid_time: 3600
+kubernetes_redhat_update_cache: false
+kubernetes_repo_exclude:
+  - kubelet
+  - kubeadm
+  - kubectl
+  - cri-tools
+  - kubernetes-cni
+
+kubernetes_packages:
+  - kubelet
+  - kubeadm
+  - kubectl
+  - cri-tools
+
+kubernetes_kubelet_service_name: kubelet
+
+kubeadm_init_config_path: /etc/kubernetes/kubeadm-init.yaml
+kubeadm_admin_conf_path: /etc/kubernetes/admin.conf
+
+kubeadm_root_kubeconfig_dir: /root/.kube
+kubeadm_root_kubeconfig_path: /root/.kube/config
+
+kubeadm_user_kubeconfig_dir: "{{ ansible_facts['user_dir'] }}/.kube"
+kubeadm_user_kubeconfig_path: "{{ ansible_facts['user_dir'] }}/.kube/config"
+
+kubeadm_cri_socket: "unix:///run/containerd/containerd.sock"
+kubeadm_api_bind_port: 6443
+
+kubeadm_pod_network_cidr: 172.16.0.0/16
+kubeadm_service_cidr: 10.96.0.0/12
+
+kubeadm_image_repository: ""
+kubeadm_kubernetes_version: ""
+kubeadm_copy_kubeconfig_to_remote_user: true

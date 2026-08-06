@@ -1,0 +1,187 @@
+---
+# ==================================================
+# 1. Base packages and swap management
+# ==================================================
+
+- name: Check trusted local RPM GPG key files
+  stat:
+    path: "{{ item }}"
+  loop: "{{ common_redhat_rpm_gpg_key_candidates }}"
+  register: common_rpm_gpg_key_stats
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Import trusted local RPM GPG keys
+  rpm_key:
+    state: present
+    key: "{{ item.stat.path }}"
+  loop: >-
+    {{
+      common_rpm_gpg_key_stats.results
+      | default([])
+      | selectattr('stat.exists')
+      | list
+    }}
+  loop_control:
+    label: "{{ item.stat.path }}"
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - (common_rpm_gpg_key_stats.results | default([]) | selectattr('stat.exists') | list | length) > 0
+
+- name: Install base packages
+  dnf:
+    name: "{{ common_base_packages_redhat }}"
+    state: present
+    update_cache: "{{ common_redhat_update_cache }}"
+    install_weak_deps: "{{ common_redhat_install_weak_deps }}"
+    lock_timeout: "{{ common_redhat_lock_timeout }}"
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Install base packages on Debian family
+  apt:
+    name: "{{ common_base_packages_debian }}"
+    state: present
+    update_cache: "{{ common_debian_update_cache }}"
+    cache_valid_time: "{{ common_debian_cache_valid_time }}"
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Disable swap immediately
+  command: swapoff -a
+  when:
+    - common_disable_swap | bool
+    - ansible_facts['swaptotal_mb'] | int > 0
+  changed_when: true
+
+- name: Comment swap entries in /etc/fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s+.*)$'
+    replace: '# \1'
+    backup: true
+  when:
+    - common_disable_swap | bool
+    - common_manage_swap_fstab | bool
+
+# ==================================================
+# 2. Kernel modules and sysctl
+# ==================================================
+
+- name: Persist kernel modules after reboot
+  copy:
+    dest: "{{ common_modules_load_config_path }}"
+    content: |
+      {% for module in common_kernel_modules %}
+      {{ module }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "{{ common_modules_load_config_mode }}"
+
+- name: Read currently loaded kernel modules
+  command: lsmod
+  register: common_lsmod
+  changed_when: false
+
+- name: Load required kernel modules
+  command: "modprobe {{ item }}"
+  loop: "{{ common_kernel_modules }}"
+  when: common_lsmod.stdout is not search('(^|\\n)' ~ item ~ '\\s')
+  changed_when: true
+
+- name: Configure Kubernetes sysctl settings
+  copy:
+    dest: "{{ common_sysctl_config_path }}"
+    content: |
+      {% for key, value in common_sysctl_settings.items() %}
+      {{ key }} = {{ value }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "{{ common_sysctl_config_mode }}"
+  notify: Reload sysctl
+
+- name: Flush sysctl handler
+  meta: flush_handlers
+
+# ==================================================
+# 3. SELinux
+# ==================================================
+
+- name: Read current SELinux mode
+  command: getenforce
+  register: common_getenforce
+  changed_when: false
+  when: common_manage_selinux | bool
+
+- name: Persist SELinux mode
+  lineinfile:
+    path: /etc/selinux/config
+    regexp: '^SELINUX='
+    line: "SELINUX={{ common_selinux_mode }}"
+    backup: true
+  when: common_manage_selinux | bool
+
+- name: Apply SELinux mode at runtime
+  command: "setenforce {{ '1' if common_selinux_mode == 'enforcing' else '0' }}"
+  when:
+    - common_manage_selinux | bool
+    - common_getenforce.stdout is defined
+    - common_getenforce.stdout | lower != 'disabled'
+    - (
+        (common_selinux_mode == 'enforcing' and common_getenforce.stdout | lower != 'enforcing')
+        or
+        (common_selinux_mode == 'permissive' and common_getenforce.stdout | lower != 'permissive')
+      )
+  changed_when: true
+
+# ==================================================
+# 4. Firewalld
+# ==================================================
+
+- name: Ensure firewalld service state
+  systemd_service:
+    name: firewalld
+    enabled: "{{ common_firewalld_enabled }}"
+    state: "{{ common_firewalld_state }}"
+  when: common_manage_firewalld | bool
+
+- name: Check permanent firewalld ports
+  command: "firewall-cmd --permanent --zone={{ common_firewalld_zone }} --query-port={{ item }}"
+  register: common_firewalld_port_queries
+  changed_when: false
+  failed_when: false
+  loop: "{{ common_firewalld_ports }}"
+  when:
+    - common_manage_firewalld | bool
+    - common_firewalld_state != 'stopped'
+
+- name: Add permanent firewalld ports
+  command: "firewall-cmd --permanent --zone={{ common_firewalld_zone }} --add-port={{ item.item }}"
+  loop: "{{ common_firewalld_port_queries.results | default([]) }}"
+  when:
+    - common_manage_firewalld | bool
+    - common_firewalld_state != 'stopped'
+    - item.rc is defined
+    - item.rc != 0
+  changed_when: true
+  notify: Reload firewalld
+
+- name: Check trusted firewalld source CIDRs
+  command: "firewall-cmd --permanent --zone={{ common_firewalld_trusted_zone }} --query-source={{ item }}"
+  register: common_firewalld_source_queries
+  changed_when: false
+  failed_when: false
+  loop: "{{ common_firewalld_sources }}"
+  when:
+    - common_manage_firewalld | bool
+    - common_firewalld_state != 'stopped'
+
+- name: Add trusted firewalld source CIDRs
+  command: "firewall-cmd --permanent --zone={{ common_firewalld_trusted_zone }} --add-source={{ item.item }}"
+  loop: "{{ common_firewalld_source_queries.results | default([]) }}"
+  when:
+    - common_manage_firewalld | bool
+    - common_firewalld_state != 'stopped'
+    - item.rc is defined
+    - item.rc != 0
+  changed_when: true
+  notify: Reload firewalld

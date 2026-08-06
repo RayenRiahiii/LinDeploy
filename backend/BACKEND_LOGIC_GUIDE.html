@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>auto-K8S Backend Logic Guide</title>
+  <title>LinDeploy Backend Logic Guide</title>
   <style>
     :root {
       --bg: #0a0a0c;
@@ -181,10 +181,10 @@
 <body>
   <div class="container">
     <div class="hero">
-      <span class="badge">auto-K8S Backend Guide</span>
+      <span class="badge">LinDeploy Backend Guide</span>
       <h1>Backend Logic, Packages, and Imports</h1>
       <p>
-        This document explains the backend part of your <code>auto-K8S</code> project:
+        This document explains the backend part of your <code>LinDeploy</code> project:
         what each file does, how the Django API works, how the database is structured,
         and how the backend launches an Ansible playbook through WSL to install Kubernetes on target machines.
       </p>
@@ -557,13 +557,13 @@ from . import views</pre>
           ansible_host: 192.168.100.133
           ansible_port: 22
           ansible_user: "target2"
-          ansible_password: "0000"
-          ansible_become_password: "0000"</pre>
+          ansible_password: "&lt;redacted&gt;"
+          ansible_become_password: "&lt;redacted&gt;"</pre>
       <p>Why this was important:</p>
       <ul>
         <li>It avoids depending on a static inventory file.</li>
         <li>It allows the web app to select hosts dynamically.</li>
-        <li>Using YAML avoids the earlier bug where <code>0000</code> became integer <code>0</code>.</li>
+        <li>Quoting YAML secrets prevents numeric-looking passwords from being coerced into integers.</li>
       </ul>
 
       <h3><code>windows_to_wsl_path(path)</code></h3>

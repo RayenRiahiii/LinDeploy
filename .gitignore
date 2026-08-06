@@ -9,9 +9,9 @@ backend/.venv/
 *.sqlite3
 
 # Frontend
-frontend/front/node_modules/
-frontend/front/dist/
-frontend/front/.env
+frontend/node_modules/
+frontend/dist/
+frontend/.env
 
 # Editor / OS
 .vscode/
@@ -22,5 +22,10 @@ Thumbs.db
 # Logs
 *.log
 
-# Keep playbook repo separate
-backend/backend/Playbooks/k8s-single-noded/k8s-single-noded/
+# Ansible controller-local and generated files
+backend/backend/Playbooks/inventory
+backend/backend/Playbooks/inventory-*.yml
+backend/backend/Playbooks/host_vars/
+backend/backend/Playbooks/group_vars/private/
+backend/backend/Playbooks/**/*.retry
+backend/backend/Playbooks/**/*.swp

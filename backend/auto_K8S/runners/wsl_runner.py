@@ -67,6 +67,7 @@ class WslRunner(BaseRunner):
         repo_root,
         playbook_relative_path,
         inventory_path,
+        extra_vars_path=None,
         on_stdout_line=None,
         on_stderr_line=None,
         on_process_start=None,
@@ -74,14 +75,16 @@ class WslRunner(BaseRunner):
         repo_root = Path(repo_root)
         playbook_path = repo_root / playbook_relative_path
         inventory_path_wsl = self.windows_to_wsl_path(inventory_path)
+        extra_vars_path_wsl = self.windows_to_wsl_path(extra_vars_path) if extra_vars_path else None
 
         if not playbook_path.exists():
             raise FileNotFoundError(f"Playbook not found: {playbook_path}")
 
+        extra_vars_suffix = f" -e '@{extra_vars_path_wsl}'" if extra_vars_path_wsl else ""
         shell_command = self.build_ansible_shell_command(
             repo_root=repo_root,
             inventory_path=inventory_path,
-            command_suffix=f"ansible-playbook -i '{inventory_path_wsl}' '{playbook_relative_path}'",
+            command_suffix=f"ansible-playbook -i '{inventory_path_wsl}' '{playbook_relative_path}'{extra_vars_suffix}",
         )
 
         started_at = time.perf_counter()

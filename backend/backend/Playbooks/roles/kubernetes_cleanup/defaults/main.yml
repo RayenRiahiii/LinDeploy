@@ -1,0 +1,85 @@
+---
+kubernetes_cleanup_full_uninstall: false
+kubernetes_cleanup_fail_on_k3s_conflict: true
+kubernetes_cleanup_k3s_conflict_paths:
+  - /usr/local/bin/k3s
+  - /etc/systemd/system/k3s.service
+  - /etc/rancher/k3s/k3s.yaml
+  - /var/lib/rancher/k3s/server
+
+kubernetes_cleanup_kubelet_service_name: kubelet
+kubernetes_cleanup_containerd_service_name: containerd
+kubernetes_cleanup_networkmanager_service_name: NetworkManager
+kubernetes_cleanup_containerd_socket_path: /run/containerd/containerd.sock
+kubernetes_cleanup_containerd_socket_timeout: 15
+kubernetes_cleanup_connection_recovery_timeout: 90
+kubernetes_cleanup_connection_recovery_connect_timeout: 5
+kubernetes_cleanup_connection_recovery_sleep: 3
+kubernetes_cleanup_kubeadm_reset_timeout: 180
+kubernetes_cleanup_kubeadm_reset_poll_interval: 5
+
+kubernetes_cleanup_kubeadm_binary_path: /usr/bin/kubeadm
+kubernetes_cleanup_kubectl_binary_path: /usr/bin/kubectl
+kubernetes_cleanup_kubectl_compat_symlink_path: /usr/local/bin/kubectl
+
+kubernetes_cleanup_packages: "{{ kubernetes_packages | default(['kubelet', 'kubeadm', 'kubectl']) }}"
+kubernetes_cleanup_extra_packages: []
+
+kubernetes_cleanup_yum_repo_name: "{{ kubernetes_repo_name | default('kubernetes') }}"
+kubernetes_cleanup_apt_repo_filename: kubernetes
+kubernetes_cleanup_version_minor: "{{ kubernetes_version_minor | default('v1.36') }}"
+kubernetes_cleanup_apt_repo: >-
+  deb [signed-by={{ kubernetes_cleanup_apt_keyring_path }}]
+  https://pkgs.k8s.io/core:/stable:/{{ kubernetes_cleanup_version_minor }}/deb/ /
+kubernetes_cleanup_apt_keyring_path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+kubernetes_cleanup_apt_key_paths:
+  - /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  - /etc/apt/keyrings/kubernetes-apt-keyring.gpg.asc
+
+kubernetes_cleanup_apt_lock_wait_retries: 30
+kubernetes_cleanup_apt_lock_wait_delay: 10
+
+kubernetes_cleanup_cluster_state_paths:
+  - /etc/kubernetes
+  - /var/lib/etcd
+  - /var/lib/kubelet
+  - /etc/cni/net.d
+  - /var/lib/cni
+  - /run/flannel
+  - /var/lib/calico
+
+kubernetes_cleanup_networkmanager_calico_path: /etc/NetworkManager/conf.d/calico.conf
+kubernetes_cleanup_calico_manifest_path: /root/calico.yaml
+
+kubernetes_cleanup_project_file_paths:
+  - "{{ kubernetes_cleanup_networkmanager_calico_path }}"
+  - "{{ kubernetes_cleanup_calico_manifest_path }}"
+
+kubernetes_cleanup_root_kubeconfig_dir: /root/.kube
+kubernetes_cleanup_root_kubeconfig_path: "{{ kubernetes_cleanup_root_kubeconfig_dir }}/config"
+kubernetes_cleanup_remote_kubeconfig_relative_path: .kube/config
+kubernetes_cleanup_prune_empty_kube_dirs: false
+kubernetes_cleanup_fail_when_kubeadm_reset_fails: false
+
+kubernetes_cleanup_interface_regex: >-
+  ^(cni0|flannel\.1|tunl0|vxlan\.calico|vxlan-v6\.calico|wireguard\.cali|wg-v6\.cali|cali.*)$
+
+kubernetes_cleanup_control_plane_process_names:
+  - kube-apiserver
+  - kube-controller-manager
+  - kube-scheduler
+  - etcd
+
+kubernetes_cleanup_critical_ports:
+  - 6443
+  - 2379
+  - 2380
+  - 10250
+  - 10257
+  - 10259
+
+kubernetes_cleanup_port_release_timeout: 20
+
+kubernetes_cleanup_keep_containerd: true
+kubernetes_cleanup_verify_containerd: true
+kubernetes_cleanup_apt_repo_update_cache: false

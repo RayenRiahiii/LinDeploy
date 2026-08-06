@@ -1,0 +1,37 @@
+---
+# ==================================================
+# 1. Pre-pull Calico images for faster later rollout
+# ==================================================
+- name: Inspect cached containerd images before Calico pre-pull
+  command: ctr -n k8s.io images ls -q
+  register: calico_cached_images
+  changed_when: false
+  failed_when: false
+  when: calico_prepull_images | bool
+
+- name: Build Calico image pull list
+  set_fact:
+    calico_images_to_pull: >-
+      {{
+        calico_images
+        if calico_prepull_mode == 'always'
+        else (
+          calico_images
+          | reject('in', calico_cached_images.stdout_lines | default([]))
+          | list
+        )
+      }}
+  when: calico_prepull_images | bool
+
+- name: Pre-pull missing Calico images
+  command: "ctr -n k8s.io images pull {{ item }}"
+  loop: "{{ calico_images_to_pull | default([]) }}"
+  register: calico_image_pull_results
+  changed_when: true
+  retries: "{{ calico_image_pull_retries }}"
+  delay: "{{ calico_image_pull_retry_delay }}"
+  until: calico_image_pull_results.rc == 0
+  when:
+    - calico_prepull_images | bool
+    - calico_prepull_mode != 'never'
+    - (calico_images_to_pull | default([]) | length) > 0

@@ -79,6 +79,7 @@ class InstallationTemplate(TimeStampedModel):
     class DeploymentType(models.TextChoices):
         PREPARE_NODE = "prepare_node", "Prepare Node"
         SINGLE_NODE = "single_node", "Single Node"
+        CLEANUP = "cleanup", "Cleanup"
 
     name = models.CharField(max_length=100, unique=True)
     system_type = models.CharField(
@@ -103,6 +104,7 @@ class Installation(TimeStampedModel):
         PENDING = "pending", "Pending"
         RUNNING = "running", "Running"
         SUCCESS = "success", "Success"
+        PARTIAL_SUCCESS = "partial_success", "Partial Success"
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
@@ -139,6 +141,8 @@ class Installation(TimeStampedModel):
     stdout = models.TextField(blank=True)
     stderr = models.TextField(blank=True)
     summary_message = models.TextField(blank=True)
+    cluster_config = models.JSONField(default=dict, blank=True)
+    host_overrides = models.JSONField(default=list, blank=True)
     return_code = models.IntegerField(null=True, blank=True)
     timings = models.JSONField(default=dict, blank=True)
     task_profile = models.JSONField(default=list, blank=True)

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>auto-K8S Celery + Redis Integration Guide</title>
+  <title>LinDeploy Celery + Redis Integration Guide</title>
   <style>
     :root {
       --bg: #090b10;
@@ -180,11 +180,11 @@
 <body>
   <div class="container">
     <div class="hero">
-      <span class="badge">auto-K8S Backend Guide</span>
+      <span class="badge">LinDeploy Backend Guide</span>
       <h1>Celery + Redis Integration</h1>
       <p>
         This document explains exactly how Redis and Celery were integrated into the current
-        <code>auto-K8S</code> backend, what each file does, how the configuration works,
+        <code>LinDeploy</code> backend, what each file does, how the configuration works,
         and how a playbook execution now moves from the Django API to a background worker.
       </p>
       <p>
@@ -464,7 +464,7 @@ docker exec -it django-redis redis-cli ping</pre>
       <p>
         The worker should be started from the backend directory, and on Windows the recommended pool is <code>solo</code>.
       </p>
-      <pre>cd C:\Users\ASUS\Desktop\auto-K8S\backend
+      <pre>cd C:\Users\ASUS\Desktop\LinDeploy\backend
 .venv\Scripts\celery.exe -A backend worker --loglevel=info --pool=solo</pre>
       <p>Why <code>--pool=solo</code> matters:</p>
       <ul>

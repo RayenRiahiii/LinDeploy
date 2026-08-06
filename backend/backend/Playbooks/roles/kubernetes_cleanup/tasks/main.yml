@@ -1,0 +1,696 @@
+---
+# ==================================================
+# 1. Refuse cleanup when K3s owns shared Kubernetes paths
+# ==================================================
+
+- name: Probe conflicting K3s installation artifacts before Kubernetes cleanup
+  command:
+    argv: >-
+      {{
+        [
+          '/bin/sh',
+          '-c',
+          'for path; do if [ -e "$path" ] || [ -L "$path" ]; then printf "%s\\n" "$path"; fi; done',
+          'k3s-conflict-check'
+        ] + kubernetes_cleanup_k3s_conflict_paths
+      }}
+  register: kubernetes_cleanup_k3s_conflict_artifacts
+  changed_when: false
+  when: kubernetes_cleanup_fail_on_k3s_conflict | bool
+
+- name: Build conflicting K3s artifact list before Kubernetes cleanup
+  set_fact:
+    kubernetes_cleanup_detected_k3s_paths: >-
+      {{ kubernetes_cleanup_k3s_conflict_artifacts.stdout_lines | default([]) }}
+  when: kubernetes_cleanup_fail_on_k3s_conflict | bool
+
+- name: Refuse Kubernetes cleanup while K3s is present
+  fail:
+    msg: >-
+      Kubernetes cleanup was refused on {{ inventory_hostname }} because K3s
+      owns shared runtime, kubelet, CNI, network, and kubeconfig paths on this
+      target. Run the K3s cleanup workflow instead. Detected K3s artifacts:
+      {{ kubernetes_cleanup_detected_k3s_paths | default([]) | join(', ') }}.
+      No Kubernetes cleanup changes were applied.
+  when:
+    - kubernetes_cleanup_fail_on_k3s_conflict | bool
+    - (kubernetes_cleanup_detected_k3s_paths | default([]) | length) > 0
+
+# ==================================================
+# 2. Resolve optional user-specific cleanup paths
+# ==================================================
+
+- name: Check kubeadm binary
+  stat:
+    path: "{{ kubernetes_cleanup_kubeadm_binary_path }}"
+  register: kubernetes_cleanup_kubeadm_binary
+
+- name: Check kubectl binary
+  stat:
+    path: "{{ kubernetes_cleanup_kubectl_binary_path }}"
+  register: kubernetes_cleanup_kubectl_binary
+
+- name: Check kubectl compatibility symlink
+  stat:
+    path: "{{ kubernetes_cleanup_kubectl_compat_symlink_path }}"
+    follow: false
+  register: kubernetes_cleanup_kubectl_compat_symlink
+
+- name: Resolve remote user account entry
+  getent:
+    database: passwd
+    key: "{{ ansible_user }}"
+  when: ansible_user != "root"
+
+- name: Track remote user home directory
+  set_fact:
+    kubernetes_cleanup_remote_user_home: "{{ ansible_facts.getent_passwd[ansible_user][-2] }}"
+  when:
+    - ansible_user != "root"
+    - ansible_facts.getent_passwd is defined
+    - ansible_facts.getent_passwd[ansible_user] is defined
+
+# ==================================================
+# 3. Stop kubelet and reset kubeadm state
+# ==================================================
+
+- name: Stop and disable kubelet before cleanup
+  systemd_service:
+    name: "{{ kubernetes_cleanup_kubelet_service_name }}"
+    state: stopped
+    enabled: false
+  register: kubernetes_cleanup_kubelet_stop
+  failed_when: false
+
+- name: Check whether preserved containerd socket already exists before kubeadm reset
+  stat:
+    path: "{{ kubernetes_cleanup_containerd_socket_path }}"
+  register: kubernetes_cleanup_containerd_socket_stat_before_reset
+  when: kubernetes_cleanup_keep_containerd | bool
+
+- name: Attempt to start preserved containerd service when socket is missing before kubeadm reset
+  systemd_service:
+    name: "{{ kubernetes_cleanup_containerd_service_name }}"
+    state: started
+  register: kubernetes_cleanup_containerd_start_before_reset
+  failed_when: false
+  when:
+    - kubernetes_cleanup_keep_containerd | bool
+    - not (kubernetes_cleanup_containerd_socket_stat_before_reset.stat.exists | default(false))
+
+- name: Ensure preserved containerd socket is available before kubeadm reset when runtime is present
+  wait_for:
+    path: "{{ kubernetes_cleanup_containerd_socket_path }}"
+    state: present
+    timeout: "{{ kubernetes_cleanup_containerd_socket_timeout }}"
+  register: kubernetes_cleanup_containerd_socket_before_reset
+  failed_when: false
+  when: kubernetes_cleanup_keep_containerd | bool
+
+- name: Track preserved containerd availability before kubeadm reset
+  set_fact:
+    kubernetes_cleanup_preserved_containerd_available: >-
+      {{
+        (
+          kubernetes_cleanup_containerd_socket_before_reset is defined
+          and not (kubernetes_cleanup_containerd_socket_before_reset.failed | default(false))
+        )
+        or
+        (kubernetes_cleanup_containerd_socket_stat_before_reset.stat.exists | default(false))
+      }}
+  when: kubernetes_cleanup_keep_containerd | bool
+
+- name: Continue cleanup when preserved containerd runtime is unavailable before kubeadm reset
+  debug:
+    msg: >-
+      containerd socket {{ kubernetes_cleanup_containerd_socket_path }} is unavailable on
+      {{ inventory_hostname }}. Continuing cleanup without a preserved CRI runtime.
+  when:
+    - kubernetes_cleanup_keep_containerd | bool
+    - not (kubernetes_cleanup_preserved_containerd_available | default(false))
+
+- name: Initialize kubeadm reset status
+  set_fact:
+    kubernetes_cleanup_kubeadm_reset_failed: false
+    kubernetes_cleanup_kubeadm_reset_error: ""
+
+- name: Reset kubeadm cluster state when kubeadm is installed
+  block:
+    - name: Run kubeadm reset
+      command: "{{ kubernetes_cleanup_kubeadm_binary_path }} reset -f"
+      register: kubernetes_cleanup_kubeadm_reset
+      changed_when: true
+      async: "{{ kubernetes_cleanup_kubeadm_reset_timeout }}"
+      poll: "{{ kubernetes_cleanup_kubeadm_reset_poll_interval }}"
+  rescue:
+    - name: Record kubeadm reset failure
+      set_fact:
+        kubernetes_cleanup_kubeadm_reset_failed: true
+        kubernetes_cleanup_kubeadm_reset_error: >-
+          {{
+            ansible_failed_result.stderr
+            | default(ansible_failed_result.stdout, true)
+            | default(ansible_failed_result.msg, true)
+            | default('kubeadm reset failed without a detailed error')
+          }}
+
+    - name: Continue cleanup after kubeadm reset failure
+      debug:
+        msg: >-
+          kubeadm reset failed on {{ inventory_hostname }}. Continuing with file and
+          network cleanup. Final verification will decide whether the node is clean.
+          Details: {{ kubernetes_cleanup_kubeadm_reset_error }}
+  when: kubernetes_cleanup_kubeadm_binary.stat.exists
+
+- name: Restart containerd after kubeadm reset when intentionally preserved
+  systemd_service:
+    name: "{{ kubernetes_cleanup_containerd_service_name }}"
+    state: restarted
+  register: kubernetes_cleanup_containerd_restart_after_reset
+  failed_when: false
+  when:
+    - kubernetes_cleanup_keep_containerd | bool
+    - kubernetes_cleanup_preserved_containerd_available | default(false)
+
+# ==================================================
+# 3. Remove Kubernetes state created by this project
+# ==================================================
+
+- name: Remove Kubernetes cluster state paths
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ kubernetes_cleanup_cluster_state_paths }}"
+
+- name: Remove Calico NetworkManager configuration
+  file:
+    path: "{{ kubernetes_cleanup_networkmanager_calico_path }}"
+    state: absent
+  register: kubernetes_cleanup_removed_calico_nm_config
+  notify: Restart NetworkManager
+
+- name: Remove project-managed kubeconfig and helper files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{
+      [
+        kubernetes_cleanup_calico_manifest_path,
+        kubernetes_cleanup_root_kubeconfig_path
+      ]
+      +
+      (
+        [kubernetes_cleanup_remote_user_home ~ '/' ~ kubernetes_cleanup_remote_kubeconfig_relative_path]
+        if kubernetes_cleanup_remote_user_home is defined
+        else []
+      )
+    }}
+
+- name: Check whether root kubeconfig directory still exists
+  stat:
+    path: "{{ kubernetes_cleanup_root_kubeconfig_dir }}"
+  register: kubernetes_cleanup_root_kubeconfig_dir_stat
+  when: kubernetes_cleanup_prune_empty_kube_dirs | bool
+
+- name: Check whether root kubeconfig directory is empty
+  find:
+    paths: "{{ kubernetes_cleanup_root_kubeconfig_dir }}"
+    file_type: any
+    recurse: false
+    hidden: true
+  register: kubernetes_cleanup_root_kubeconfig_dir_contents
+  when:
+    - kubernetes_cleanup_prune_empty_kube_dirs | bool
+    - kubernetes_cleanup_root_kubeconfig_dir_stat.stat.exists | default(false)
+
+- name: Remove empty root kubeconfig directory
+  file:
+    path: "{{ kubernetes_cleanup_root_kubeconfig_dir }}"
+    state: absent
+  when:
+    - kubernetes_cleanup_prune_empty_kube_dirs | bool
+    - kubernetes_cleanup_root_kubeconfig_dir_stat.stat.exists | default(false)
+    - (kubernetes_cleanup_root_kubeconfig_dir_contents.matched | default(0) | int) == 0
+
+- name: Check whether remote user kubeconfig directory still exists
+  stat:
+    path: "{{ kubernetes_cleanup_remote_user_home }}/.kube"
+  register: kubernetes_cleanup_remote_kubeconfig_dir_stat
+  when:
+    - kubernetes_cleanup_remote_user_home is defined
+    - kubernetes_cleanup_prune_empty_kube_dirs | bool
+
+- name: Check whether remote user kubeconfig directory is empty
+  find:
+    paths: "{{ kubernetes_cleanup_remote_user_home }}/.kube"
+    file_type: any
+    recurse: false
+    hidden: true
+  register: kubernetes_cleanup_remote_kubeconfig_dir_contents
+  when:
+    - kubernetes_cleanup_remote_user_home is defined
+    - kubernetes_cleanup_prune_empty_kube_dirs | bool
+    - kubernetes_cleanup_remote_kubeconfig_dir_stat.stat.exists | default(false)
+
+- name: Remove empty remote user kubeconfig directory
+  file:
+    path: "{{ kubernetes_cleanup_remote_user_home }}/.kube"
+    state: absent
+  when:
+    - kubernetes_cleanup_remote_user_home is defined
+    - kubernetes_cleanup_prune_empty_kube_dirs | bool
+    - kubernetes_cleanup_remote_kubeconfig_dir_stat.stat.exists | default(false)
+    - (kubernetes_cleanup_remote_kubeconfig_dir_contents.matched | default(0) | int) == 0
+
+- name: Read current critical Kubernetes listeners before process cleanup
+  command: ss -lntpH
+  register: kubernetes_cleanup_pre_listener_snapshot
+  changed_when: false
+  failed_when: false
+
+- name: Track critical Kubernetes listeners before process cleanup
+  set_fact:
+    kubernetes_cleanup_critical_listener_lines: >-
+      {{
+        kubernetes_cleanup_pre_listener_snapshot.stdout_lines
+        | select('search', ':(%s)\\s' | format(kubernetes_cleanup_critical_ports | join('|')))
+        | list
+      }}
+
+- name: Terminate leftover Kubernetes control plane processes
+  command: "pkill -TERM -x {{ item }}"
+  loop: "{{ kubernetes_cleanup_control_plane_process_names }}"
+  register: kubernetes_cleanup_process_termination
+  changed_when: kubernetes_cleanup_process_termination.rc == 0
+  failed_when: false
+  when: kubernetes_cleanup_critical_listener_lines | length > 0
+
+- name: Wait for leftover Kubernetes control plane processes to exit
+  command: "pgrep -x {{ item }}"
+  loop: "{{ kubernetes_cleanup_control_plane_process_names }}"
+  register: kubernetes_cleanup_process_wait
+  changed_when: false
+  failed_when: false
+  retries: 10
+  delay: 2
+  until: kubernetes_cleanup_process_wait.rc != 0
+  when: kubernetes_cleanup_critical_listener_lines | length > 0
+
+- name: Wait for Kubernetes control plane ports to close
+  wait_for:
+    host: 127.0.0.1
+    port: "{{ item }}"
+    state: stopped
+    timeout: "{{ kubernetes_cleanup_port_release_timeout }}"
+  loop: "{{ kubernetes_cleanup_critical_ports }}"
+  register: kubernetes_cleanup_port_release_wait
+  failed_when: false
+  when: kubernetes_cleanup_critical_listener_lines | length > 0
+
+# ==================================================
+# 4. Remove leftover Kubernetes network interfaces
+# ==================================================
+
+- name: Read current network interfaces
+  command: ip -o link show
+  register: kubernetes_cleanup_ip_links
+  changed_when: false
+
+- name: Track primary host interfaces that must never be removed
+  set_fact:
+    kubernetes_cleanup_protected_interfaces: >-
+      {{
+        [
+          ansible_facts.get('default_ipv4', {}).get('interface', ''),
+          ansible_facts.get('default_ipv6', {}).get('interface', '')
+        ]
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+
+- name: Build candidate Kubernetes interface list
+  set_fact:
+    kubernetes_cleanup_candidate_interfaces: >-
+      {{
+        kubernetes_cleanup_ip_links.stdout_lines
+        | map('regex_replace', '^[0-9]+: ([^:@]+)(?:@[^:]+)?:.*$', '\1')
+        | select('match', kubernetes_cleanup_interface_regex)
+        | reject('in', kubernetes_cleanup_protected_interfaces)
+        | list
+      }}
+
+- name: Delete leftover Kubernetes network interfaces except tunl0
+  command: "ip link delete {{ item }}"
+  loop: "{{ kubernetes_cleanup_candidate_interfaces | reject('equalto', 'tunl0') | list }}"
+  changed_when: true
+  failed_when: false
+  when: (kubernetes_cleanup_candidate_interfaces | reject('equalto', 'tunl0') | list | length) > 0
+
+- name: Delete Calico IP-in-IP tunnel interface
+  command: ip tunnel del tunl0
+  register: kubernetes_cleanup_tunl0_delete
+  changed_when: kubernetes_cleanup_tunl0_delete.rc == 0
+  failed_when:
+    - kubernetes_cleanup_tunl0_delete.rc != 0
+    - "'Operation not permitted' not in (kubernetes_cleanup_tunl0_delete.stderr | default(''))"
+    - "'Cannot find device' not in (kubernetes_cleanup_tunl0_delete.stderr | default(''))"
+  when: "'tunl0' in kubernetes_cleanup_candidate_interfaces"
+
+# ==================================================
+# 5. Full uninstall mode: remove packages and repositories
+# ==================================================
+
+- name: Remove kubectl compatibility symlink
+  file:
+    path: "{{ kubernetes_cleanup_kubectl_compat_symlink_path }}"
+    state: absent
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - kubernetes_cleanup_kubectl_compat_symlink.stat.islnk | default(false)
+
+- name: Wait for Debian package manager locks to clear
+  command: >-
+    bash -lc '! fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1'
+  register: kubernetes_cleanup_apt_lock_wait
+  changed_when: false
+  retries: "{{ kubernetes_cleanup_apt_lock_wait_retries }}"
+  delay: "{{ kubernetes_cleanup_apt_lock_wait_delay }}"
+  until: kubernetes_cleanup_apt_lock_wait.rc == 0
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "Debian"
+
+- name: Read currently held Debian packages before unhold
+  command: apt-mark showhold
+  register: kubernetes_cleanup_debian_hold_status
+  changed_when: false
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "Debian"
+
+- name: Track Debian Kubernetes packages that still need unhold
+  set_fact:
+    kubernetes_cleanup_packages_to_unhold: >-
+      {{
+        (kubernetes_cleanup_packages + kubernetes_cleanup_extra_packages)
+        | intersect(kubernetes_cleanup_debian_hold_status.stdout_lines | default([]))
+      }}
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "Debian"
+
+- name: Unhold Kubernetes packages on Debian family
+  command:
+    argv: "{{ ['apt-mark', 'unhold'] + (kubernetes_cleanup_packages_to_unhold | default([])) }}"
+  changed_when: true
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "Debian"
+    - (kubernetes_cleanup_packages_to_unhold | default([]) | length) > 0
+
+- name: Remove Kubernetes packages
+  package:
+    name: "{{ kubernetes_cleanup_packages + kubernetes_cleanup_extra_packages }}"
+    state: absent
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] != "Debian"
+
+- name: Remove Kubernetes packages on Debian family
+  apt:
+    name: "{{ kubernetes_cleanup_packages + kubernetes_cleanup_extra_packages }}"
+    state: absent
+    purge: true
+    autoremove: true
+    lock_timeout: "{{ kubernetes_cleanup_apt_lock_wait_retries * kubernetes_cleanup_apt_lock_wait_delay }}"
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "Debian"
+
+- name: Remove Kubernetes yum repository
+  yum_repository:
+    name: "{{ kubernetes_cleanup_yum_repo_name }}"
+    state: absent
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "RedHat"
+
+- name: Remove Kubernetes apt repository
+  apt_repository:
+    repo: "{{ kubernetes_cleanup_apt_repo }}"
+    filename: "{{ kubernetes_cleanup_apt_repo_filename }}"
+    state: absent
+    update_cache: "{{ kubernetes_cleanup_apt_repo_update_cache }}"
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "Debian"
+
+- name: Remove Kubernetes apt key files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ kubernetes_cleanup_apt_key_paths }}"
+  when:
+    - kubernetes_cleanup_full_uninstall | bool
+    - ansible_facts["os_family"] == "Debian"
+
+# ==================================================
+# 6. Apply pending service restarts before verification
+# ==================================================
+
+- name: Flush cleanup handlers
+  meta: flush_handlers
+
+- name: Reset SSH connection after cleanup network changes
+  meta: reset_connection
+  when: kubernetes_cleanup_removed_calico_nm_config.changed | default(false)
+
+- name: Recover SSH connection after cleanup network changes
+  wait_for_connection:
+    connect_timeout: "{{ kubernetes_cleanup_connection_recovery_connect_timeout }}"
+    sleep: "{{ kubernetes_cleanup_connection_recovery_sleep }}"
+    timeout: "{{ kubernetes_cleanup_connection_recovery_timeout }}"
+  when: kubernetes_cleanup_removed_calico_nm_config.changed | default(false)
+
+# ==================================================
+# 7. Final verification
+# ==================================================
+
+- name: Check kubelet service state after cleanup
+  command: "systemctl is-active {{ kubernetes_cleanup_kubelet_service_name }}"
+  register: kubernetes_cleanup_kubelet_status
+  changed_when: false
+  failed_when: false
+
+- name: Verify root kubeconfig directory state
+  stat:
+    path: "{{ kubernetes_cleanup_root_kubeconfig_path }}"
+  register: kubernetes_cleanup_verify_root_kubeconfig
+
+- name: Verify remote user kubeconfig directory state
+  stat:
+    path: "{{ kubernetes_cleanup_remote_user_home }}/{{ kubernetes_cleanup_remote_kubeconfig_relative_path }}"
+  register: kubernetes_cleanup_verify_remote_user_kubeconfig
+  when: kubernetes_cleanup_remote_user_home is defined
+
+- name: Verify core Kubernetes state directories
+  stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/kubernetes
+    - /var/lib/etcd
+    - /var/lib/kubelet
+  register: kubernetes_cleanup_verify_core_paths
+
+- name: Check whether /etc/cni/net.d still exists
+  stat:
+    path: /etc/cni/net.d
+  register: kubernetes_cleanup_cni_netd_stat
+
+- name: Inspect /etc/cni/net.d contents when directory remains
+  find:
+    paths: /etc/cni/net.d
+    file_type: any
+    recurse: false
+    hidden: true
+  register: kubernetes_cleanup_cni_netd_contents
+  when: kubernetes_cleanup_cni_netd_stat.stat.exists | default(false)
+
+- name: Verify kubeadm binary state
+  stat:
+    path: "{{ kubernetes_cleanup_kubeadm_binary_path }}"
+  register: kubernetes_cleanup_verify_kubeadm_binary
+  when: kubernetes_cleanup_full_uninstall | bool
+
+- name: Verify kubectl binary state
+  stat:
+    path: "{{ kubernetes_cleanup_kubectl_binary_path }}"
+  register: kubernetes_cleanup_verify_kubectl_binary
+  when: kubernetes_cleanup_full_uninstall | bool
+
+- name: Verify kubectl compatibility symlink state
+  stat:
+    path: "{{ kubernetes_cleanup_kubectl_compat_symlink_path }}"
+    follow: false
+  register: kubernetes_cleanup_verify_kubectl_compat_symlink
+  when: kubernetes_cleanup_full_uninstall | bool
+
+- name: Read network interfaces after cleanup
+  command: ip -o link show
+  register: kubernetes_cleanup_verify_ip_links
+  changed_when: false
+
+- name: Read current critical Kubernetes listeners after cleanup
+  command: ss -lntpH
+  register: kubernetes_cleanup_post_listener_snapshot
+  changed_when: false
+  failed_when: false
+
+- name: Track critical Kubernetes listeners still present after cleanup
+  set_fact:
+    kubernetes_cleanup_remaining_listener_lines: >-
+      {{
+        kubernetes_cleanup_post_listener_snapshot.stdout_lines
+        | select('search', ':(%s)\\s' | format(kubernetes_cleanup_critical_ports | join('|')))
+        | list
+      }}
+
+- name: Track Kubernetes interfaces still present after cleanup
+  set_fact:
+    kubernetes_cleanup_remaining_interfaces: >-
+      {{
+        kubernetes_cleanup_verify_ip_links.stdout_lines
+        | map('regex_replace', '^[0-9]+: ([^:@]+)(?:@[^:]+)?:.*$', '\1')
+        | select('match', kubernetes_cleanup_interface_regex)
+        | reject('in', kubernetes_cleanup_protected_interfaces)
+        | list
+      }}
+
+- name: Attempt final Calico tunnel cleanup if tunl0 still exists
+  command: ip tunnel del tunl0
+  register: kubernetes_cleanup_tunl0_delete_final
+  changed_when: kubernetes_cleanup_tunl0_delete_final.rc == 0
+  failed_when:
+    - kubernetes_cleanup_tunl0_delete_final.rc != 0
+    - "'Operation not permitted' not in (kubernetes_cleanup_tunl0_delete_final.stderr | default(''))"
+    - "'Cannot find device' not in (kubernetes_cleanup_tunl0_delete_final.stderr | default(''))"
+  when: "'tunl0' in kubernetes_cleanup_remaining_interfaces"
+
+- name: Re-read network interfaces after final tunnel cleanup
+  command: ip -o link show
+  register: kubernetes_cleanup_verify_ip_links_final
+  changed_when: false
+  when: "'tunl0' in kubernetes_cleanup_remaining_interfaces"
+
+- name: Refresh remaining Kubernetes interfaces after final tunnel cleanup
+  set_fact:
+    kubernetes_cleanup_remaining_interfaces: >-
+      {{
+        kubernetes_cleanup_verify_ip_links_final.stdout_lines
+        | map('regex_replace', '^[0-9]+: ([^:@]+)(?:@[^:]+)?:.*$', '\1')
+        | select('match', kubernetes_cleanup_interface_regex)
+        | reject('in', kubernetes_cleanup_protected_interfaces)
+        | list
+      }}
+  when: "'tunl0' in kubernetes_cleanup_remaining_interfaces"
+
+- name: Inspect remaining tunl0 global addresses
+  command: ip -o addr show dev tunl0 scope global
+  register: kubernetes_cleanup_tunl0_global_addrs
+  changed_when: false
+  failed_when: false
+  when: "'tunl0' in kubernetes_cleanup_remaining_interfaces"
+
+- name: Inspect remaining tunl0 IPv4 routes
+  command: ip route show dev tunl0
+  register: kubernetes_cleanup_tunl0_ipv4_routes
+  changed_when: false
+  failed_when: false
+  when: "'tunl0' in kubernetes_cleanup_remaining_interfaces"
+
+- name: Inspect remaining tunl0 IPv6 routes
+  command: ip -6 route show dev tunl0
+  register: kubernetes_cleanup_tunl0_ipv6_routes
+  changed_when: false
+  failed_when: false
+  when: "'tunl0' in kubernetes_cleanup_remaining_interfaces"
+
+- name: Allow empty kernel tunl0 device to remain
+  set_fact:
+    kubernetes_cleanup_remaining_interfaces: "{{ kubernetes_cleanup_remaining_interfaces | reject('equalto', 'tunl0') | list }}"
+  when:
+    - "'tunl0' in kubernetes_cleanup_remaining_interfaces"
+    - (kubernetes_cleanup_tunl0_global_addrs.stdout | default('') | trim) == ''
+    - (kubernetes_cleanup_tunl0_ipv4_routes.stdout | default('') | trim) == ''
+    - (kubernetes_cleanup_tunl0_ipv6_routes.stdout | default('') | trim) == ''
+
+- name: Allow kernel-managed tunl0 placeholder to remain when it is the only leftover interface
+  set_fact:
+    kubernetes_cleanup_remaining_interfaces: []
+  when:
+    - kubernetes_cleanup_remaining_interfaces | length == 1
+    - kubernetes_cleanup_remaining_interfaces[0] == 'tunl0'
+
+- name: Verify containerd socket when intentionally preserved
+  wait_for:
+    path: "{{ kubernetes_cleanup_containerd_socket_path }}"
+    state: present
+    timeout: "{{ kubernetes_cleanup_containerd_socket_timeout }}"
+  register: kubernetes_cleanup_containerd_socket
+  when:
+    - kubernetes_cleanup_keep_containerd | bool
+    - kubernetes_cleanup_verify_containerd | bool
+    - kubernetes_cleanup_preserved_containerd_available | default(false)
+
+- name: Fail immediately when kubeadm reset failure is configured as fatal
+  fail:
+    msg: >-
+      kubeadm reset failed on {{ inventory_hostname }} and strict cleanup mode is enabled.
+      Error: {{ kubernetes_cleanup_kubeadm_reset_error | default('unknown error') }}
+  when:
+    - kubernetes_cleanup_fail_when_kubeadm_reset_fails | bool
+    - kubernetes_cleanup_kubeadm_reset_failed | bool
+
+- name: Assert cleanup produced a reusable node
+  assert:
+    that:
+      - kubernetes_cleanup_kubelet_status.stdout | default('inactive') != 'active'
+      - not kubernetes_cleanup_verify_root_kubeconfig.stat.exists
+      - not (
+          kubernetes_cleanup_verify_remote_user_kubeconfig.stat.exists
+          if kubernetes_cleanup_verify_remote_user_kubeconfig is defined and kubernetes_cleanup_verify_remote_user_kubeconfig.stat is defined
+          else false
+        )
+      - (
+          kubernetes_cleanup_verify_core_paths.results
+          | selectattr('stat.exists', 'defined')
+          | selectattr('stat.exists')
+          | list
+          | length
+        ) == 0
+      - not (kubernetes_cleanup_cni_netd_stat.stat.exists | default(false)) or (kubernetes_cleanup_cni_netd_contents.matched | default(0) | int) == 0
+      - (kubernetes_cleanup_remaining_interfaces | length) == 0
+      - (kubernetes_cleanup_remaining_listener_lines | length) == 0
+      - (not (kubernetes_cleanup_full_uninstall | bool)) or (not kubernetes_cleanup_verify_kubeadm_binary.stat.exists)
+      - (not (kubernetes_cleanup_full_uninstall | bool)) or (not kubernetes_cleanup_verify_kubectl_binary.stat.exists)
+      - (not (kubernetes_cleanup_full_uninstall | bool)) or (not kubernetes_cleanup_verify_kubectl_compat_symlink.stat.exists)
+      - (not kubernetes_cleanup_kubeadm_reset_failed | bool) or (kubernetes_cleanup_kubelet_status.stdout | default('inactive') != 'active')
+    fail_msg: >-
+      Kubernetes cleanup did not leave {{ inventory_hostname }} in a clean reinstall
+      state. kubeadm reset failed={{ kubernetes_cleanup_kubeadm_reset_failed }}.
+      kubeadm reset error={{ kubernetes_cleanup_kubeadm_reset_error | default('none') }}.
+      kubelet_state={{ kubernetes_cleanup_kubelet_status.stdout | default('unknown') }}.
+      root_kubeconfig_exists={{ kubernetes_cleanup_verify_root_kubeconfig.stat.exists | default(false) }}.
+      remote_kubeconfig_exists={{
+        kubernetes_cleanup_verify_remote_user_kubeconfig.stat.exists
+        if kubernetes_cleanup_verify_remote_user_kubeconfig is defined and kubernetes_cleanup_verify_remote_user_kubeconfig.stat is defined
+        else false
+      }}.
+      remaining_interfaces={{ kubernetes_cleanup_remaining_interfaces | join(', ') | default('none', true) }}.
+      remaining_listeners={{ kubernetes_cleanup_remaining_listener_lines | join(' || ') | default('none', true) }}.
+      Review the host before reinstalling Kubernetes.
+    success_msg: >-
+      Kubernetes cleanup completed successfully on {{ inventory_hostname }}.
+      The node is ready for a fresh Kubernetes installation.

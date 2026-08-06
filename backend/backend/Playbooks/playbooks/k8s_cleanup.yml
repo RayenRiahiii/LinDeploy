@@ -1,0 +1,21 @@
+---
+- name: Cleanup Kubernetes Single Node
+  hosts: selected_hosts
+  become: yes
+  gather_facts: false
+  strategy: free
+
+  pre_tasks:
+    - name: Gather minimal cleanup facts
+      setup:
+        gather_subset:
+          - "!all"
+          - min
+          - network
+        filter:
+          - ansible_os_family
+          - ansible_default_ipv4
+          - ansible_default_ipv6
+
+  roles:
+    - kubernetes_cleanup

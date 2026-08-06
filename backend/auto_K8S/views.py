@@ -1,5 +1,6 @@
 import time
 
+from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -17,6 +18,7 @@ from .services import (
     build_inventory_file,
     detect_hosts_baseline,
     get_ansible_repo_root,
+    normalize_host_overrides,
     request_installation_cancellation,
     run_connectivity_check,
     select_installation_template,
@@ -34,6 +36,100 @@ def get_hosts_missing_credentials(hosts):
         for host in hosts
         if not host.credential or not host.credential.username
     ]
+
+
+def build_default_cluster_config(system_type):
+    if system_type == InstallationTemplate.SystemType.K3S:
+        return {
+            "cluster_name": "k3s-cluster-01",
+            "version": "stable",
+            "topology_mode": "single_node",
+            "pod_cidr": "10.42.0.0/16",
+            "service_cidr": "10.43.0.0/16",
+            "cluster_domain": "cluster.local",
+            "control_plane_endpoint": "",
+            "cni_plugin": "flannel",
+            "disable_ingress": False,
+        }
+
+    return {
+        "cluster_name": "kubernetes-cluster-01",
+        "version": "stable",
+        "topology_mode": "single_node",
+        "pod_cidr": "192.168.0.0/16",
+        "service_cidr": "10.96.0.0/12",
+        "cluster_domain": "cluster.local",
+        "control_plane_endpoint": "",
+        "cni_plugin": "calico",
+        "disable_ingress": False,
+    }
+
+
+def normalize_cluster_config(cluster_config, system_type, host_overrides):
+    if cluster_config in (None, ""):
+        cluster_config = {}
+
+    if not isinstance(cluster_config, dict):
+        raise ValueError("cluster_config must be an object.")
+
+    merged = {
+        **build_default_cluster_config(system_type),
+        **cluster_config,
+    }
+
+    merged["cluster_name"] = str(merged.get("cluster_name") or build_default_cluster_config(system_type)["cluster_name"]).strip()
+    merged["version"] = str(merged.get("version") or "stable").strip()
+    merged["topology_mode"] = str(merged.get("topology_mode") or "single_node").strip()
+    merged["pod_cidr"] = str(merged.get("pod_cidr") or "").strip()
+    merged["service_cidr"] = str(merged.get("service_cidr") or "").strip()
+    merged["cluster_domain"] = str(merged.get("cluster_domain") or "cluster.local").strip()
+    merged["control_plane_endpoint"] = str(merged.get("control_plane_endpoint") or "").strip()
+    merged["cni_plugin"] = str(merged.get("cni_plugin") or "").strip()
+    merged["disable_ingress"] = bool(merged.get("disable_ingress"))
+
+    control_plane_roles = {"control_plane", "server"}
+    worker_roles = {"worker", "agent"}
+    merged["control_plane_count"] = sum(1 for item in host_overrides if item["node_role"] in control_plane_roles)
+    merged["worker_count"] = sum(1 for item in host_overrides if item["node_role"] in worker_roles)
+
+    return merged
+
+
+def annotate_host_overrides_with_detection(host_overrides, detections, system_type):
+    if system_type != InstallationTemplate.SystemType.KUBERNETES:
+        return host_overrides
+
+    detections_by_id = {item["id"]: item for item in detections if item.get("id") is not None}
+    annotated = []
+
+    for item in host_overrides:
+        detection = detections_by_id.get(item["host_id"])
+        next_item = {
+            **item,
+            "execution_allowed": True,
+            "validation_error": "",
+            "baseline_state": detection["baseline_state"] if detection else "",
+            "reachable": detection["reachable"] if detection else None,
+        }
+
+        if not detection:
+            annotated.append(next_item)
+            continue
+
+        if not detection["reachable"]:
+            next_item["execution_allowed"] = False
+            next_item["validation_error"] = (
+                "Baseline detection failed for this target. Fix SSH or network access, then retry."
+            )
+        elif detection["baseline_state"] == Host.BaselineState.INITIALIZED:
+            next_item["execution_allowed"] = False
+            next_item["validation_error"] = (
+                "Kubernetes already appears initialized on this target. Run cleanup before reinstalling."
+            )
+
+        annotated.append(next_item)
+
+    return annotated
 
 
 def get_celery_progress(installation):
@@ -97,7 +193,21 @@ def host_detail(request, id):
             return Response(serializer.data)
         return Response(serializer.errors, status=400)
 
-    host.delete()
+    try:
+        host.delete()
+    except IntegrityError:
+        return Response(
+            {
+                "message": "This host cannot be deleted because it is still referenced by related records."
+            },
+            status=409,
+        )
+    except Exception as exc:
+        return Response(
+            {"message": f"Unable to delete host cleanly: {exc}"},
+            status=409,
+        )
+
     return Response(status=204)
 
 
@@ -129,6 +239,7 @@ def installations_list(request):
 def clear_installation_history(request):
     finished_statuses = (
         Installation.Status.SUCCESS,
+        Installation.Status.PARTIAL_SUCCESS,
         Installation.Status.FAILED,
         Installation.Status.CANCELLED,
     )
@@ -153,6 +264,7 @@ def installation_detail(request, id):
     if request.method == "DELETE":
         if installation.status not in (
             Installation.Status.SUCCESS,
+            Installation.Status.PARTIAL_SUCCESS,
             Installation.Status.FAILED,
             Installation.Status.CANCELLED,
         ):
@@ -197,6 +309,7 @@ def dashboard_summary(request):
             "installations": {
                 "total": installations.count(),
                 "success": installations.filter(status=Installation.Status.SUCCESS).count(),
+                "partial_success": installations.filter(status=Installation.Status.PARTIAL_SUCCESS).count(),
                 "failed": installations.filter(status=Installation.Status.FAILED).count(),
                 "cancelled": installations.filter(status=Installation.Status.CANCELLED).count(),
                 "running": installations.filter(status=Installation.Status.RUNNING).count(),
@@ -240,6 +353,7 @@ def detect_host_state(request, id):
 def precheck_installation_hosts(request):
     request_started_at = time.perf_counter()
     host_ids = request.data.get("host_ids", [])
+    host_overrides = request.data.get("host_overrides", [])
 
     if not host_ids:
         return Response({"message": "host_ids is required."}, status=400)
@@ -259,7 +373,16 @@ def precheck_installation_hosts(request):
             status=400,
         )
 
-    inventory_path = build_inventory_file(hosts)
+    system_type = (
+        request.data.get("system_type")
+        or InstallationTemplate.SystemType.KUBERNETES
+    ).strip().lower()
+    normalized_host_overrides = normalize_host_overrides(
+        hosts,
+        host_overrides,
+        system_type,
+    )
+    inventory_path = build_inventory_file(hosts, host_overrides=normalized_host_overrides)
     inventory_content = inventory_path.read_text(encoding="utf-8")
     ansible_repo_root = get_ansible_repo_root()
 
@@ -285,6 +408,7 @@ def precheck_installation_hosts(request):
             "repo_root": str(ansible_repo_root),
             "inventory_path": str(inventory_path),
             "inventory_content": inventory_content,
+            "host_overrides": normalized_host_overrides,
             "timings": {
                 "ssh_check_seconds": metadata["execution_seconds"],
                 "total_request_seconds": total_request_seconds,
@@ -308,6 +432,8 @@ def launch_installation(request):
     host_ids = request.data.get("host_ids", [])
     deployment_mode = request.data.get("deployment_mode", "auto")
     system_type = (request.data.get("system_type") or InstallationTemplate.SystemType.KUBERNETES).strip().lower()
+    cluster_config = request.data.get("cluster_config", {})
+    host_overrides = request.data.get("host_overrides", [])
 
     if not host_ids:
         return Response({"message": "host_ids is required."}, status=400)
@@ -327,6 +453,21 @@ def launch_installation(request):
             status=400,
         )
 
+    normalized_host_overrides = normalize_host_overrides(
+        hosts,
+        host_overrides,
+        system_type,
+    )
+
+    try:
+        normalized_cluster_config = normalize_cluster_config(
+            cluster_config,
+            system_type,
+            normalized_host_overrides,
+        )
+    except ValueError as exc:
+        return Response({"message": str(exc)}, status=400)
+
     try:
         selection = select_installation_template(
             hosts,
@@ -343,13 +484,30 @@ def launch_installation(request):
         return Response({"message": str(exc)}, status=400)
 
     template = selection["template"]
+    normalized_host_overrides = annotate_host_overrides_with_detection(
+        normalized_host_overrides,
+        selection.get("detections", []),
+        system_type,
+    )
+
+    excluded_targets = [
+        item for item in normalized_host_overrides if not item.get("execution_allowed", True)
+    ]
+    queued_message = f"Installation queued successfully using {template.playbook_path}."
+    if excluded_targets:
+        queued_message = (
+            f"Installation queued using {template.playbook_path}. "
+            f"{len(excluded_targets)} target(s) were excluded before execution."
+        )
 
     installation = Installation.objects.create(
         template=template,
         status=Installation.Status.PENDING,
         phase=Installation.Phase.QUEUED,
         progress=0,
-        summary_message=f"Installation queued successfully using {template.playbook_path}.",
+        summary_message=queued_message,
+        cluster_config=normalized_cluster_config,
+        host_overrides=normalized_host_overrides,
     )
 
     for host in hosts:
@@ -371,9 +529,12 @@ def launch_installation(request):
             "phase": installation.phase,
             "progress": installation.progress,
             "message": installation.summary_message,
+            "cluster_config": installation.cluster_config,
+            "host_overrides": installation.host_overrides,
             "selected_strategy": selection["strategy"],
             "selected_playbook": template.playbook_path,
             "detected_hosts": selection.get("detections", []),
+            "eligible_host_names": selection.get("eligible_host_names", []),
             "detection_command": selection.get("detection_command"),
             "detection_seconds": selection.get("detection_seconds"),
         },
@@ -390,6 +551,7 @@ def cancel_installation(request, id):
 
     if installation.status in (
         Installation.Status.SUCCESS,
+        Installation.Status.PARTIAL_SUCCESS,
         Installation.Status.FAILED,
         Installation.Status.CANCELLED,
     ):
@@ -455,5 +617,19 @@ def credential_detail(request, id):
             return Response(serializer.data, status=200)
         return Response(serializer.errors, status=400)
 
-    credential.delete()
+    try:
+        credential.delete()
+    except IntegrityError:
+        return Response(
+            {
+                "message": "This credential cannot be deleted because it is still referenced by related records."
+            },
+            status=409,
+        )
+    except Exception as exc:
+        return Response(
+            {"message": f"Unable to delete credential cleanly: {exc}"},
+            status=409,
+        )
+
     return Response(status=204)

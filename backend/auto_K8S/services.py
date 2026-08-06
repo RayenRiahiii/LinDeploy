@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import stat
 import subprocess
 import tempfile
@@ -56,9 +57,56 @@ def kill_process_tree(pid):
         pass
 
 
-def build_inventory_file(hosts):
+def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
+    overrides_by_host_id = {}
+    default_role = (
+        "server"
+        if system_type == InstallationTemplate.SystemType.K3S
+        else "control_plane"
+    )
+
+    if isinstance(host_overrides, list):
+        for item in host_overrides:
+            if not isinstance(item, dict):
+                continue
+            host_id = item.get("host_id")
+            if host_id is None:
+                continue
+            overrides_by_host_id[int(host_id)] = item
+
+    normalized = []
+
+    for host in hosts:
+        raw = overrides_by_host_id.get(host.id, {})
+        normalized.append(
+            {
+                "host_id": host.id,
+                "host_name": host.name,
+                "hostname": host.hostname,
+                "ip_address": host.ip_address,
+                "ssh_port": int(raw.get("ssh_port") or host.ssh_port),
+                "ansible_user": (raw.get("ansible_user") or getattr(host.credential, "username", "")).strip(),
+                "node_name": (raw.get("node_name") or host.name).strip(),
+                "node_role": (raw.get("node_role") or default_role).strip(),
+                "advertise_address": (raw.get("advertise_address") or host.ip_address).strip(),
+                "labels": raw.get("labels") or [],
+                "taints": raw.get("taints") or [],
+                "execution_allowed": raw.get("execution_allowed", True),
+                "validation_error": (raw.get("validation_error") or "").strip(),
+                "baseline_state": raw.get("baseline_state") or "",
+                "reachable": raw.get("reachable"),
+            }
+        )
+
+    return normalized
+
+
+def build_inventory_file(hosts, host_overrides=None):
     runner = get_runner()
     temp_dir = Path(tempfile.mkdtemp())
+    overrides_by_host_id = {
+        item["host_id"]: item for item in normalize_host_overrides(hosts, host_overrides)
+    }
     inventory_lines = [
         "all:",
         "  children:",
@@ -67,14 +115,17 @@ def build_inventory_file(hosts):
     ]
 
     for host in hosts:
+        host_override = overrides_by_host_id.get(host.id, {})
         inventory_lines.append(f"        {host.name}:")
         inventory_lines.append(f"          ansible_host: {host.ip_address}")
-        inventory_lines.append(f"          ansible_port: {host.ssh_port}")
+        inventory_lines.append(f"          ansible_port: {host_override.get('ssh_port', host.ssh_port)}")
 
         if not host.credential:
             continue
 
-        inventory_lines.append(f"          ansible_user: \"{host.credential.username}\"")
+        inventory_lines.append(
+            f"          ansible_user: \"{host_override.get('ansible_user', host.credential.username)}\""
+        )
 
         if host.credential.auth_type == "password" and host.credential.password:
             inventory_lines.append(f"          ansible_password: \"{host.credential.password}\"")
@@ -96,6 +147,46 @@ def build_inventory_file(hosts):
     inventory_path.write_text("\n".join(inventory_lines) + "\n", encoding="utf-8")
 
     return inventory_path
+
+
+def build_extra_vars_file(cluster_config=None, host_overrides=None, system_type=None):
+    temp_dir = Path(tempfile.mkdtemp())
+    payload = {
+        "installer_type": system_type,
+        "cluster_config": cluster_config or {},
+        "host_overrides": host_overrides or [],
+        "selected_hosts_config": host_overrides or [],
+    }
+
+    primary_host = None
+    for host_override in host_overrides or []:
+        if host_override.get("node_role") in {"control_plane", "server"}:
+            primary_host = host_override
+            break
+
+    if primary_host:
+        payload["primary_host_name"] = primary_host.get("host_name")
+        payload["primary_node_name"] = primary_host.get("node_name")
+        payload["primary_advertise_address"] = primary_host.get("advertise_address")
+
+    for key in (
+        "cluster_name",
+        "version",
+        "cluster_domain",
+        "pod_cidr",
+        "service_cidr",
+        "control_plane_endpoint",
+        "cni_plugin",
+        "disable_ingress",
+        "control_plane_count",
+        "worker_count",
+    ):
+        if cluster_config and key in cluster_config:
+            payload[key] = cluster_config[key]
+
+    extra_vars_path = temp_dir / "extra-vars.json"
+    extra_vars_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return extra_vars_path
 
 
 def parse_task_profile(stdout_text):
@@ -169,6 +260,96 @@ def parse_live_ansible_line(line):
     return None
 
 
+def parse_play_recap(stdout_text):
+    recap_by_host = {}
+    in_play_recap = False
+
+    for raw_line in stdout_text.splitlines():
+        stripped = raw_line.strip()
+
+        if "PLAY RECAP" in stripped:
+            in_play_recap = True
+            continue
+
+        if not in_play_recap or not stripped:
+            continue
+
+        match = re.match(
+            (
+                r"^(?P<host>\S+)\s+:\s+ok=(?P<ok>\d+)\s+changed=(?P<changed>\d+)\s+"
+                r"unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)\s+"
+                r"skipped=(?P<skipped>\d+)(?:\s+rescued=(?P<rescued>\d+))?"
+                r"(?:\s+ignored=(?P<ignored>\d+))?"
+            ),
+            stripped,
+        )
+        if not match:
+            continue
+
+        recap_by_host[match.group("host")] = {
+            "host": match.group("host"),
+            "ok": int(match.group("ok")),
+            "changed": int(match.group("changed")),
+            "unreachable": int(match.group("unreachable")),
+            "failed": int(match.group("failed")),
+            "skipped": int(match.group("skipped")),
+            "rescued": int(match.group("rescued") or 0),
+            "ignored": int(match.group("ignored") or 0),
+            "line": stripped,
+        }
+
+    return recap_by_host
+
+
+def apply_playbook_results(targets, stdout_text, stderr_text, return_code):
+    recap_by_host = parse_play_recap(stdout_text)
+    success_count = 0
+    failed_count = 0
+
+    for target in targets:
+        recap = recap_by_host.get(target.host.name)
+
+        if recap is not None:
+            host_failed = recap["failed"] > 0 or recap["unreachable"] > 0
+            target_status = (
+                InstallationTarget.Status.FAILED
+                if host_failed
+                else InstallationTarget.Status.SUCCESS
+            )
+            output = recap["line"]
+        else:
+            target_status = (
+                InstallationTarget.Status.SUCCESS
+                if return_code == 0
+                else InstallationTarget.Status.FAILED
+            )
+            output = (
+                "Host completed without an explicit PLAY RECAP line."
+                if return_code == 0
+                else "Host status could not be resolved from Ansible PLAY RECAP."
+            )
+
+        if target_status == InstallationTarget.Status.SUCCESS:
+            success_count += 1
+        else:
+            failed_count += 1
+
+        update_target(
+            target,
+            status=target_status,
+            stdout=stdout_text,
+            stderr=stderr_text,
+            return_code=return_code,
+            output=output,
+        )
+
+    return {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "recap_by_host": recap_by_host,
+    }
+
+
 def build_bottleneck_hints(task_profile):
     hints = []
     top_tasks = task_profile[:5]
@@ -218,9 +399,8 @@ def get_ansible_repo_root():
 
     candidates.extend(
         [
-            Path(settings.BASE_DIR) / "backend" / "Playbooks" / "k8s-single-noded" / "k8s-single-noded",
-            Path(settings.BASE_DIR) / "backend" / "Playbooks" / "k8s-single-noded",
-            Path(settings.BASE_DIR) / "ansible" / "k8s-single-noded",
+            Path(settings.BASE_DIR) / "backend" / "Playbooks",
+            Path(settings.BASE_DIR) / "ansible",
         ]
     )
 
@@ -431,6 +611,7 @@ def run_playbook(
     repo_root,
     playbook_relative_path,
     inventory_path,
+    extra_vars_path=None,
     on_stdout_line=None,
     on_stderr_line=None,
     on_process_start=None,
@@ -440,6 +621,7 @@ def run_playbook(
         repo_root=repo_root,
         playbook_relative_path=playbook_relative_path,
         inventory_path=inventory_path,
+        extra_vars_path=extra_vars_path,
         on_stdout_line=on_stdout_line,
         on_stderr_line=on_stderr_line,
         on_process_start=on_process_start,
@@ -549,19 +731,32 @@ def select_installation_template(hosts, deployment_mode="auto", template_id=None
 
     detection_result = detect_hosts_baseline(hosts)
     detections = detection_result["detections"]
-    states = {item["baseline_state"] for item in detections}
-    unreachable_hosts = [item for item in detections if not item["reachable"]]
+    eligible_detections = [
+        item
+        for item in detections
+        if item["reachable"] and item["baseline_state"] != Host.BaselineState.INITIALIZED
+    ]
 
-    if unreachable_hosts:
-        host_names = ", ".join(item["name"] for item in unreachable_hosts)
-        raise ValueError(f"Baseline detection failed for: {host_names}.")
-
-    initialized_hosts = [item for item in detections if item["baseline_state"] == Host.BaselineState.INITIALIZED]
-    if initialized_hosts:
-        host_names = ", ".join(item["name"] for item in initialized_hosts)
+    if not eligible_detections:
+        unreachable_hosts = [item["name"] for item in detections if not item["reachable"]]
+        initialized_hosts = [
+            item["name"]
+            for item in detections
+            if item["baseline_state"] == Host.BaselineState.INITIALIZED
+        ]
+        problems = []
+        if unreachable_hosts:
+            problems.append(f"baseline detection failed for: {', '.join(unreachable_hosts)}")
+        if initialized_hosts:
+            problems.append(
+                f"Kubernetes already appears initialized on: {', '.join(initialized_hosts)}"
+            )
         raise ValueError(
-            f"Kubernetes already appears initialized on: {host_names}. Reset those nodes before reinstalling."
+            "No eligible hosts remained after baseline detection. "
+            + ("; ".join(problems) if problems else "Review the selected targets.")
         )
+
+    states = {item["baseline_state"] for item in eligible_detections}
 
     if normalized_mode == "prepared":
         playbook_path = AUTO_PREPARED_PLAYBOOK_PATH
@@ -583,6 +778,7 @@ def select_installation_template(hosts, deployment_mode="auto", template_id=None
         "template": template,
         "strategy": strategy,
         "detections": detections,
+        "eligible_host_names": [item["name"] for item in eligible_detections],
         "detection_command": detection_result["command"],
         "detection_seconds": detection_result["execution_seconds"],
     }
@@ -878,13 +1074,56 @@ def execute_installation(installation_id, task=None):
         task_id=celery_task_id,
     )
 
-    for target in targets:
-        update_target(target, status=InstallationTarget.Status.RUNNING)
-
     try:
+        normalized_host_overrides = normalize_host_overrides(
+            hosts,
+            installation.host_overrides,
+            installation.template.system_type,
+        )
+        overrides_by_host_id = {
+            item["host_id"]: item for item in normalized_host_overrides
+        }
+        blocked_targets = []
+        runnable_targets = []
+        runnable_hosts = []
+        runnable_host_overrides = []
+
+        for target in targets:
+            host_override = overrides_by_host_id.get(target.host.id, {})
+            if host_override.get("execution_allowed", True):
+                runnable_targets.append(target)
+                runnable_hosts.append(target.host)
+                runnable_host_overrides.append(host_override)
+                update_target(target, status=InstallationTarget.Status.RUNNING)
+                continue
+
+            blocked_targets.append(target)
+            validation_error = (
+                host_override.get("validation_error")
+                or "Target was excluded before execution."
+            )
+            update_target(
+                target,
+                status=InstallationTarget.Status.FAILED,
+                stderr=validation_error,
+                output=validation_error,
+                return_code=1,
+            )
+
+        if not runnable_hosts:
+            raise ValueError("No eligible target remained after validation.")
+
         inventory_started_at = time.perf_counter()
-        inventory_path = build_inventory_file(hosts)
+        inventory_path = build_inventory_file(
+            runnable_hosts,
+            host_overrides=runnable_host_overrides,
+        )
         inventory_content = inventory_path.read_text(encoding="utf-8")
+        extra_vars_path = build_extra_vars_file(
+            cluster_config=installation.cluster_config,
+            host_overrides=runnable_host_overrides,
+            system_type=installation.template.system_type,
+        )
         inventory_build_seconds = round(time.perf_counter() - inventory_started_at, 3)
         update_installation(
             installation,
@@ -915,7 +1154,7 @@ def execute_installation(installation_id, task=None):
         connectivity_result, connectivity_metadata = run_connectivity_check(
             repo_root=ansible_repo_root,
             inventory_path=inventory_path,
-            expected_hosts=[host.name for host in hosts],
+            expected_hosts=[host.name for host in runnable_hosts],
         )
         connectivity = connectivity_metadata["connectivity"]
         timings = {
@@ -947,21 +1186,53 @@ def execute_installation(installation_id, task=None):
             task_id=celery_task_id,
         )
 
-        if connectivity_result.returncode != 0:
-            apply_connectivity_results(
-                targets,
-                connectivity,
-                connectivity_result.stdout,
-                connectivity_result.stderr,
-                connectivity_result.returncode,
+        apply_connectivity_results(
+            runnable_targets,
+            connectivity,
+            connectivity_result.stdout,
+            connectivity_result.stderr,
+            connectivity_result.returncode,
+        )
+        reachable_host_names = {
+            item["host"] for item in connectivity if item["status"] == "success"
+        }
+        reachable_targets = [
+            target
+            for target in runnable_targets
+            if target.host.name in reachable_host_names
+        ]
+        reachable_hosts = [target.host for target in reachable_targets]
+        reachable_host_overrides = [
+            overrides_by_host_id[target.host.id]
+            for target in reachable_targets
+            if target.host.id in overrides_by_host_id
+        ]
+        connectivity_failed_targets = [
+            target
+            for target in runnable_targets
+            if target.host.name not in reachable_host_names
+        ]
+
+        for target in reachable_targets:
+            update_target(
+                target,
+                status=InstallationTarget.Status.RUNNING,
+                output="SSH connectivity verified. Waiting for playbook execution.",
             )
+
+        if not reachable_targets:
+            failed_targets = len(blocked_targets) + len(connectivity_failed_targets)
             update_installation(
                 installation,
                 status=Installation.Status.FAILED,
                 phase=Installation.Phase.FAILED,
                 progress=100,
                 finished_at=timezone.now(),
-                summary_message="SSH connectivity check failed for one or more selected hosts.",
+                summary_message=(
+                    "SSH connectivity failed on all eligible selected hosts."
+                    if failed_targets
+                    else "SSH connectivity failed before playbook execution started."
+                ),
             )
             publish_task_progress(
                 task,
@@ -982,11 +1253,24 @@ def execute_installation(installation_id, task=None):
                 connectivity=connectivity,
             )
 
+        inventory_path = build_inventory_file(
+            reachable_hosts,
+            host_overrides=reachable_host_overrides,
+        )
+        inventory_content = inventory_path.read_text(encoding="utf-8")
+        extra_vars_path = build_extra_vars_file(
+            cluster_config=installation.cluster_config,
+            host_overrides=reachable_host_overrides,
+            system_type=installation.template.system_type,
+        )
         update_installation(
             installation,
             phase=Installation.Phase.RUNNING_PLAYBOOK,
             progress=35,
-            summary_message="SSH connectivity verified. Running Ansible playbook.",
+            summary_message=(
+                f"SSH connectivity verified on {len(reachable_targets)} target(s). "
+                "Running Ansible playbook."
+            ),
         )
         raise_if_installation_cancelled(
             installation,
@@ -1088,6 +1372,7 @@ def execute_installation(installation_id, task=None):
             repo_root=ansible_repo_root,
             playbook_relative_path=installation.template.playbook_path,
             inventory_path=inventory_path,
+            extra_vars_path=extra_vars_path,
             on_stdout_line=lambda line: handle_playbook_line("stdout", line),
             on_stderr_line=lambda line: handle_playbook_line("stderr", line),
             on_process_start=lambda process: update_installation(
@@ -1125,26 +1410,8 @@ def execute_installation(installation_id, task=None):
                 },
             )
 
-        installation_status = (
-            Installation.Status.SUCCESS if result.returncode == 0 else Installation.Status.FAILED
-        )
-        installation_phase = (
-            Installation.Phase.COMPLETED if result.returncode == 0 else Installation.Phase.FAILED
-        )
-        target_status = (
-            InstallationTarget.Status.SUCCESS
-            if result.returncode == 0
-            else InstallationTarget.Status.FAILED
-        )
-        summary_message = (
-            "Playbook executed successfully."
-            if result.returncode == 0
-            else "Playbook execution failed."
-        )
-
         update_installation(
             installation,
-            status=installation_status,
             phase=Installation.Phase.FINALIZING,
             progress=92,
             runner_pid=None,
@@ -1158,15 +1425,41 @@ def execute_installation(installation_id, task=None):
             task_id=celery_task_id,
         )
 
-        for target in targets:
-            update_target(
-                target,
-                status=target_status,
-                stdout=result.stdout,
-                stderr=result.stderr,
-                return_code=result.returncode,
-                output=f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}",
+        playbook_target_results = apply_playbook_results(
+            reachable_targets,
+            result.stdout,
+            result.stderr,
+            result.returncode,
+        )
+        failed_targets = (
+            len(blocked_targets)
+            + len(connectivity_failed_targets)
+            + playbook_target_results["failed_count"]
+        )
+        successful_targets = playbook_target_results["success_count"]
+        installation_status = (
+            Installation.Status.SUCCESS
+            if failed_targets == 0 and result.returncode == 0
+            else (
+                Installation.Status.PARTIAL_SUCCESS
+                if successful_targets > 0
+                else Installation.Status.FAILED
             )
+        )
+        installation_phase = (
+            Installation.Phase.COMPLETED
+            if installation_status in (Installation.Status.SUCCESS, Installation.Status.PARTIAL_SUCCESS)
+            else Installation.Phase.FAILED
+        )
+        summary_message = (
+            "Playbook executed successfully on all selected hosts."
+            if installation_status == Installation.Status.SUCCESS
+            else (
+                f"Playbook completed on {successful_targets} host(s) and failed on {failed_targets} host(s)."
+                if installation_status == Installation.Status.PARTIAL_SUCCESS
+                else "Playbook execution failed on all selected hosts."
+            )
+        )
 
         update_installation(
             installation,
@@ -1190,7 +1483,11 @@ def execute_installation(installation_id, task=None):
             state=(
                 "INSTALLATION_SUCCESS"
                 if installation_status == Installation.Status.SUCCESS
-                else "INSTALLATION_FAILED"
+                else (
+                    "INSTALLATION_PARTIAL_SUCCESS"
+                    if installation_status == Installation.Status.PARTIAL_SUCCESS
+                    else "INSTALLATION_FAILED"
+                )
             ),
             current_step=5,
             total_steps=5,

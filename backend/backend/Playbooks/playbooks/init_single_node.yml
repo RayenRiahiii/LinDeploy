@@ -1,0 +1,9 @@
+---
+- name: Initialize Kubernetes Single Node Cluster
+  hosts: selected_hosts
+  become: yes
+  strategy: free
+
+  roles:
+    - kubeadm_init
+    - cni

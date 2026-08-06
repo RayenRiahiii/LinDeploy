@@ -1,0 +1,25 @@
+---
+- name: Fully uninstall Kubernetes Single Node
+  hosts: selected_hosts
+  become: yes
+  gather_facts: false
+  strategy: free
+  vars:
+    kubernetes_cleanup_full_uninstall: true
+    kubernetes_cleanup_keep_containerd: false
+    kubernetes_cleanup_verify_containerd: false
+
+  pre_tasks:
+    - name: Gather minimal full uninstall facts
+      setup:
+        gather_subset:
+          - "!all"
+          - min
+          - network
+        filter:
+          - ansible_os_family
+          - ansible_default_ipv4
+          - ansible_default_ipv6
+
+  roles:
+    - kubernetes_cleanup

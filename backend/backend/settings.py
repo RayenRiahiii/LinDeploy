@@ -164,10 +164,13 @@ if DEBUG:
 ANSIBLE_RUNNER_BACKEND = os.getenv("ANSIBLE_RUNNER_BACKEND", "wsl").lower()
 ANSIBLE_REPO_ROOT = os.getenv("ANSIBLE_REPO_ROOT", "")
 ANSIBLE_WSL_DISTRO = os.getenv("ANSIBLE_WSL_DISTRO", "Ubuntu")
-ANSIBLE_TIMEOUT = int(os.getenv("ANSIBLE_TIMEOUT", "30"))
+ANSIBLE_TIMEOUT = int(os.getenv("ANSIBLE_TIMEOUT", "15"))
 ANSIBLE_HOST_KEY_CHECKING = env_bool("ANSIBLE_HOST_KEY_CHECKING", False)
 ANSIBLE_SSH_ARGS = os.getenv(
     "ANSIBLE_SSH_ARGS",
+    "-C -o ControlMaster=auto -o ControlPersist=60s "
+    "-o ConnectTimeout=15 -o ConnectionAttempts=1 "
+    "-o ServerAliveInterval=15 -o ServerAliveCountMax=3 "
     "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
 )
 

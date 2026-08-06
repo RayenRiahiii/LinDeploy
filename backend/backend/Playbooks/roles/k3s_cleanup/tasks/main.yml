@@ -1,0 +1,482 @@
+---
+# ==================================================
+# 1. Resolve optional user-specific cleanup paths
+# ==================================================
+
+- name: Determine whether user-scoped cleanup is required
+  set_fact:
+    k3s_cleanup_user_scope_required: >-
+      {{
+        (ansible_user | default('root')) != 'root'
+      }}
+
+- name: Check K3s uninstall script
+  stat:
+    path: "{{ k3s_cleanup_uninstall_script_path }}"
+  register: k3s_cleanup_uninstall_script
+
+- name: Check K3s killall script
+  stat:
+    path: "{{ k3s_cleanup_killall_script_path }}"
+  register: k3s_cleanup_killall_script
+
+- name: Check kubectl wrapper path
+  stat:
+    path: "{{ k3s_cleanup_kubectl_wrapper_path }}"
+    follow: false
+  register: k3s_cleanup_kubectl_wrapper_stat
+
+- name: Read kubectl wrapper content when present
+  slurp:
+    path: "{{ k3s_cleanup_kubectl_wrapper_path }}"
+  register: k3s_cleanup_kubectl_wrapper_content
+  when: k3s_cleanup_kubectl_wrapper_stat.stat.exists | default(false)
+  failed_when: false
+
+- name: Decide whether kubectl wrapper is managed by K3s role
+  set_fact:
+    k3s_cleanup_kubectl_wrapper_managed: >-
+      {{
+        (
+          k3s_cleanup_kubectl_wrapper_stat.stat.islnk | default(false)
+        )
+        or
+        (
+          (k3s_cleanup_kubectl_wrapper_content.content | default('') | b64decode)
+          is search('K3S_CONFIG_FILE=/dev/null')
+          and
+          (k3s_cleanup_kubectl_wrapper_content.content | default('') | b64decode)
+          is search('exec ' ~ (k3s_cleanup_binary_path | regex_escape) ~ ' kubectl')
+        )
+      }}
+
+- name: Resolve remote user account entry
+  getent:
+    database: passwd
+    key: "{{ ansible_user }}"
+  when: k3s_cleanup_user_scope_required | bool
+
+- name: Track remote user home directory
+  set_fact:
+    k3s_cleanup_remote_user_home: "{{ ansible_facts.getent_passwd[ansible_user][-2] }}"
+  when:
+    - k3s_cleanup_user_scope_required | bool
+    - ansible_facts.getent_passwd is defined
+    - ansible_facts.getent_passwd[ansible_user] is defined
+
+- name: Check remote user shell rc file
+  stat:
+    path: "{{ k3s_cleanup_remote_user_home }}/{{ k3s_cleanup_remote_user_shell_rc_path }}"
+  register: k3s_cleanup_remote_user_shell_rc
+  when: k3s_cleanup_remote_user_home is defined
+
+# ==================================================
+# 2. Stop service and run uninstall helper
+# ==================================================
+
+- name: Initialize K3s service stop recovery state
+  set_fact:
+    k3s_cleanup_service_stop_timed_out: false
+
+- name: Request K3s service stop without blocking cleanup
+  systemd_service:
+    name: "{{ k3s_cleanup_service_name }}"
+    state: stopped
+    enabled: false
+    no_block: true
+  register: k3s_cleanup_service_stop
+  failed_when: false
+
+- name: Reset SSH connection after K3s stop request
+  meta: reset_connection
+
+- name: Recover SSH connection after K3s stop request
+  wait_for_connection:
+    connect_timeout: "{{ k3s_cleanup_connection_recovery_connect_timeout }}"
+    sleep: "{{ k3s_cleanup_connection_recovery_sleep }}"
+    timeout: "{{ k3s_cleanup_connection_recovery_timeout }}"
+
+- name: Wait a bounded time for K3s service to stop cleanly
+  block:
+    - name: Poll K3s service state after stop request
+      command:
+        argv:
+          - systemctl
+          - is-active
+          - "{{ k3s_cleanup_service_name }}"
+      register: k3s_cleanup_service_stop_state
+      changed_when: false
+      failed_when: false
+      until: >-
+        (k3s_cleanup_service_stop_state.unreachable | default(false) | bool)
+        or
+        (
+          (k3s_cleanup_service_stop_state.stdout | default('') | trim)
+          not in ['active', 'activating', 'deactivating', 'reloading']
+        )
+      retries: "{{ k3s_cleanup_service_stop_retries }}"
+      delay: "{{ k3s_cleanup_service_stop_delay }}"
+  rescue:
+    - name: Record K3s graceful stop timeout
+      set_fact:
+        k3s_cleanup_service_stop_timed_out: true
+
+    - name: Report K3s graceful stop recovery
+      debug:
+        msg: >-
+          K3s did not stop within
+          {{ (k3s_cleanup_service_stop_retries | int) * (k3s_cleanup_service_stop_delay | int) }}
+          seconds on {{ inventory_hostname }}. The cleanup will use the official
+          K3s killall helper before continuing.
+
+- name: Run K3s killall helper after graceful stop timeout
+  command: "{{ k3s_cleanup_killall_script_path }}"
+  register: k3s_cleanup_forced_killall_result
+  changed_when: true
+  failed_when: false
+  when:
+    - k3s_cleanup_service_stop_timed_out | bool
+    - k3s_cleanup_killall_script.stat.exists
+
+- name: Force-stop remaining K3s systemd processes when helper is unavailable
+  command:
+    argv:
+      - systemctl
+      - kill
+      - --kill-who=all
+      - --signal=KILL
+      - "{{ k3s_cleanup_service_name }}"
+  register: k3s_cleanup_forced_systemd_kill
+  changed_when: k3s_cleanup_forced_systemd_kill.rc == 0
+  failed_when: false
+  when:
+    - k3s_cleanup_service_stop_timed_out | bool
+    - not k3s_cleanup_killall_script.stat.exists
+
+- name: Initialize uninstall status
+  set_fact:
+    k3s_cleanup_uninstall_failed: false
+    k3s_cleanup_uninstall_error: ""
+
+- name: Run K3s uninstall helper when present
+  block:
+    - name: Execute K3s uninstall script
+      command: "{{ k3s_cleanup_uninstall_script_path }}"
+      register: k3s_cleanup_uninstall_result
+      changed_when: true
+      async: "{{ k3s_cleanup_uninstall_timeout }}"
+      poll: "{{ k3s_cleanup_uninstall_poll_interval }}"
+      when: k3s_cleanup_uninstall_script.stat.exists
+
+    - name: Execute K3s killall helper when uninstall script is absent
+      command: "{{ k3s_cleanup_killall_script_path }}"
+      register: k3s_cleanup_killall_result
+      changed_when: true
+      when:
+        - not k3s_cleanup_uninstall_script.stat.exists
+        - k3s_cleanup_killall_script.stat.exists
+  rescue:
+    - name: Record uninstall helper failure
+      set_fact:
+        k3s_cleanup_uninstall_failed: true
+        k3s_cleanup_uninstall_error: >-
+          {{
+            ansible_failed_result.stderr
+            | default(ansible_failed_result.stdout, true)
+            | default(ansible_failed_result.msg, true)
+            | default('k3s uninstall helper failed without a detailed error')
+          }}
+
+    - name: Continue cleanup after uninstall helper failure
+      debug:
+        msg: >-
+          K3s uninstall helper failed on {{ inventory_hostname }}. Continuing with
+          file and network cleanup. Final verification will decide whether the node
+          is clean. Details: {{ k3s_cleanup_uninstall_error }}
+  when:
+    - k3s_cleanup_uninstall_script.stat.exists or k3s_cleanup_killall_script.stat.exists
+
+- name: Fail immediately when uninstall helper failure is fatal
+  fail:
+    msg: >-
+      K3s uninstall helper failed on {{ inventory_hostname }} and
+      k3s_cleanup_fail_when_uninstall_helper_fails is enabled.
+      Details: {{ k3s_cleanup_uninstall_error }}
+  when:
+    - k3s_cleanup_fail_when_uninstall_helper_fails | bool
+    - k3s_cleanup_uninstall_failed | bool
+
+# ==================================================
+# 3. Remove K3s state created by this project
+# ==================================================
+
+- name: Remove K3s state paths
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ k3s_cleanup_state_paths }}"
+
+- name: Find residual CNI configuration entries
+  find:
+    paths: "{{ k3s_cleanup_cni_config_dir }}"
+    file_type: any
+    hidden: true
+    recurse: false
+  register: k3s_cleanup_cni_config_entries
+
+- name: Remove residual CNI configuration entries
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ k3s_cleanup_cni_config_entries.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Remove project-managed K3s files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ k3s_cleanup_project_file_paths }}"
+
+- name: Remove root kubeconfig file managed by K3s role
+  file:
+    path: "{{ k3s_cleanup_root_kubeconfig_path }}"
+    state: absent
+
+- name: Check root kube directory contents before pruning
+  find:
+    paths: "{{ k3s_cleanup_root_kube_dir }}"
+    file_type: any
+    recurse: false
+    hidden: true
+  register: k3s_cleanup_root_kube_dir_contents
+  failed_when: false
+  when: k3s_cleanup_prune_empty_kube_dirs | bool
+
+- name: Remove root kube directory when empty
+  file:
+    path: "{{ k3s_cleanup_root_kube_dir }}"
+    state: absent
+  when:
+    - k3s_cleanup_prune_empty_kube_dirs | bool
+    - (k3s_cleanup_root_kube_dir_contents.matched | default(0) | int) == 0
+
+- name: Remove remote user kubeconfig file managed by K3s role
+  file:
+    path: "{{ k3s_cleanup_remote_user_home }}/.kube/config"
+    state: absent
+  when: k3s_cleanup_remote_user_home is defined
+
+- name: Check remote user kubeconfig directory contents before pruning
+  find:
+    paths: "{{ k3s_cleanup_remote_user_home }}/.kube"
+    file_type: any
+    recurse: false
+    hidden: true
+  register: k3s_cleanup_remote_user_kube_dir_contents
+  failed_when: false
+  when:
+    - k3s_cleanup_prune_empty_kube_dirs | bool
+    - k3s_cleanup_remote_user_home is defined
+
+- name: Remove remote user kubeconfig directory when empty
+  file:
+    path: "{{ k3s_cleanup_remote_user_home }}/.kube"
+    state: absent
+  when:
+    - k3s_cleanup_prune_empty_kube_dirs | bool
+    - k3s_cleanup_remote_user_home is defined
+    - (k3s_cleanup_remote_user_kube_dir_contents.matched | default(0) | int) == 0
+
+- name: Remove managed K3s shell environment block for remote user
+  blockinfile:
+    path: "{{ k3s_cleanup_remote_user_home }}/{{ k3s_cleanup_remote_user_shell_rc_path }}"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - K3S KUBECTL ENV"
+    state: absent
+  when:
+    - k3s_cleanup_remove_remote_user_shell_env | bool
+    - k3s_cleanup_remote_user_home is defined
+    - k3s_cleanup_remote_user_shell_rc.stat.exists | default(false)
+
+- name: Remove kubectl wrapper when managed by K3s cleanup
+  file:
+    path: "{{ k3s_cleanup_kubectl_wrapper_path }}"
+    state: absent
+  when:
+    - k3s_cleanup_remove_kubectl_wrapper | bool
+    - k3s_cleanup_kubectl_wrapper_stat.stat.exists | default(false)
+    - k3s_cleanup_kubectl_wrapper_managed | default(false)
+
+- name: Reload systemd after removing K3s service files
+  command: systemctl daemon-reload
+  changed_when: false
+
+# ==================================================
+# 4. Remove K3s firewalld rules when managed
+# ==================================================
+
+- name: Check firewalld CLI availability
+  command: which firewall-cmd
+  register: k3s_cleanup_firewalld_cli
+  changed_when: false
+  failed_when: false
+  when:
+    - k3s_cleanup_manage_firewalld_rules | bool
+    - common_firewalld_state | default('started') != 'stopped'
+
+- name: Remove managed K3s firewalld rules in one idempotent operation
+  command:
+    argv: >-
+      {{
+        [
+          '/bin/sh',
+          '-c',
+          'public_zone=$1; trusted_zone=$2; shift 2; status=0; '
+          ~ 'for item; do case "$item" in '
+          ~ 'port:*) value=${item#port:}; '
+          ~ 'if firewall-cmd --permanent --zone="$public_zone" --query-port="$value" >/dev/null 2>&1; then '
+          ~ 'if firewall-cmd --permanent --zone="$public_zone" --remove-port="$value" >/dev/null; then printf "removed:port:%s\\n" "$value"; '
+          ~ 'else printf "failed:port:%s\\n" "$value" >&2; status=1; fi; fi;; '
+          ~ 'source:*) value=${item#source:}; '
+          ~ 'if firewall-cmd --permanent --zone="$trusted_zone" --query-source="$value" >/dev/null 2>&1; then '
+          ~ 'if firewall-cmd --permanent --zone="$trusted_zone" --remove-source="$value" >/dev/null; then printf "removed:source:%s\\n" "$value"; '
+          ~ 'else printf "failed:source:%s\\n" "$value" >&2; status=1; fi; fi;; esac; done; exit "$status"',
+          'k3s-firewalld-cleanup',
+          k3s_cleanup_firewalld_zone,
+          k3s_cleanup_firewalld_trusted_zone
+        ]
+        + (k3s_cleanup_firewalld_ports | map('regex_replace', '^(.*)$', 'port:\\1') | list)
+        + (k3s_cleanup_firewalld_trusted_sources | map('regex_replace', '^(.*)$', 'source:\\1') | list)
+      }}
+  register: k3s_cleanup_firewalld_removals
+  changed_when: (k3s_cleanup_firewalld_removals.stdout_lines | default([]) | length) > 0
+  failed_when: k3s_cleanup_firewalld_removals.rc != 0
+  notify: Reload firewalld
+  when:
+    - k3s_cleanup_manage_firewalld_rules | bool
+    - common_firewalld_state | default('started') != 'stopped'
+    - k3s_cleanup_firewalld_cli.rc | default(1) == 0
+
+# ==================================================
+# 5. Remove leftover K3s network interfaces
+# ==================================================
+
+- name: Read current network interfaces
+  command: ip -o link show
+  register: k3s_cleanup_ip_links
+  changed_when: false
+
+- name: Track primary host interfaces that must never be removed
+  set_fact:
+    k3s_cleanup_protected_interfaces: >-
+      {{
+        [
+          ansible_facts.get('default_ipv4', {}).get('interface', ''),
+          ansible_facts.get('default_ipv6', {}).get('interface', '')
+        ]
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+
+- name: Build candidate K3s interface list
+  set_fact:
+    k3s_cleanup_candidate_interfaces: >-
+      {{
+        k3s_cleanup_ip_links.stdout_lines
+        | map('regex_replace', '^[0-9]+: ([^:@]+)(?:@[^:]+)?:.*$', '\1')
+        | select('match', k3s_cleanup_interface_regex)
+        | reject('in', k3s_cleanup_protected_interfaces)
+        | list
+      }}
+
+- name: Delete leftover K3s network interfaces
+  command: "ip link delete {{ item }}"
+  loop: "{{ k3s_cleanup_candidate_interfaces }}"
+  changed_when: true
+  failed_when: false
+  when: k3s_cleanup_candidate_interfaces | length > 0
+
+# ==================================================
+# 6. Apply pending handlers before verification
+# ==================================================
+
+- name: Flush cleanup handlers
+  meta: flush_handlers
+
+- name: Reset SSH connection after network cleanup
+  meta: reset_connection
+
+- name: Recover SSH connection after network cleanup
+  wait_for_connection:
+    connect_timeout: "{{ k3s_cleanup_connection_recovery_connect_timeout }}"
+    sleep: "{{ k3s_cleanup_connection_recovery_sleep }}"
+    timeout: "{{ k3s_cleanup_connection_recovery_timeout }}"
+
+# ==================================================
+# 7. Final verification
+# ==================================================
+
+- name: Run consolidated K3s cleanup verification
+  command:
+    argv: >-
+      {{
+        [
+          '/bin/sh',
+          '-c',
+          'service_state=$(systemctl is-active "$1" 2>/dev/null || true); '
+          ~ 'case "$service_state" in active|activating|deactivating|reloading) printf "service:%s\\n" "$service_state";; esac; '
+          ~ 'remote_kubeconfig=$2; wrapper_path=$3; verify_wrapper=$4; interface_regex=$5; protected_interfaces=$6; cni_config_dir=$7; shift 7; '
+          ~ 'for path; do '
+          ~ 'if [ "$path" = "$cni_config_dir" ]; then '
+          ~ 'if [ -d "$path" ] && find "$path" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then printf "path:%s:not-empty\\n" "$path"; '
+          ~ 'elif [ -e "$path" ] && [ ! -d "$path" ]; then printf "path:%s:invalid-type\\n" "$path"; fi; '
+          ~ 'elif [ -e "$path" ] || [ -L "$path" ]; then printf "path:%s:exists\\n" "$path"; fi; done; '
+          ~ 'if [ -n "$remote_kubeconfig" ] && { [ -e "$remote_kubeconfig" ] || [ -L "$remote_kubeconfig" ]; }; then printf "path:%s:exists\\n" "$remote_kubeconfig"; fi; '
+          ~ 'if [ "$verify_wrapper" = true ] && { [ -e "$wrapper_path" ] || [ -L "$wrapper_path" ]; }; then printf "path:%s:exists\\n" "$wrapper_path"; fi; '
+          ~ 'ip -o link show 2>/dev/null | while IFS= read -r line; do name=${line#*: }; name=${name%%:*}; name=${name%%@*}; '
+          ~ 'printf "%s\\n" "$name" | grep -Eq "$interface_regex" || continue; '
+          ~ 'case " $protected_interfaces " in *" $name "*) continue;; esac; printf "interface:%s\\n" "$name"; done',
+          'k3s-cleanup-verify',
+          k3s_cleanup_service_name,
+          (
+            k3s_cleanup_remote_user_home ~ '/.kube/config'
+            if k3s_cleanup_remote_user_home is defined
+            else ''
+          ),
+          k3s_cleanup_kubectl_wrapper_path,
+          (
+            (
+              k3s_cleanup_remove_kubectl_wrapper | bool
+              and k3s_cleanup_kubectl_wrapper_managed | default(false) | bool
+            ) | ternary('true', 'false')
+          ),
+          k3s_cleanup_interface_regex,
+          k3s_cleanup_protected_interfaces | join(' '),
+          k3s_cleanup_cni_config_dir
+        ]
+        + k3s_cleanup_project_file_paths
+        + [k3s_cleanup_root_kubeconfig_path]
+        + [k3s_cleanup_cni_config_dir]
+        + k3s_cleanup_state_paths
+      }}
+  register: k3s_cleanup_verification_probe
+  changed_when: false
+  failed_when: false
+
+- name: Assert K3s cleanup produced a reusable node
+  assert:
+    that:
+      - (k3s_cleanup_verification_probe.stdout_lines | default([]) | length) == 0
+    fail_msg: >-
+      K3s cleanup did not leave {{ inventory_hostname }} in a clean state.
+      uninstall_failed={{ k3s_cleanup_uninstall_failed }}.
+      verification_issues={{
+        k3s_cleanup_verification_probe.stdout_lines
+        | default(['verification probe returned no diagnostics'])
+        | join(', ')
+      }}.
+      Review the host before reinstalling K3s.
+    success_msg: >-
+      K3s cleanup completed successfully on {{ inventory_hostname }}.
+      The node is ready for a fresh K3s installation.

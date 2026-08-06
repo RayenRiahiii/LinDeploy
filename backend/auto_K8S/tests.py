@@ -6,8 +6,17 @@ from pathlib import Path
 
 from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate
 from .runners.linux_runner import LinuxRunner
-from .serializers import CredentialSerializer, HostSerializer, InstallationTemplateSerializer
-from .services import classify_baseline_facts, parse_connectivity_output
+from .serializers import (
+    CredentialSerializer,
+    HostSerializer,
+    InstallationSerializer,
+    InstallationTemplateSerializer,
+)
+from .services import (
+    classify_baseline_facts,
+    parse_connectivity_output,
+    parse_play_recap,
+)
 
 
 class CredentialSerializerTests(TestCase):
@@ -66,6 +75,104 @@ class ConnectivityParserTests(TestCase):
         self.assertEqual(by_host["target2"]["status"], "failed")
 
 
+class PlayRecapParserTests(TestCase):
+    def test_extracts_per_host_status_from_play_recap(self):
+        recap = parse_play_recap(
+            """
+PLAY RECAP *********************************************************************
+target1                    : ok=10   changed=3    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+target2                    : ok=8    changed=2    unreachable=0    failed=1    skipped=2    rescued=0    ignored=0
+            """.strip()
+        )
+
+        self.assertEqual(recap["target1"]["failed"], 0)
+        self.assertEqual(recap["target1"]["unreachable"], 0)
+        self.assertEqual(recap["target2"]["failed"], 1)
+
+
+class InstallationTargetOperatorIssueTests(TestCase):
+    def test_serializes_k3s_conflict_as_actionable_issue(self):
+        host = Host.objects.create(
+            name="node-with-k3s",
+            ip_address="192.0.2.10",
+        )
+        template = InstallationTemplate.objects.create(
+            name="kubernetes-single-node-operator-issue-test",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            playbook_path="playbooks/k8s_single_node.yml",
+            deployment_type=InstallationTemplate.DeploymentType.SINGLE_NODE,
+        )
+        installation = Installation.objects.create(
+            template=template,
+            status=Installation.Status.FAILED,
+            phase=Installation.Phase.FAILED,
+        )
+        InstallationTarget.objects.create(
+            installation=installation,
+            host=host,
+            status=InstallationTarget.Status.FAILED,
+            stderr=(
+                'fatal: [node-with-k3s]: FAILED! => {"msg": "Kubernetes cannot be installed '
+                "because K3s installation artifacts are still present. Detected artifacts: "
+                "/usr/local/bin/k3s, /etc/rancher/k3s/k3s.yaml. "
+                'No Kubernetes system changes were applied."}'
+            ),
+            return_code=2,
+        )
+
+        payload = InstallationSerializer(installation).data
+        issue = payload["targets"][0]["operator_issue"]
+
+        self.assertEqual(issue["code"], "k3s_conflict")
+        self.assertEqual(issue["cleanup_system"], InstallationTemplate.SystemType.K3S)
+        self.assertEqual(
+            issue["artifacts"],
+            ["/usr/local/bin/k3s", "/etc/rancher/k3s/k3s.yaml"],
+        )
+
+    def test_serializes_kubernetes_conflict_as_actionable_issue(self):
+        host = Host.objects.create(
+            name="node-with-kubernetes",
+            ip_address="192.0.2.11",
+        )
+        template = InstallationTemplate.objects.create(
+            name="k3s-single-node-operator-issue-test",
+            system_type=InstallationTemplate.SystemType.K3S,
+            playbook_path="playbooks/k3s_single_node.yml",
+            deployment_type=InstallationTemplate.DeploymentType.SINGLE_NODE,
+        )
+        installation = Installation.objects.create(
+            template=template,
+            status=Installation.Status.FAILED,
+            phase=Installation.Phase.FAILED,
+        )
+        InstallationTarget.objects.create(
+            installation=installation,
+            host=host,
+            status=InstallationTarget.Status.FAILED,
+            stderr=(
+                'fatal: [node-with-kubernetes]: FAILED! => {"msg": "K3s cannot be installed '
+                "because Kubernetes installation artifacts are still present. Run the Kubernetes "
+                "cleanup workflow. Detected artifacts: /etc/kubernetes/admin.conf, "
+                '/etc/cni/net.d/10-calico.conflist. No K3s system changes were applied."}'
+            ),
+            return_code=2,
+        )
+
+        payload = InstallationSerializer(installation).data
+        issue = payload["targets"][0]["operator_issue"]
+
+        self.assertEqual(issue["code"], "kubernetes_conflict")
+        self.assertEqual(
+            issue["cleanup_system"],
+            InstallationTemplate.SystemType.KUBERNETES,
+        )
+        self.assertEqual(
+            issue["artifacts"],
+            ["/etc/kubernetes/admin.conf", "/etc/cni/net.d/10-calico.conflist"],
+        )
+
+
 class BaselineDetectionTests(TestCase):
     def test_classifies_initialized_when_admin_conf_exists(self):
         state = classify_baseline_facts({"admin_conf_exists": True})
@@ -89,6 +196,80 @@ class BaselineDetectionTests(TestCase):
 
 
 class HostSerializerTests(TestCase):
+    def test_normalizes_known_os_type_aliases(self):
+        credential = Credential.objects.create(
+            name="cred-host-os-known",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="user",
+            password="secret",
+        )
+
+        serializer = HostSerializer(
+            data={
+                "name": "target-os-known",
+                "hostname": "target-os-known.example.local",
+                "ip_address": "192.168.100.61",
+                "ssh_port": 22,
+                "os_type": "Ubuntu 24.04",
+                "node_role": Host.NodeRole.STANDALONE,
+                "enabled": True,
+                "credential": credential.id,
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        host = serializer.save()
+        self.assertEqual(host.os_type, "ubuntu24.04")
+
+    def test_normalizes_custom_os_type_values(self):
+        credential = Credential.objects.create(
+            name="cred-host-os-custom",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="user",
+            password="secret",
+        )
+
+        serializer = HostSerializer(
+            data={
+                "name": "target-os-custom",
+                "hostname": "target-os-custom.example.local",
+                "ip_address": "192.168.100.62",
+                "ssh_port": 22,
+                "os_type": "Oracle Linux 9",
+                "node_role": Host.NodeRole.STANDALONE,
+                "enabled": True,
+                "credential": credential.id,
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        host = serializer.save()
+        self.assertEqual(host.os_type, "oracle-linux-9")
+
+    def test_rejects_invalid_custom_os_type_characters(self):
+        credential = Credential.objects.create(
+            name="cred-host-os-invalid",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="user",
+            password="secret",
+        )
+
+        serializer = HostSerializer(
+            data={
+                "name": "target-os-invalid",
+                "hostname": "target-os-invalid.example.local",
+                "ip_address": "192.168.100.63",
+                "ssh_port": 22,
+                "os_type": "oracle/linux/9",
+                "node_role": Host.NodeRole.STANDALONE,
+                "enabled": True,
+                "credential": credential.id,
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("os_type", serializer.errors)
+
     def test_resets_cached_detection_when_connection_fields_change(self):
         credential = Credential.objects.create(
             name="cred-host-reset",
@@ -177,8 +358,10 @@ class TemplatesApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(len(payload), 1)
-        self.assertEqual(payload[0]["system_type"], InstallationTemplate.SystemType.KUBERNETES)
+        self.assertGreaterEqual(len(payload), 1)
+        self.assertTrue(
+            all(item["system_type"] == InstallationTemplate.SystemType.KUBERNETES for item in payload)
+        )
 
 
 class HostDetectionApiTests(TestCase):
@@ -237,6 +420,11 @@ class LaunchInstallationAutoModeTests(TestCase):
             ip_address="192.168.100.51",
             credential=self.credential,
         )
+        self.host_two = Host.objects.create(
+            name="target-launch-2",
+            ip_address="192.168.100.52",
+            credential=self.credential,
+        )
         self.template = InstallationTemplate.objects.create(
             name="init-single-node",
             playbook_path="playbooks/init_single_node.yml",
@@ -276,6 +464,30 @@ class LaunchInstallationAutoModeTests(TestCase):
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
+    def test_launch_accepts_multiple_hosts_for_single_node_per_target(self, select_template_mock, run_task_mock):
+        select_template_mock.return_value = {
+            "template": self.template,
+            "strategy": "full",
+            "detections": [],
+        }
+        run_task_mock.delay.return_value = Mock(id="celery-task-multi")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "host_ids": [self.host.id, self.host_two.id],
+                "deployment_mode": "auto",
+                "system_type": "kubernetes",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        self.assertEqual(installation.targets.count(), 2)
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
     def test_launch_accepts_k3s_installer(self, select_template_mock, run_task_mock):
         k3s_template = InstallationTemplate.objects.create(
             name="k3s-single-node-template",
@@ -300,6 +512,113 @@ class LaunchInstallationAutoModeTests(TestCase):
         select_template_mock.assert_called_once()
         run_task_mock.delay.assert_called_once()
 
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_accepts_multiple_hosts_for_kubernetes_cleanup(self, select_template_mock, run_task_mock):
+        cleanup_template = InstallationTemplate.objects.create(
+            name="k8s-cleanup-template",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            playbook_path="playbooks/k8s_cleanup.yml",
+            deployment_type=InstallationTemplate.DeploymentType.CLEANUP,
+        )
+        select_template_mock.return_value = {
+            "template": cleanup_template,
+            "strategy": "manual",
+            "detections": [],
+        }
+        run_task_mock.delay.return_value = Mock(id="celery-task-k8s-cleanup-multi")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "host_ids": [self.host.id, self.host_two.id],
+                "deployment_mode": "manual",
+                "template_id": cleanup_template.id,
+                "system_type": "kubernetes",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        self.assertEqual(installation.template.playbook_path, "playbooks/k8s_cleanup.yml")
+        self.assertEqual(installation.targets.count(), 2)
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_accepts_multiple_hosts_for_k3s_cleanup(self, select_template_mock, run_task_mock):
+        cleanup_template = InstallationTemplate.objects.create(
+            name="k3s-cleanup-template",
+            system_type=InstallationTemplate.SystemType.K3S,
+            playbook_path="playbooks/k3s_cleanup.yml",
+            deployment_type=InstallationTemplate.DeploymentType.CLEANUP,
+        )
+        select_template_mock.return_value = {
+            "template": cleanup_template,
+            "strategy": "manual",
+            "detections": [],
+        }
+        run_task_mock.delay.return_value = Mock(id="celery-task-k3s-cleanup-multi")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "host_ids": [self.host.id, self.host_two.id],
+                "deployment_mode": "manual",
+                "template_id": cleanup_template.id,
+                "system_type": "k3s",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        self.assertEqual(installation.template.playbook_path, "playbooks/k3s_cleanup.yml")
+        self.assertEqual(installation.targets.count(), 2)
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_persists_cluster_and_host_spec(self, select_template_mock, run_task_mock):
+        select_template_mock.return_value = {
+            "template": self.template,
+            "strategy": "full",
+            "detections": [],
+        }
+        run_task_mock.delay.return_value = Mock(id="celery-task-spec")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "host_ids": [self.host.id],
+                "deployment_mode": "auto",
+                "cluster_config": {
+                    "cluster_name": "lab-k8s-01",
+                    "version": "1.36",
+                    "pod_cidr": "172.16.0.0/16",
+                },
+                "host_overrides": [
+                    {
+                        "host_id": self.host.id,
+                        "node_name": "cp-01",
+                        "node_role": "control_plane",
+                        "advertise_address": self.host.ip_address,
+                        "ansible_user": "custom-user",
+                        "ssh_port": 2222,
+                        "labels": ["env=lab"],
+                        "taints": [],
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        self.assertEqual(installation.cluster_config["cluster_name"], "lab-k8s-01")
+        self.assertEqual(installation.cluster_config["control_plane_count"], 1)
+        self.assertEqual(installation.host_overrides[0]["ssh_port"], 2222)
+        self.assertEqual(installation.host_overrides[0]["ansible_user"], "custom-user")
+
 
 class RunnerConfigTests(TestCase):
     def test_linux_runner_sets_non_interactive_ssh_env(self):
@@ -310,9 +629,12 @@ class RunnerConfigTests(TestCase):
 
             env_prefix = LinuxRunner().build_command_env_prefix(repo_root)
 
-            self.assertEqual(env_prefix["ANSIBLE_TIMEOUT"], "30")
+            self.assertEqual(env_prefix["ANSIBLE_TIMEOUT"], "15")
             self.assertEqual(env_prefix["ANSIBLE_HOST_KEY_CHECKING"], "False")
             self.assertIn("StrictHostKeyChecking=no", env_prefix["ANSIBLE_SSH_ARGS"])
+            self.assertIn("ConnectTimeout=15", env_prefix["ANSIBLE_SSH_ARGS"])
+            self.assertIn("ServerAliveInterval=15", env_prefix["ANSIBLE_SSH_ARGS"])
+            self.assertIn("ServerAliveCountMax=3", env_prefix["ANSIBLE_SSH_ARGS"])
 
 
 class InstallationCancellationApiTests(TestCase):

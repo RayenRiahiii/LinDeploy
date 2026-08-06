@@ -43,6 +43,7 @@ class LinuxRunner(BaseRunner):
         repo_root,
         playbook_relative_path,
         inventory_path,
+        extra_vars_path=None,
         on_stdout_line=None,
         on_stderr_line=None,
         on_process_start=None,
@@ -60,6 +61,8 @@ class LinuxRunner(BaseRunner):
             str(Path(inventory_path).resolve()),
             playbook_relative_path,
         ]
+        if extra_vars_path:
+            command.extend(["-e", f"@{str(Path(extra_vars_path).resolve())}"])
 
         started_at = time.perf_counter()
         result = self.run_subprocess_with_env(

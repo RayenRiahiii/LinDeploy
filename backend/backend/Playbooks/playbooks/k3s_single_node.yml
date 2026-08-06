@@ -1,0 +1,65 @@
+---
+- name: Install K3s Single Node
+  hosts: selected_hosts
+  become: yes
+  gather_facts: false
+  strategy: free
+  vars:
+    common_selinux_mode: enforcing
+    common_firewalld_enabled: true
+    common_firewalld_state: started
+  pre_tasks:
+    - name: Probe conflicting Kubernetes installation artifacts
+      command:
+        argv:
+          - /bin/sh
+          - -c
+          - |
+            for path in \
+              /etc/kubernetes/admin.conf \
+              /etc/kubernetes/manifests/kube-apiserver.yaml \
+              /etc/kubernetes/manifests/kube-controller-manager.yaml \
+              /etc/kubernetes/manifests/kube-scheduler.yaml \
+              /etc/kubernetes/manifests/etcd.yaml \
+              /var/lib/kubelet/kubeadm-flags.env \
+              /var/lib/etcd/member \
+              /etc/cni/net.d/10-calico.conflist \
+              /etc/cni/net.d/calico-kubeconfig; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                printf '%s\n' "$path"
+              fi
+            done
+      register: k3s_kubernetes_conflict_artifacts
+      changed_when: false
+      when: k3s_fail_on_conflicting_kubernetes | default(true) | bool
+
+    - name: Refuse K3s installation while Kubernetes is present
+      fail:
+        msg: >-
+          K3s cannot be installed on {{ inventory_hostname }} because Kubernetes
+          installation artifacts are still present. Run the Kubernetes cleanup
+          workflow for this target, verify that Kubernetes is removed, and retry
+          the K3s installation. Detected artifacts:
+          {{ k3s_kubernetes_conflict_artifacts.stdout_lines | join(', ') }}.
+          No K3s system changes were applied.
+      when:
+        - k3s_fail_on_conflicting_kubernetes | default(true) | bool
+        - (k3s_kubernetes_conflict_artifacts.stdout_lines | default([]) | length) > 0
+
+    - name: Gather minimal facts required for K3s workflow
+      setup:
+        gather_subset:
+          - min
+          - hardware
+        filter:
+          - ansible_os_family
+          - ansible_swaptotal_mb
+          - ansible_processor_vcpus
+          - ansible_processor_nproc
+          - ansible_memtotal_mb
+          - ansible_selinux
+          - ansible_hostname
+
+  roles:
+    - common
+    - k3s
