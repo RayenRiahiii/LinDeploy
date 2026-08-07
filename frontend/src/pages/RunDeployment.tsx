@@ -28,6 +28,7 @@ import {
   IconPlayerStop,
   IconPlugConnected,
   IconRefresh,
+  IconTerminal2,
   IconTrash,
 } from "@tabler/icons-react";
 import { useNavigate } from "react-router-dom";
@@ -1986,14 +1987,23 @@ export default function RunDeployment({
           <Group justify="space-between" align="center">
             <div>
               <Group gap="sm" mb={6}>
-                <Title order={2}>
-                  <InstallerLabel
-                    label={pageTitle}
-                    withLogo
-                    installerId={forcedInstaller ?? selectedInstaller}
-                    className="page-installer-heading"
-                  />
-                </Title>
+                {mode === "execution" ? (
+                  <>
+                    <ThemeIcon color="red" variant="light" size="lg" radius="md">
+                      <IconTerminal2 size={18} />
+                    </ThemeIcon>
+                    <Title order={2}>{pageTitle}</Title>
+                  </>
+                ) : (
+                  <Title order={2}>
+                    <InstallerLabel
+                      label={pageTitle}
+                      withLogo
+                      installerId={forcedInstaller ?? selectedInstaller}
+                      className="page-installer-heading"
+                    />
+                  </Title>
+                )}
               </Group>
               <Text c="dimmed" mt={4}>
                 {pageDescription}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LinDeploy Celery + Redis Integration Guide</title>
+  <title>LinDeploy Celery and Redis Operations Guide</title>
   <style>
     :root {
       --bg: #090b10;
@@ -12,571 +12,446 @@
       --text: #f4f6fb;
       --muted: #b8c0cf;
       --red: #d82222;
-      --red-soft: #ff5f5f;
       --border: #2b3140;
       --code: #0b0e14;
-      --green: #22c55e;
+      --green: #20b77a;
+      --amber: #e6a23c;
     }
 
-    * {
-      box-sizing: border-box;
-    }
-
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: "Segoe UI", Arial, sans-serif;
-      background:
-        radial-gradient(circle at top right, rgba(216, 34, 34, 0.16), transparent 25%),
-        radial-gradient(circle at top left, rgba(255, 95, 95, 0.08), transparent 22%),
-        var(--bg);
+      background: var(--bg);
       color: var(--text);
-      line-height: 1.65;
+      line-height: 1.62;
     }
-
     .container {
       width: min(1120px, calc(100% - 32px));
       margin: 0 auto;
       padding: 32px 0 72px;
     }
-
-    .hero,
-    section {
-      background: linear-gradient(180deg, rgba(27, 31, 41, 0.96), rgba(19, 22, 29, 0.98));
+    .hero, section {
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 18px;
+      border-radius: 12px;
       padding: 24px;
-      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
-    }
-
-    .hero {
-      margin-bottom: 22px;
-      border-color: rgba(216, 34, 34, 0.28);
-      background:
-        linear-gradient(135deg, rgba(216, 34, 34, 0.14), transparent 36%),
-        linear-gradient(180deg, rgba(27, 31, 41, 0.98), rgba(19, 22, 29, 0.99));
-    }
-
-    section {
       margin-bottom: 18px;
     }
-
+    .hero { border-color: rgba(216, 34, 34, 0.45); }
     .badge {
       display: inline-block;
-      padding: 6px 12px;
+      padding: 5px 11px;
       border-radius: 999px;
-      background: rgba(216, 34, 34, 0.12);
-      border: 1px solid rgba(255, 95, 95, 0.32);
-      color: #ffd9d9;
+      background: rgba(216, 34, 34, 0.14);
+      border: 1px solid rgba(216, 34, 34, 0.42);
+      color: #ffdada;
       font-size: 12px;
       font-weight: 700;
-      letter-spacing: 0.08em;
       text-transform: uppercase;
     }
-
-    h1, h2, h3 {
-      margin-top: 0;
-      color: #fff;
-    }
-
-    h1 {
-      font-size: 2.25rem;
-      margin: 14px 0 10px;
-      letter-spacing: -0.03em;
-    }
-
+    h1, h2, h3 { color: var(--text); margin-top: 0; }
+    h1 { margin: 14px 0 8px; font-size: 2.2rem; }
     h2 {
-      font-size: 1.4rem;
       margin-bottom: 14px;
       padding-left: 12px;
       border-left: 4px solid var(--red);
+      font-size: 1.4rem;
     }
-
-    h3 {
-      font-size: 1.05rem;
-      margin-bottom: 10px;
-    }
-
-    p, li, td, th {
-      color: var(--muted);
-    }
-
+    h3 { font-size: 1.05rem; margin-bottom: 8px; }
+    p, li, td, th { color: var(--muted); }
+    .small { font-size: 0.9rem; }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+      gap: 14px;
     }
-
     .card {
-      background: rgba(255, 255, 255, 0.02);
+      background: var(--panel-2);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 16px;
     }
-
+    .note, .warning, .success {
+      border-left: 4px solid;
+      padding: 12px 14px;
+      margin-top: 14px;
+      background: var(--panel-2);
+    }
+    .note { border-color: #4d8eff; }
+    .warning { border-color: var(--amber); }
+    .success { border-color: var(--green); }
     code {
       font-family: Consolas, "Courier New", monospace;
-      background: rgba(255, 255, 255, 0.05);
-      color: #ffe5e5;
-      padding: 2px 6px;
-      border-radius: 6px;
+      background: rgba(255,255,255,0.06);
+      color: #ffe4e4;
+      padding: 2px 5px;
+      border-radius: 4px;
     }
-
     pre {
-      margin: 0;
+      overflow-x: auto;
       padding: 16px;
-      border-radius: 12px;
       border: 1px solid var(--border);
+      border-radius: 8px;
       background: var(--code);
       color: #f8fafc;
-      overflow-x: auto;
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 0.92rem;
+      white-space: pre-wrap;
     }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
-    }
-
+    table { width: 100%; border-collapse: collapse; }
     th, td {
-      padding: 12px 10px;
-      text-align: left;
+      padding: 10px;
       border-bottom: 1px solid var(--border);
+      text-align: left;
       vertical-align: top;
     }
-
-    th {
-      color: #fff;
-      background: rgba(216, 34, 34, 0.1);
+    th { color: var(--text); }
+    a { color: #ff8787; }
+    @media (max-width: 700px) {
+      .container { width: min(100% - 20px, 1120px); padding-top: 12px; }
+      .hero, section { padding: 18px; }
+      h1 { font-size: 1.75rem; }
     }
-
-    .ok {
-      color: #c8f7d4;
-    }
-
-    .warn {
-      color: #ffe0a3;
-    }
-
     @media print {
-      body {
+      body { background: #fff; color: #111; }
+      .hero, section, .card, .note, .warning, .success {
         background: #fff;
-        color: #000;
-      }
-
-      .hero, section, .card {
-        background: #fff;
+        color: #111;
         box-shadow: none;
-        border: 1px solid #ccc;
+        break-inside: avoid;
       }
-
-      p, li, td, th, code, pre {
-        color: #000;
-      }
+      h1, h2, h3, th { color: #111; }
+      p, li, td { color: #333; }
+      pre, code { color: #111; background: #f3f3f3; }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="hero">
-      <span class="badge">LinDeploy Backend Guide</span>
-      <h1>Celery + Redis Integration</h1>
+  <main class="container">
+    <header class="hero">
+      <span class="badge">Architecture and Operations</span>
+      <h1>Celery and Redis in LinDeploy</h1>
       <p>
-        This document explains exactly how Redis and Celery were integrated into the current
-        <code>LinDeploy</code> backend, what each file does, how the configuration works,
-        and how a playbook execution now moves from the Django API to a background worker.
+        This guide explains why LinDeploy executes Ansible asynchronously, how Redis and Celery
+        participate in an installation, how progress and cancellation work, and how to operate and
+        troubleshoot the background execution layer.
       </p>
-      <p>
-        Open this file in a browser. If you want a PDF, use <code>Ctrl+P</code> then
-        choose <code>Save as PDF</code>.
-      </p>
-    </div>
+      <p class="small"><strong>Last aligned with source code:</strong> 2026-08-07.</p>
+    </header>
 
     <section>
-      <h2>1. Why We Added Celery and Redis</h2>
+      <h2>1. Why This Layer Exists</h2>
       <p>
-        Before Celery, the Django view launched Ansible directly inside the HTTP request.
-        That meant the browser request stayed open until <code>ansible-playbook</code> finished.
-      </p>
-      <p>
-        That was a problem because Kubernetes installation can take several minutes. The browser
-        waited too long, the backend request was blocked, and the UI could not reflect a proper
-        background job model.
+        Kubernetes and K3s workflows can run for several minutes. Running them directly inside an
+        HTTP request would keep the Django request open, expose it to proxy timeouts, and prevent
+        reliable progress monitoring or cancellation. LinDeploy therefore stores the request in the
+        database and delegates execution to a Celery worker.
       </p>
       <div class="grid">
-        <div class="card">
-          <h3>Celery role</h3>
-          <p>Celery is the background task executor. It receives jobs from Django and runs them outside the HTTP request.</p>
-        </div>
-        <div class="card">
-          <h3>Redis role</h3>
-          <p>Redis is the message broker and result backend. Celery sends tasks into Redis and the worker consumes them.</p>
-        </div>
-        <div class="card">
-          <h3>Frontend role</h3>
-          <p>The frontend no longer waits for the full playbook response. It polls the installation status instead.</p>
-        </div>
+        <div class="card"><h3>Django API</h3><p>Validates input, creates execution records, queues work, and exposes status endpoints.</p></div>
+        <div class="card"><h3>Redis</h3><p>Transports queued tasks and stores Celery task results. It is not the permanent installation history.</p></div>
+        <div class="card"><h3>Celery Worker</h3><p>Runs the orchestration service outside the HTTP process and publishes live progress metadata.</p></div>
+        <div class="card"><h3>Database</h3><p>Remains the durable source of truth for installation status, targets, logs, timings, and history.</p></div>
       </div>
     </section>
 
     <section>
-      <h2>2. High-Level Execution Flow</h2>
+      <h2>2. Current Execution Architecture</h2>
+      <pre>React frontend
+    |
+    | POST /api/installations/launch/
+    v
+Django REST API
+    |-- validates template, hosts, and credentials
+    |-- creates Installation and InstallationTarget rows
+    |-- queues run_installation_task(installation_id)
+    v
+Redis broker ---> Celery worker ---> execute_installation(...)
+                                      |
+                                      |-- LinuxRunner or WslRunner
+                                      |-- generated Ansible inventory
+                                      |-- ansible-playbook process
+                                      |-- per-target result parsing
+                                      v
+                             Database status and output
+                                      |
+                                      | GET /api/installations/{id}/
+                                      v
+                              Frontend execution monitor</pre>
+      <div class="note">
+        The browser does not communicate directly with Celery or Redis. It reads the normalized
+        execution state exposed by Django.
+      </div>
+    </section>
+
+    <section>
+      <h2>3. Important Source Files</h2>
+      <table>
+        <thead><tr><th>File</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td><code>backend/backend/celery.py</code></td><td>Creates the Celery application and loads Django settings.</td></tr>
+          <tr><td><code>backend/backend/__init__.py</code></td><td>Exports the Celery app when Django starts.</td></tr>
+          <tr><td><code>backend/backend/settings.py</code></td><td>Reads broker, result backend, CORS, database, and runner configuration from environment variables.</td></tr>
+          <tr><td><code>backend/auto_K8S/tasks.py</code></td><td>Contains the thin Celery task wrapper.</td></tr>
+          <tr><td><code>backend/auto_K8S/services.py</code></td><td>Owns execution, progress parsing, cancellation support, result aggregation, and failure handling.</td></tr>
+          <tr><td><code>backend/auto_K8S/ansible_runner.py</code></td><td>Selects and operates the native Linux or WSL Ansible runner.</td></tr>
+          <tr><td><code>backend/auto_K8S/models.py</code></td><td>Persists installations and per-target execution results.</td></tr>
+          <tr><td><code>backend/auto_K8S/views.py</code></td><td>Exposes launch, status, precheck, cancellation, and history endpoints.</td></tr>
+        </tbody>
+      </table>
+      <p class="small">
+        The Django application name remains <code>auto_K8S</code> for migration compatibility. The
+        product name is LinDeploy.
+      </p>
+    </section>
+
+    <section>
+      <h2>4. Configuration</h2>
+      <p>Celery and Redis endpoints are environment-driven. They are not hardcoded in the current implementation.</p>
+      <pre>CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/0
+ANSIBLE_RUNNER_BACKEND=linux
+ANSIBLE_REPO_ROOT=/absolute/path/to/backend/Playbooks</pre>
+      <p>
+        Use <code>ANSIBLE_RUNNER_BACKEND=wsl</code> on a Windows controller that delegates Ansible to
+        WSL. Use <code>linux</code> when Django and the worker run natively on Linux.
+      </p>
+      <div class="warning">
+        Redis must not be exposed to untrusted networks. Bind it to localhost or a protected private
+        network, enforce firewall rules, and use authentication/TLS when Redis is remote.
+      </div>
+    </section>
+
+    <section>
+      <h2>5. Task and Domain States</h2>
+      <p>Celery state and LinDeploy installation state answer different questions.</p>
+      <table>
+        <thead><tr><th>Layer</th><th>Examples</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Celery</td><td><code>PENDING</code>, <code>PROGRESS</code>, <code>SUCCESS</code>, <code>FAILURE</code>, <code>REVOKED</code></td><td>State of the background Python task.</td></tr>
+          <tr><td>Installation status</td><td><code>pending</code>, <code>running</code>, <code>success</code>, <code>partial_success</code>, <code>failed</code>, <code>cancelled</code></td><td>Business result shown to the operator.</td></tr>
+          <tr><td>Installation phase</td><td><code>queued</code>, <code>ssh_check</code>, <code>running_playbook</code>, <code>finalizing</code>, <code>completed</code>, <code>failed</code>, <code>cancelled</code></td><td>Current step in the LinDeploy workflow.</td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        A Celery task can finish successfully as Python code while the Ansible business result is
+        <code>failed</code> or <code>partial_success</code>. The database installation status is the
+        authoritative value for the user interface.
+      </div>
+    </section>
+
+    <section>
+      <h2>6. Launch Lifecycle</h2>
       <ol>
-        <li>User selects a playbook template and one or more hosts in the frontend.</li>
-        <li>Frontend sends <code>POST /api/installations/launch/</code> to Django.</li>
-        <li>Django validates the data and creates an <code>Installation</code> row plus <code>InstallationTarget</code> rows.</li>
-        <li>Django queues a Celery task with <code>run_installation_task.delay(installation.id)</code>.</li>
-        <li>Django immediately returns a <code>202 Accepted</code> response with the installation id.</li>
-        <li>Celery worker receives the task through Redis.</li>
-        <li>Celery calls the installation execution logic in the service layer.</li>
-        <li>The service layer builds inventory, runs Ansible, stores output, and updates database statuses.</li>
-        <li>The frontend polls <code>/api/installations/&lt;id&gt;/</code> until the status becomes <code>success</code> or <code>failed</code>.</li>
+        <li>The frontend submits the installer template and selected host identifiers.</li>
+        <li>Django validates that the template and hosts exist and are enabled.</li>
+        <li>Django creates one <code>Installation</code> and one <code>InstallationTarget</code> per selected host.</li>
+        <li>The API queues <code>run_installation_task.delay(installation.id)</code> and stores the task identifier.</li>
+        <li>The worker reloads the installation from the database and calls the execution service.</li>
+        <li>The service performs connectivity and compatibility checks, builds a temporary inventory, and launches Ansible.</li>
+        <li>Live output updates progress, phase, current play, role, task, elapsed time, and task profiling data.</li>
+        <li>The final recap is parsed per host and persisted in each <code>InstallationTarget</code>.</li>
+        <li>The global result is calculated and the temporary execution files are removed.</li>
       </ol>
     </section>
 
     <section>
-      <h2>3. Files Added or Changed</h2>
+      <h2>7. Multi-Target Result Aggregation</h2>
+      <p>
+        A failed or unreachable target does not invalidate every reachable target. LinDeploy records
+        the outcome independently and continues on eligible machines.
+      </p>
       <table>
-        <thead>
-          <tr>
-            <th>File</th>
-            <th>Purpose</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Target outcomes</th><th>Global result</th></tr></thead>
         <tbody>
-          <tr>
-            <td><code>backend/backend/celery.py</code></td>
-            <td>Creates the Celery application object for the Django project.</td>
-          </tr>
-          <tr>
-            <td><code>backend/backend/__init__.py</code></td>
-            <td>Exposes the Celery app so Django and Celery can discover it in the standard way.</td>
-          </tr>
-          <tr>
-            <td><code>backend/backend/settings.py</code></td>
-            <td>Defines Redis broker/backend configuration for Celery.</td>
-          </tr>
-          <tr>
-            <td><code>backend/auto_K8S/tasks.py</code></td>
-            <td>Defines the Celery task wrapper that queues background installation work.</td>
-          </tr>
-          <tr>
-            <td><code>backend/auto_K8S/services.py</code></td>
-            <td>Contains the real execution logic: inventory, WSL path conversion, playbook execution, and installation state updates.</td>
-          </tr>
-          <tr>
-            <td><code>backend/auto_K8S/views.py</code></td>
-            <td>Queues the Celery task instead of running Ansible directly in the request.</td>
-          </tr>
-          <tr>
-            <td><code>backend/requirements.txt</code></td>
-            <td>Includes the Python dependencies required by Celery and Redis.</td>
-          </tr>
+          <tr><td>Every selected target succeeds.</td><td><code>success</code></td></tr>
+          <tr><td>At least one succeeds and at least one fails, is unreachable, or is ineligible.</td><td><code>partial_success</code></td></tr>
+          <tr><td>No target succeeds.</td><td><code>failed</code></td></tr>
+          <tr><td>The operator cancels the active execution.</td><td><code>cancelled</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        Per-target output is retained so the result modal can explain which clusters were created,
+        which targets failed, and what action is recommended for each machine.
+      </p>
+    </section>
+
+    <section>
+      <h2>8. Progress Monitoring</h2>
+      <p>
+        The worker streams Ansible output and extracts structured progress. The frontend polls
+        <code>GET /api/installations/{id}/</code> and renders operator-facing information rather than
+        Redis or Celery internals.
+      </p>
+      <ul>
+        <li>Current operation: installation, reset, cleanup, or full uninstall.</li>
+        <li>Current play, role, and task.</li>
+        <li>Observed and completed task counts.</li>
+        <li>Progress percentage and elapsed duration.</li>
+        <li>Per-target state and final diagnostics.</li>
+        <li>Task profile and bottleneck hints after completion.</li>
+      </ul>
+      <p>
+        Progress is an operational estimate based on observed Ansible events. It should not be
+        interpreted as a guaranteed remaining-time calculation.
+      </p>
+    </section>
+
+    <section>
+      <h2>9. Cancellation</h2>
+      <p>
+        The cancellation endpoint marks the request as cancelled, revokes the Celery task, and asks
+        the runner to terminate the Ansible process tree. This is necessary because revoking a Celery
+        task alone does not guarantee that a child <code>ansible-playbook</code> process has stopped.
+      </p>
+      <pre>POST /api/installations/{id}/cancel/</pre>
+      <div class="warning">
+        Cancellation cannot roll back remote changes already applied by completed Ansible tasks.
+        The operator must use the matching reset or cleanup workflow when a cancelled installation
+        leaves a partial cluster state.
+      </div>
+    </section>
+
+    <section>
+      <h2>10. Starting the Services</h2>
+      <h3>Redis health</h3>
+      <pre>redis-cli ping
+# Expected: PONG</pre>
+      <h3>Django</h3>
+      <pre>python manage.py migrate
+python manage.py runserver 0.0.0.0:8000</pre>
+      <h3>Celery on Linux</h3>
+      <pre>celery -A backend worker --loglevel=info</pre>
+      <h3>Celery on Windows development environments</h3>
+      <pre>celery -A backend worker --loglevel=info --pool=solo</pre>
+      <p>
+        The Windows <code>solo</code> pool is suitable for local development. A Linux worker with the
+        normal prefork pool and managed services is preferred for production.
+      </p>
+    </section>
+
+    <section>
+      <h2>11. Healthy-System Checks</h2>
+      <pre># Django configuration
+python manage.py check
+
+# Worker registration and availability
+celery -A backend inspect ping
+celery -A backend inspect registered
+
+# Redis
+redis-cli ping</pre>
+      <p>The worker registration output should contain <code>auto_K8S.tasks.run_installation_task</code>.</p>
+      <div class="success">
+        A healthy launch returns immediately from the API with an installation identifier, changes
+        from <code>pending</code> to <code>running</code>, exposes live task information, and eventually
+        reaches a terminal domain status.
+      </div>
+    </section>
+
+    <section>
+      <h2>12. Troubleshooting</h2>
+      <table>
+        <thead><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Execution remains queued.</td><td>No worker, wrong Redis URL, or worker cannot import the project.</td><td>Run Redis ping, Celery inspect ping, and inspect worker logs.</td></tr>
+          <tr><td>Worker reports connection refused.</td><td>Redis is stopped or the broker URL is wrong.</td><td>Start Redis and verify <code>CELERY_BROKER_URL</code>.</td></tr>
+          <tr><td>Task is received but Ansible never starts.</td><td>Runner path, WSL distribution, permissions, or project directory is invalid.</td><td>Verify runner environment variables and run the generated command manually.</td></tr>
+          <tr><td>Frontend is stuck on running after worker restart.</td><td>The worker died before writing a terminal database state.</td><td>Inspect the installation, process list, and worker logs; cancel or reconcile the stale run.</td></tr>
+          <tr><td>One host fails while others succeed.</td><td>Host-specific SSH, network, OS, package, or cluster issue.</td><td>Use the per-target result. The expected global state is <code>partial_success</code>.</td></tr>
+          <tr><td>Cancel button does not stop remote changes immediately.</td><td>Ansible or a remote command is finishing its current operation.</td><td>Confirm the local process tree stopped, then run the appropriate cleanup workflow.</td></tr>
+          <tr><td>Progress appears paused on one task.</td><td>That Ansible task is waiting for a service, image download, rollout, or network timeout.</td><td>Inspect the named host and current task rather than restarting all services blindly.</td></tr>
         </tbody>
       </table>
     </section>
 
     <section>
-      <h2>4. Celery App Configuration</h2>
-      <h3><code>backend/backend/celery.py</code></h3>
-      <pre>import os
-
-from celery import Celery
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
-
-app = Celery("backend")
-app.config_from_object("django.conf:settings", namespace="CELERY")
-app.autodiscover_tasks()</pre>
-      <p>What this does:</p>
+      <h2>13. Reliability and Security Rules</h2>
       <ul>
-        <li><code>os.environ.setdefault(...)</code> tells Celery which Django settings module to use.</li>
-        <li><code>Celery("backend")</code> creates the Celery app for this Django project.</li>
-        <li><code>config_from_object(..., namespace="CELERY")</code> loads only settings that start with <code>CELERY_</code>.</li>
-        <li><code>autodiscover_tasks()</code> tells Celery to look for <code>tasks.py</code> files inside installed Django apps.</li>
+        <li>Keep the API, Redis, database, worker, and Ansible controller on trusted management networks.</li>
+        <li>Do not display generated inventories because they can contain SSH and privilege-escalation secrets.</li>
+        <li>Use restricted filesystem permissions for temporary inventories and remove them after execution.</li>
+        <li>Do not treat Redis as the permanent history; persist user-visible state in the database.</li>
+        <li>Use one worker identity with only the filesystem and process permissions needed to run LinDeploy.</li>
+        <li>Back up the database and protect environment files from source control.</li>
+        <li>Use SSH keys and host-key verification for production targets.</li>
+        <li>Apply cleanup workflows explicitly; never infer destructive cleanup from a transient execution error.</li>
       </ul>
     </section>
 
     <section>
-      <h2>5. Django Project Hook</h2>
-      <h3><code>backend/backend/__init__.py</code></h3>
-      <pre>from .celery import app as celery_app
-
-__all__ = ("celery_app",)</pre>
-      <p>
-        This file makes the Celery app available as part of the Django project package.
-        It is the standard pattern used so that Celery sees the project app correctly.
-      </p>
-    </section>
-
-    <section>
-      <h2>6. Redis Configuration in Django Settings</h2>
-      <h3><code>backend/backend/settings.py</code></h3>
-      <pre>CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-CELERY_TIMEZONE = "UTC"</pre>
-      <p>Meaning of each setting:</p>
+      <h2>14. Production Deployment Recommendations</h2>
       <ul>
-        <li><code>CELERY_BROKER_URL</code>: where Celery sends tasks. Here, Redis on local port <code>6379</code>.</li>
-        <li><code>CELERY_RESULT_BACKEND</code>: where task results are stored. Also Redis.</li>
-        <li><code>CELERY_ACCEPT_CONTENT</code>: accepted payload format.</li>
-        <li><code>CELERY_TASK_SERIALIZER</code>: format used to serialize tasks into Redis.</li>
-        <li><code>CELERY_RESULT_SERIALIZER</code>: format used to serialize stored results.</li>
-        <li><code>CELERY_TIMEZONE</code>: timezone used by Celery.</li>
-      </ul>
-      <p class="warn">
-        In the current local setup, Redis is expected on <code>localhost:6379</code>. If Redis is not running there,
-        Celery will fail to queue or consume tasks.
-      </p>
-    </section>
-
-    <section>
-      <h2>7. Python Dependencies</h2>
-      <h3><code>backend/requirements.txt</code></h3>
-      <pre>celery==5.5.3
-redis==6.4.0</pre>
-      <p>Why they are needed:</p>
-      <ul>
-        <li><code>celery</code>: the task queue system.</li>
-        <li><code>redis</code>: Python client used by Celery to talk to Redis.</li>
-      </ul>
-      <p>
-        <code>django-redis</code> is not required for Celery broker usage. It is only needed if Django cache/session
-        should use Redis too.
-      </p>
-    </section>
-
-    <section>
-      <h2>8. The Correct Separation: Views, Tasks, Services</h2>
-      <div class="grid">
-        <div class="card">
-          <h3>Views Layer</h3>
-          <p>
-            <code>views.py</code> should validate requests, create database rows, and queue the background task.
-            It should not run long Ansible execution directly anymore.
-          </p>
-        </div>
-        <div class="card">
-          <h3>Tasks Layer</h3>
-          <p>
-            <code>tasks.py</code> should stay thin. Its job is to expose Celery tasks and forward the real work
-            to the service layer.
-          </p>
-        </div>
-        <div class="card">
-          <h3>Services Layer</h3>
-          <p>
-            <code>services.py</code> contains the heavy business logic: generate inventory, run Ansible through WSL,
-            measure timings, update the installation state, and store output.
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <h2>9. Current Task Wrapper</h2>
-      <h3><code>backend/auto_K8S/tasks.py</code></h3>
-      <pre>from celery import shared_task
-
-from .services import execute_installation
-
-
-@shared_task
-def run_installation_task(installation_id):
-    return execute_installation(installation_id)
-
-
-@shared_task
-def debug_task():
-    print("debug task executed")
-    return "ok"</pre>
-      <p>
-        <code>run_installation_task</code> is now the correct Celery entry point.
-        It receives only <code>installation_id</code>, not whole model objects.
-      </p>
-      <p>
-        This is important because Celery tasks should pass small serializable values, then query the database again inside the worker.
-      </p>
-    </section>
-
-    <section>
-      <h2>10. Current Service Execution Logic</h2>
-      <p>The main background job logic lives in <code>services.py</code> inside <code>execute_installation(installation_id)</code>.</p>
-      <p>It performs these steps:</p>
-      <ol>
-        <li>Load the <code>Installation</code> and related <code>InstallationTarget</code> rows from the database.</li>
-        <li>Mark installation and targets as <code>running</code>.</li>
-        <li>Build a temporary dynamic Ansible inventory file.</li>
-        <li>Locate the Ansible repository root.</li>
-        <li>Run <code>ansible-playbook</code> inside Ubuntu WSL.</li>
-        <li>Measure execution timings.</li>
-        <li>Parse slow tasks and bottleneck hints.</li>
-        <li>Store combined stdout/stderr into each target output.</li>
-        <li>Update the installation status to <code>success</code> or <code>failed</code>.</li>
-      </ol>
-      <p>
-        This separation is important because the same service can be tested, reused, and reasoned about independently of Celery.
-      </p>
-    </section>
-
-    <section>
-      <h2>11. View Refactor for Background Launch</h2>
-      <p>
-        The launch API was changed so that it no longer blocks until Ansible completes.
-      </p>
-      <h3>Before</h3>
-      <ul>
-        <li>Django view ran the full playbook itself.</li>
-        <li>HTTP response returned only when Ansible finished.</li>
-      </ul>
-      <h3>After</h3>
-      <ul>
-        <li>Django creates installation rows.</li>
-        <li>Django calls <code>run_installation_task.delay(installation.id)</code>.</li>
-        <li>Django immediately returns <code>202 Accepted</code>.</li>
-      </ul>
-      <pre>{
-  "installation_id": 57,
-  "celery_task_id": "b667c1c1-9c1a-456c-9164-343f749baf05",
-  "status": "pending",
-  "message": "Installation queued successfully."
-}</pre>
-    </section>
-
-    <section>
-      <h2>12. Redis Startup on Windows with Docker</h2>
-      <p>The local integration uses Docker Desktop to run Redis.</p>
-      <pre>docker run --name django-redis -d -p 6379:6379 --rm redis</pre>
-      <p>Useful verification commands:</p>
-      <pre>docker ps
-docker logs django-redis
-docker exec -it django-redis redis-cli ping</pre>
-      <p>Expected Redis ping response:</p>
-      <pre>PONG</pre>
-    </section>
-
-    <section>
-      <h2>13. Starting the Worker on Windows</h2>
-      <p>
-        The worker should be started from the backend directory, and on Windows the recommended pool is <code>solo</code>.
-      </p>
-      <pre>cd C:\Users\ASUS\Desktop\LinDeploy\backend
-.venv\Scripts\celery.exe -A backend worker --loglevel=info --pool=solo</pre>
-      <p>Why <code>--pool=solo</code> matters:</p>
-      <ul>
-        <li>Windows often has issues with Celery multiprocessing pools.</li>
-        <li><code>solo</code> is simpler and more reliable for development on Windows.</li>
+        <li>Run Django and Celery as managed Linux services or containers with restart policies.</li>
+        <li>Use a dedicated Redis service with persistence policy, authentication, monitoring, and backups appropriate to the environment.</li>
+        <li>Place Django behind a production HTTP server and reverse proxy; do not use <code>runserver</code>.</li>
+        <li>Collect Django, Celery, Redis, and Ansible runner logs centrally.</li>
+        <li>Add metrics for queue depth, execution duration, failure rate, stale runs, and worker availability.</li>
+        <li>Add a per-host execution lock before allowing multiple operators or concurrent jobs at enterprise scale.</li>
+        <li>Use separate queues when OpenShift workloads are introduced because their execution time and resource profile differ from K3s and Kubernetes.</li>
       </ul>
     </section>
 
     <section>
-      <h2>14. What Healthy Celery Logs Look Like</h2>
-      <pre>transport: redis://localhost:6379/0
-results: redis://localhost:6379/0
-[tasks]
-  . auto_K8S.tasks.debug_task
-  . auto_K8S.tasks.run_installation_task
-
-celery@DESKTOP-... ready
-Task auto_K8S.tasks.run_installation_task[...] received
-Task auto_K8S.tasks.run_installation_task[...] succeeded in ...s</pre>
-      <p class="ok">
-        If you see <code>received</code> and then <code>succeeded</code>, that means Celery and Redis are working together correctly.
-      </p>
+      <h2>15. Current Limitations</h2>
+      <ul>
+        <li>No authentication or role-based access control is currently enforced by the application.</li>
+        <li>Stored target credentials are not yet encrypted at the application level.</li>
+        <li>The current <code>Installation.inventory_content</code> field can retain generated inventory content containing credentials and must be removed, encrypted, or replaced by a redacted snapshot before production use.</li>
+        <li>Development environments may disable strict SSH host-key verification.</li>
+        <li>There is no global per-host lock preventing two installations from targeting the same machine simultaneously.</li>
+        <li>Unexpected worker termination can leave a stale <code>running</code> record that requires reconciliation.</li>
+        <li>Windows <code>solo</code> workers execute one task at a time and are not the recommended production topology.</li>
+      </ul>
       <p>
-        Be careful: a Celery task can <em>succeed</em> as a Python function but still return an installation result where
-        Ansible failed. That means the queue worked, but the infrastructure action did not.
+        These boundaries must be stated honestly when presenting LinDeploy as a workshop/lab platform
+        versus a hardened enterprise service.
       </p>
     </section>
 
     <section>
-      <h2>15. Frontend Behavior After Celery</h2>
-      <p>
-        The frontend had to change because the backend no longer returns the final playbook output immediately.
-      </p>
-      <ul>
-        <li>The launch endpoint now returns only a queued job response.</li>
-        <li>The frontend stores <code>installation_id</code>.</li>
-        <li>The frontend polls <code>/api/installations/&lt;id&gt;/</code>.</li>
-        <li>While polling, the UI shows a percentage, elapsed time, and progression state.</li>
-        <li>When the status becomes <code>success</code> or <code>failed</code>, the frontend reads the stored output from the API.</li>
-      </ul>
+      <h2>16. Presentation and Defense FAQ</h2>
+      <h3>Why not run Ansible directly in the Django request?</h3>
+      <p>Long HTTP requests are fragile. Celery provides durable queuing, worker isolation, status tracking, progress reporting, and cancellation support.</p>
+
+      <h3>Why use Redis?</h3>
+      <p>Redis is a fast message broker supported by Celery. It transports tasks from Django to workers and stores Celery result metadata.</p>
+
+      <h3>Is Redis the source of truth?</h3>
+      <p>No. The relational database is the durable business source of truth. Redis is execution infrastructure.</p>
+
+      <h3>What happens if one selected target is unreachable?</h3>
+      <p>The target receives its own failed or unreachable result. Other eligible targets continue, and the global result becomes <code>partial_success</code> when at least one succeeds.</p>
+
+      <h3>How does the user follow an installation?</h3>
+      <p>The frontend polls the installation detail endpoint. Django returns the normalized phase, progress, current Ansible task, timings, and per-target results stored by the worker.</p>
+
+      <h3>Does cancellation undo the installation?</h3>
+      <p>No. It stops future execution as safely as possible. Already applied remote changes require the matching reset or full cleanup workflow.</p>
+
+      <h3>Why keep tasks.py small?</h3>
+      <p>A thin task wrapper separates queue concerns from orchestration logic, which improves testability and allows the same service code to be invoked outside Celery.</p>
+
+      <h3>Does LinDeploy require WSL?</h3>
+      <p>No. The runner is configurable. Native Linux is the preferred production controller, while WSL supports the current Windows development workflow.</p>
+
+      <h3>How will this support OpenShift?</h3>
+      <p>The same queue and status model can orchestrate longer OpenShift SNO stages. Dedicated queues, stronger locking, artifact storage, and resumable phases should be added for that workload.</p>
+
+      <h3>What is the most important next hardening step?</h3>
+      <p>Add authentication/RBAC, encrypted credential storage, strict SSH trust management, and per-host concurrency locks before production multi-user use.</p>
     </section>
 
     <section>
-      <h2>16. Common Problems We Hit and Why</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Problem</th>
-            <th>Cause</th>
-            <th>Fix</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Celery app not found</td>
-            <td>Wrong worker command like <code>-A tasks</code></td>
-            <td>Use <code>celery -A backend worker ...</code></td>
-          </tr>
-          <tr>
-            <td>Redis connection refused</td>
-            <td>Redis not running on <code>localhost:6379</code></td>
-            <td>Start Redis container</td>
-          </tr>
-          <tr>
-            <td>Windows pool permission errors</td>
-            <td>Default pool model on Windows</td>
-            <td>Use <code>--pool=solo</code></td>
-          </tr>
-          <tr>
-            <td>Circular import between views and tasks</td>
-            <td>Task imported helper from view</td>
-            <td>Move shared logic into <code>services.py</code></td>
-          </tr>
-          <tr>
-            <td><code>run_playbook</code> shown as a Celery task</td>
-            <td>It was incorrectly decorated or registered</td>
-            <td>Keep it as a normal service function only</td>
-          </tr>
-          <tr>
-            <td>Frontend stayed at pending</td>
-            <td>Frontend expected synchronous final response</td>
-            <td>Add polling of installation status</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>17. Current State of the Integration</h2>
+      <h2>17. Operational Summary</h2>
       <ul>
-        <li>Celery app configuration exists and is valid.</li>
-        <li>Redis is used as broker and result backend.</li>
-        <li>Installation launch is asynchronous.</li>
-        <li>Worker execution logic is separated from HTTP views.</li>
-        <li>Frontend polls background installation status.</li>
-        <li>Windows worker startup requires <code>--pool=solo</code>.</li>
-      </ul>
-      <p class="ok">
-        In short: Redis and Celery were integrated successfully as the queue/execution layer for long Ansible playbook runs.
-      </p>
-    </section>
-
-    <section>
-      <h2>18. Next Improvements</h2>
-      <ul>
-        <li>Persist rich metadata like command, timings, inventory, stdout, and stderr directly in the installation model.</li>
-        <li>Move Celery broker settings to environment variables instead of hardcoding localhost.</li>
-        <li>Add installation history in the frontend.</li>
-        <li>Add cancellation or retry support later if needed.</li>
-        <li>Add a dedicated async model if SSH verification should also become a background job.</li>
+        <li>Django accepts and validates the request.</li>
+        <li>Redis carries the queued Celery message.</li>
+        <li>The Celery worker executes the LinDeploy orchestration service.</li>
+        <li>The selected runner launches Ansible on Linux or through WSL.</li>
+        <li>The database stores durable global and per-target results.</li>
+        <li>The frontend displays normalized operational status without exposing backend secrets.</li>
       </ul>
     </section>
-  </div>
+  </main>
 </body>
 </html>

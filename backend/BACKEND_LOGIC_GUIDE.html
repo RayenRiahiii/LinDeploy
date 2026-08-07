@@ -3,682 +3,516 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LinDeploy Backend Logic Guide</title>
+  <title>LinDeploy Backend Architecture and Logic Guide</title>
   <style>
     :root {
-      --bg: #0a0a0c;
-      --panel: #141418;
-      --panel-2: #1c1c22;
-      --text: #f5f5f7;
-      --muted: #b8b8c2;
-      --red: #d61f1f;
-      --red-soft: #ff4d4d;
-      --border: #2b2b33;
-      --code: #0f1115;
-      --ok: #16a34a;
+      --bg: #090a0d;
+      --panel: #14151a;
+      --panel-2: #1b1d24;
+      --text: #f7f7f8;
+      --muted: #b7bac5;
+      --red: #d51f26;
+      --red-soft: #ff5a60;
+      --border: #30323b;
+      --code: #0d0f14;
+      --ok: #4ade80;
+      --warn: #fbbf24;
     }
-
-    * {
-      box-sizing: border-box;
-    }
-
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body {
       margin: 0;
       font-family: "Segoe UI", Arial, sans-serif;
-      background:
-        radial-gradient(circle at top right, rgba(214, 31, 31, 0.18), transparent 28%),
-        radial-gradient(circle at top left, rgba(255, 77, 77, 0.08), transparent 22%),
-        var(--bg);
+      background: var(--bg);
       color: var(--text);
-      line-height: 1.6;
+      line-height: 1.65;
     }
-
-    .container {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 40px 20px 80px;
-    }
-
-    .hero {
-      background: linear-gradient(135deg, rgba(214, 31, 31, 0.22), rgba(20, 20, 24, 0.95));
-      border: 1px solid rgba(255, 77, 77, 0.25);
-      border-radius: 18px;
-      padding: 28px;
-      margin-bottom: 28px;
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(214, 31, 31, 0.15);
-      border: 1px solid rgba(255, 77, 77, 0.35);
-      color: #ffd0d0;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    h1, h2, h3 {
-      margin-top: 0;
-      color: #fff;
-    }
-
-    h1 {
-      font-size: 2.3rem;
-      margin: 14px 0 10px;
-    }
-
-    h2 {
-      font-size: 1.45rem;
-      margin-bottom: 14px;
-      border-left: 4px solid var(--red);
-      padding-left: 12px;
-    }
-
-    h3 {
-      font-size: 1.05rem;
-      margin-bottom: 10px;
-    }
-
-    p, li {
-      color: var(--muted);
-    }
-
-    section {
-      background: linear-gradient(180deg, rgba(28, 28, 34, 0.96), rgba(20, 20, 24, 0.96));
+    .container { max-width: 1180px; margin: 0 auto; padding: 40px 22px 80px; }
+    .hero, section {
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 24px;
+      border-radius: 12px;
+      padding: 26px;
       margin-bottom: 20px;
     }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 16px;
+    .hero { border-color: rgba(213, 31, 38, 0.55); }
+    .badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(213, 31, 38, 0.16);
+      color: #ffd4d6;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
     }
-
-    .card {
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 18px;
-    }
-
+    h1 { margin: 12px 0 8px; font-size: 2.2rem; }
+    h2 { border-left: 4px solid var(--red); padding-left: 12px; margin-top: 0; }
+    h3 { margin-bottom: 8px; }
+    p, li { color: var(--muted); }
+    a { color: #ff9a9e; }
     code {
-      font-family: Consolas, "Courier New", monospace;
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(255,255,255,0.06);
+      color: #ffe3e4;
+      border-radius: 5px;
       padding: 2px 6px;
-      border-radius: 6px;
-      color: #ffe3e3;
     }
-
     pre {
-      margin: 0;
       background: var(--code);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
+      border-radius: 8px;
+      padding: 15px;
       overflow-x: auto;
       color: #f3f4f6;
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 0.92rem;
     }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      overflow: hidden;
-      border-radius: 12px;
-      margin-top: 10px;
-    }
-
-    th, td {
-      text-align: left;
-      padding: 12px 10px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: top;
-    }
-
-    th {
-      color: #fff;
-      background: rgba(214, 31, 31, 0.12);
-    }
-
-    .flow {
-      padding-left: 18px;
-    }
-
-    .good {
-      color: #b6f2c5;
-    }
-
-    .small {
-      font-size: 0.95rem;
-    }
-
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { padding: 11px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { background: rgba(213,31,38,0.13); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 14px; }
+    .card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .ok { color: var(--ok); }
+    .warning { color: var(--warn); }
+    .toc { columns: 2; }
+    .small { font-size: 0.94rem; }
+    @media (max-width: 760px) { .toc { columns: 1; } h1 { font-size: 1.7rem; } }
     @media print {
-      body {
-        background: #fff;
-        color: #000;
-      }
-
-      section, .hero, .card {
-        box-shadow: none;
-        background: #fff;
-        border: 1px solid #ccc;
-      }
-
-      p, li, code, pre, td, th {
-        color: #000;
-      }
+      body, .hero, section, .card { background: #fff; color: #000; }
+      p, li, td, code, pre { color: #000; }
+      .hero, section, .card, pre { border-color: #bbb; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="hero">
-      <span class="badge">LinDeploy Backend Guide</span>
-      <h1>Backend Logic, Packages, and Imports</h1>
+    <header class="hero">
+      <span class="badge">LinDeploy Technical Reference</span>
+      <h1>Backend Architecture, Execution Logic, and Presentation Guide</h1>
       <p>
-        This document explains the backend part of your <code>LinDeploy</code> project:
-        what each file does, how the Django API works, how the database is structured,
-        and how the backend launches an Ansible playbook through WSL to install Kubernetes on target machines.
+        This document describes the backend implemented in the current LinDeploy repository.
+        It covers Django, Celery, Redis, Ansible execution, Kubernetes and K3s workflows,
+        multi-target behavior, cleanup, diagnostics, security boundaries, and common technical questions.
       </p>
-      <p class="small">
-        Open this file in a browser, then use <code>Ctrl+P</code> and choose <code>Save as PDF</code> if you want a PDF version.
-      </p>
-    </div>
+      <p class="small"><strong>Last aligned with source code:</strong> 2026-08-07.</p>
+    </header>
 
     <section>
-      <h2>1. Backend Goal</h2>
-      <p>The backend has one main job: receive data from the frontend, store machine and credential information in PostgreSQL, and trigger an Ansible playbook that installs Kubernetes on selected hosts.</p>
-      <div class="grid">
-        <div class="card">
-          <h3>What the backend stores</h3>
-          <ul>
-            <li>Credentials used to connect by SSH</li>
-            <li>Hosts to manage</li>
-            <li>Playbook templates</li>
-            <li>Installation history and target results</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3>What the backend exposes</h3>
-          <ul>
-            <li>REST API endpoints for hosts</li>
-            <li>Read endpoints for credentials and templates</li>
-            <li>An endpoint to launch an installation</li>
-            <li>An endpoint to read installation history</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3>What the backend executes</h3>
-          <ul>
-            <li>Dynamic inventory generation</li>
-            <li>WSL path conversion</li>
-            <li><code>ansible-playbook</code> command execution</li>
-            <li>Capture of stdout and stderr for debugging</li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <h2>2. Packages Needed</h2>
-      <p>The current backend dependencies are defined in <code>backend/requirements.txt</code>.</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Package</th>
-            <th>Why it is needed</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><code>Django</code></td>
-            <td>Main backend framework: project structure, ORM, settings, URLs, admin.</td>
-          </tr>
-          <tr>
-            <td><code>djangorestframework</code></td>
-            <td>Builds REST APIs more cleanly than plain Django views.</td>
-          </tr>
-          <tr>
-            <td><code>django-cors-headers</code></td>
-            <td>Lets the React frontend call the Django API from another origin like <code>http://localhost:5173</code>.</td>
-          </tr>
-          <tr>
-            <td><code>psycopg2-binary</code></td>
-            <td>PostgreSQL driver used by Django to connect to the database.</td>
-          </tr>
-          <tr>
-            <td><code>python-dotenv</code></td>
-            <td>Loads environment variables from a <code>.env</code> file.</td>
-          </tr>
-          <tr>
-            <td><code>asgiref</code>, <code>sqlparse</code>, <code>tzdata</code></td>
-            <td>Support packages used by Django.</td>
-          </tr>
-        </tbody>
-      </table>
-      <pre>pip install -r requirements.txt</pre>
-    </section>
-
-    <section>
-      <h2>3. Important Imports and Why They Exist</h2>
-      <div class="grid">
-        <div class="card">
-          <h3><code>settings.py</code></h3>
-          <pre>from pathlib import Path
-import os
-from dotenv import load_dotenv</pre>
-          <ul>
-            <li><code>Path</code>: builds file paths safely</li>
-            <li><code>os</code>: reads environment variables</li>
-            <li><code>load_dotenv</code>: loads values from <code>.env</code></li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3><code>models.py</code></h3>
-          <pre>from django.db import models</pre>
-          <ul>
-            <li><code>models</code>: defines database tables as Python classes</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3><code>serializers.py</code></h3>
-          <pre>from rest_framework import serializers</pre>
-          <ul>
-            <li><code>serializers</code>: converts model objects to JSON and validates request data</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3><code>views.py</code></h3>
-          <pre>from pathlib import Path
-from django.conf import settings
-from django.shortcuts import get_object_or_404
-from rest_framework.decorators import api_view
-from rest_framework.response import Response</pre>
-          <ul>
-            <li><code>Path</code>: locates the Ansible repository</li>
-            <li><code>settings</code>: reads Django base path</li>
-            <li><code>get_object_or_404</code>: returns 404 automatically if an object does not exist</li>
-            <li><code>api_view</code>: declares allowed HTTP methods</li>
-            <li><code>Response</code>: sends JSON API responses cleanly</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3><code>services.py</code></h3>
-          <pre>import subprocess
-import tempfile
-from pathlib import Path</pre>
-          <ul>
-            <li><code>subprocess</code>: runs <code>ansible-playbook</code> through WSL</li>
-            <li><code>tempfile</code>: creates a temporary inventory file</li>
-            <li><code>Path</code>: handles filesystem paths</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3><code>urls.py</code></h3>
-          <pre>from django.urls import path
-from . import views</pre>
-          <ul>
-            <li><code>path</code>: maps URL routes to functions</li>
-            <li><code>views</code>: imports the API functions to expose them</li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <h2>4. Settings Logic</h2>
-      <p><code>backend/settings.py</code> is where the backend is configured.</p>
-      <pre>INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'auto_K8S',
-    'rest_framework',
-    'corsheaders'
-]</pre>
-      <p>This means:</p>
-      <ul>
-        <li><code>auto_K8S</code> is your custom application.</li>
-        <li><code>rest_framework</code> allows you to build REST APIs.</li>
-        <li><code>corsheaders</code> allows your React app to call Django from another port.</li>
-      </ul>
-      <pre>MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
-    ...
-]</pre>
-      <p><code>CorsMiddleware</code> must be near the top so the CORS headers are added early.</p>
-      <pre>CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-]</pre>
-      <p>This allows the Vite frontend to call the backend during local development.</p>
-      <pre>DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),
-        'PORT': os.getenv('DB_PORT'),
-    }
-}</pre>
-      <p>The database connection values come from environment variables, not hardcoded values. That makes the project easier to move to another machine.</p>
-    </section>
-
-    <section>
-      <h2>5. Database Structure</h2>
-      <p>The database is intentionally simple. It stores only the information needed to launch Kubernetes installation.</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Model</th>
-            <th>Role</th>
-            <th>Main fields</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><code>Credential</code></td>
-            <td>Stores how to connect to a host</td>
-            <td><code>name</code>, <code>auth_type</code>, <code>username</code>, <code>private_key</code>, <code>password</code>, <code>become_password</code></td>
-          </tr>
-          <tr>
-            <td><code>Host</code></td>
-            <td>Represents one target machine</td>
-            <td><code>name</code>, <code>hostname</code>, <code>ip_address</code>, <code>ssh_port</code>, <code>enabled</code>, <code>credential</code></td>
-          </tr>
-          <tr>
-            <td><code>InstallationTemplate</code></td>
-            <td>Represents a playbook choice</td>
-            <td><code>name</code>, <code>playbook_path</code>, <code>description</code></td>
-          </tr>
-          <tr>
-            <td><code>Installation</code></td>
-            <td>Represents one launch request</td>
-            <td><code>template</code>, <code>status</code>, <code>started_at</code>, <code>finished_at</code></td>
-          </tr>
-          <tr>
-            <td><code>InstallationTarget</code></td>
-            <td>Stores the result of one host inside one installation</td>
-            <td><code>installation</code>, <code>host</code>, <code>status</code>, <code>output</code></td>
-          </tr>
-        </tbody>
-      </table>
-      <h3>Why this schema is good here</h3>
-      <ul>
-        <li>It separates connection data from host data. Several hosts can reuse the same credential.</li>
-        <li>It separates the playbook template from the execution history.</li>
-        <li>It keeps one global installation record and one per-target result record.</li>
-        <li>It is minimal and enough for launching installations and debugging failures.</li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>6. Serializer Logic</h2>
-      <p>Serializers are the bridge between Python objects and JSON.</p>
-      <div class="grid">
-        <div class="card">
-          <h3><code>CredentialSerializer</code></h3>
-          <p>Validates credential data before it is saved.</p>
-          <ul>
-            <li>If <code>auth_type = ssh_key</code>, then <code>private_key</code> must be present.</li>
-            <li>If <code>auth_type = password</code>, then <code>password</code> must be present.</li>
-          </ul>
-        </div>
-        <div class="card">
-          <h3><code>HostSerializer</code></h3>
-          <p>Exposes host fields plus a read-only <code>credential_name</code> field for easier display in the frontend.</p>
-        </div>
-        <div class="card">
-          <h3><code>InstallationTemplateSerializer</code></h3>
-          <p>Returns playbook template information.</p>
-        </div>
-        <div class="card">
-          <h3><code>InstallationTargetSerializer</code></h3>
-          <p>Returns target execution information plus a read-only <code>host_name</code>.</p>
-        </div>
-        <div class="card">
-          <h3><code>InstallationSerializer</code></h3>
-          <p>Returns installation data plus nested targets and a read-only <code>template_name</code>.</p>
-        </div>
-      </div>
-      <p>Without serializers, the backend would need much more manual JSON and validation code.</p>
-    </section>
-
-    <section>
-      <h2>7. API Endpoints</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Method</th>
-            <th>Endpoint</th>
-            <th>Purpose</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><code>GET</code>, <code>POST</code></td>
-            <td><code>/api/hosts/</code></td>
-            <td>List all hosts or create a new host</td>
-          </tr>
-          <tr>
-            <td><code>GET</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code></td>
-            <td><code>/api/hosts/&lt;id&gt;/</code></td>
-            <td>Read, replace, partially update, or delete one host</td>
-          </tr>
-          <tr>
-            <td><code>GET</code></td>
-            <td><code>/api/credentials/</code></td>
-            <td>List credentials</td>
-          </tr>
-          <tr>
-            <td><code>GET</code></td>
-            <td><code>/api/templates/</code></td>
-            <td>List playbook templates</td>
-          </tr>
-          <tr>
-            <td><code>GET</code></td>
-            <td><code>/api/installations/</code></td>
-            <td>List execution history</td>
-          </tr>
-          <tr>
-            <td><code>GET</code></td>
-            <td><code>/api/installations/&lt;id&gt;/</code></td>
-            <td>Read one installation and its targets</td>
-          </tr>
-          <tr>
-            <td><code>POST</code></td>
-            <td><code>/api/installations/launch/</code></td>
-            <td>Launch the Ansible playbook for selected hosts</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>8. View Logic</h2>
-      <h3><code>hosts_list_create</code></h3>
-      <ul>
-        <li><code>GET</code>: reads all <code>Host</code> records and returns them as JSON.</li>
-        <li><code>POST</code>: validates request data with <code>HostSerializer</code> and saves a new host.</li>
-      </ul>
-
-      <h3><code>host_detail</code></h3>
-      <ul>
-        <li><code>GET</code>: returns one host.</li>
-        <li><code>PUT</code>: replaces the host with full new data.</li>
-        <li><code>PATCH</code>: updates only some fields.</li>
-        <li><code>DELETE</code>: removes the host.</li>
-      </ul>
-
-      <h3><code>credentials_list</code> and <code>templates_list</code></h3>
-      <p>These are simple read-only endpoints used by the frontend select boxes.</p>
-
-      <h3><code>installations_list</code> and <code>installation_detail</code></h3>
-      <p>These allow you to inspect past executions and debug output later.</p>
-
-      <h3><code>launch_installation</code></h3>
-      <p>This is the core backend function. It does all of the following:</p>
-      <ol class="flow">
-        <li>Reads <code>template_id</code> and <code>host_ids</code> from the request.</li>
-        <li>Validates that the template and hosts exist.</li>
-        <li>Creates one <code>Installation</code> row with status <code>pending</code>, then <code>running</code>.</li>
-        <li>Creates one <code>InstallationTarget</code> row for each selected host.</li>
-        <li>Builds a temporary dynamic inventory file.</li>
-        <li>Locates the Ansible repository on disk.</li>
-        <li>Calls <code>run_playbook()</code>.</li>
-        <li>Collects <code>stdout</code> and <code>stderr</code>.</li>
-        <li>Marks the installation and targets as <code>success</code> or <code>failed</code>.</li>
-        <li>Returns a detailed JSON response to the frontend.</li>
+      <h2>Contents</h2>
+      <ol class="toc">
+        <li><a href="#purpose">Purpose and scope</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#layout">Repository layout</a></li>
+        <li><a href="#stack">Technology stack</a></li>
+        <li><a href="#settings">Configuration</a></li>
+        <li><a href="#models">Database model</a></li>
+        <li><a href="#api">REST API</a></li>
+        <li><a href="#flow">Execution flow</a></li>
+        <li><a href="#multi-target">Multi-target behavior</a></li>
+        <li><a href="#runners">Ansible runner abstraction</a></li>
+        <li><a href="#workflows">Installer and cleanup workflows</a></li>
+        <li><a href="#progress">Progress and diagnostics</a></li>
+        <li><a href="#security">Security model</a></li>
+        <li><a href="#operations">Run and validate</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#limits">Current limits and roadmap</a></li>
+        <li><a href="#faq">Presentation FAQ</a></li>
       </ol>
     </section>
 
-    <section>
-      <h2>9. Service Layer Logic</h2>
-      <p>The backend keeps Ansible-related logic in <code>services.py</code>. This is good because the view stays smaller and more readable.</p>
-
-      <h3><code>build_inventory_file(hosts)</code></h3>
-      <p>This function creates a temporary YAML inventory for the selected hosts.</p>
-      <pre>all:
-  children:
-    selected_hosts:
-      hosts:
-        target2:
-          ansible_host: 192.168.100.133
-          ansible_port: 22
-          ansible_user: "target2"
-          ansible_password: "&lt;redacted&gt;"
-          ansible_become_password: "&lt;redacted&gt;"</pre>
-      <p>Why this was important:</p>
-      <ul>
-        <li>It avoids depending on a static inventory file.</li>
-        <li>It allows the web app to select hosts dynamically.</li>
-        <li>Quoting YAML secrets prevents numeric-looking passwords from being coerced into integers.</li>
-      </ul>
-
-      <h3><code>windows_to_wsl_path(path)</code></h3>
-      <p>This converts a Windows path like <code>C:\Users\ASUS\...</code> into a WSL path like <code>/mnt/c/Users/ASUS/...</code>.</p>
-      <p>It is required because Django runs on Windows while Ansible is executed inside Ubuntu WSL.</p>
-
-      <h3><code>run_playbook(repo_root, playbook_relative_path, inventory_path)</code></h3>
-      <p>This function:</p>
-      <ul>
-        <li>Checks that the playbook, <code>ansible.cfg</code>, and <code>roles</code> folder exist.</li>
-        <li>Converts those paths to WSL format.</li>
-        <li>Builds the shell command.</li>
-        <li>Runs <code>ansible-playbook</code> using <code>subprocess.run()</code>.</li>
-        <li>Returns the command result so the API can display the output.</li>
-      </ul>
-      <pre>["wsl", "-d", "Ubuntu", "sh", "-lc", shell_command]</pre>
-      <p>This is the critical bridge between your Django backend and the Ansible automation engine.</p>
+    <section id="purpose">
+      <h2>1. Purpose and Scope</h2>
+      <p>
+        LinDeploy is a web orchestration platform. It stores target and credential information,
+        validates SSH access, generates temporary Ansible input, queues long-running work, executes
+        installer or cleanup playbooks, and returns a result for every selected target.
+      </p>
+      <div class="grid">
+        <div class="card">
+          <h3>Implemented</h3>
+          <ul>
+            <li>Kubernetes single-node with kubeadm, containerd, and Calico.</li>
+            <li>K3s single-node installation.</li>
+            <li>Kubernetes reset and full uninstall.</li>
+            <li>K3s cleanup and uninstall.</li>
+            <li>SSH prechecks, cancellation, history, progress, and per-host diagnostics.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Important topology rule</h3>
+          <p>
+            Selecting several hosts does not create one shared multi-node cluster. LinDeploy currently
+            creates one independent single-node cluster on each selected host.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Not implemented yet</h3>
+          <ul>
+            <li>Shared multi-node or HA clusters.</li>
+            <li>OpenShift SNO provisioning.</li>
+            <li>Local artifact and image mirror.</li>
+            <li>Authentication, RBAC, and encrypted secret storage.</li>
+          </ul>
+        </div>
+      </div>
     </section>
 
-    <section>
-      <h2>10. Full Backend Execution Flow</h2>
-      <ol class="flow">
-        <li>User selects hosts in the React frontend.</li>
-        <li>User selects the playbook template.</li>
-        <li>Frontend sends a <code>POST</code> request to <code>/api/installations/launch/</code>.</li>
-        <li>Django validates the payload.</li>
-        <li>Django reads selected hosts and their credentials from PostgreSQL.</li>
-        <li>Django generates a temporary inventory file.</li>
-        <li>Django locates the Ansible repository.</li>
-        <li>Django runs Ansible inside Ubuntu WSL.</li>
-        <li>Ansible connects to the targets and runs the playbook roles.</li>
-        <li>Django captures the command output and stores the result.</li>
-        <li>Frontend displays success, failure, stdout, and stderr.</li>
-      </ol>
+    <section id="architecture">
+      <h2>2. High-Level Architecture</h2>
+      <pre>Browser
+  |
+  v
+React + TypeScript + Mantine
+  |
+  | REST/JSON polling
+  v
+Django REST API -------- PostgreSQL or SQLite
+  |
+  | queue task
+  v
+Redis -------- Celery worker
+                  |
+                  v
+        LinuxRunner or WslRunner
+                  |
+                  v
+               Ansible
+          /         |         \
+      Target 1   Target 2   Target N
+      cluster 1  cluster 2  cluster N</pre>
+      <p>
+        Django is the source of truth for application state. Redis transports background jobs and
+        Celery progress. Ansible remains the system configuration engine and communicates with targets over SSH.
+      </p>
     </section>
 
-    <section>
-      <h2>11. Backend Files You Currently Rely On</h2>
+    <section id="layout">
+      <h2>3. Repository Layout</h2>
       <table>
-        <thead>
-          <tr>
-            <th>File</th>
-            <th>Why it matters</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Path</th><th>Responsibility</th></tr></thead>
         <tbody>
-          <tr>
-            <td><code>backend/settings.py</code></td>
-            <td>Project configuration, database, CORS, installed apps</td>
-          </tr>
-          <tr>
-            <td><code>backend/urls.py</code></td>
-            <td>Includes app routes under <code>/api/</code></td>
-          </tr>
-          <tr>
-            <td><code>auto_K8S/models.py</code></td>
-            <td>Database structure</td>
-          </tr>
-          <tr>
-            <td><code>auto_K8S/serializers.py</code></td>
-            <td>Validation and JSON transformation</td>
-          </tr>
-          <tr>
-            <td><code>auto_K8S/views.py</code></td>
-            <td>API logic and playbook launch flow</td>
-          </tr>
-          <tr>
-            <td><code>auto_K8S/services.py</code></td>
-            <td>Dynamic inventory generation and Ansible execution</td>
-          </tr>
-          <tr>
-            <td><code>auto_K8S/urls.py</code></td>
-            <td>App endpoint declarations</td>
-          </tr>
-          <tr>
-            <td><code>requirements.txt</code></td>
-            <td>Backend Python dependencies</td>
-          </tr>
+          <tr><td><code>backend/auto_K8S/models.py</code></td><td>Persistent domain models.</td></tr>
+          <tr><td><code>backend/auto_K8S/serializers.py</code></td><td>Validation, JSON output, OS normalization, and operator issue classification.</td></tr>
+          <tr><td><code>backend/auto_K8S/views.py</code></td><td>REST endpoints, request validation, template selection, and task queueing.</td></tr>
+          <tr><td><code>backend/auto_K8S/services.py</code></td><td>Inventory generation, prechecks, execution, parsing, cancellation, and aggregation.</td></tr>
+          <tr><td><code>backend/auto_K8S/tasks.py</code></td><td>Thin Celery task entry point.</td></tr>
+          <tr><td><code>backend/auto_K8S/runners/</code></td><td>Portable Linux and Windows/WSL execution backends.</td></tr>
+          <tr><td><code>backend/backend/settings.py</code></td><td>Django, database, CORS, Redis, Celery, SSH, and runner configuration.</td></tr>
+          <tr><td><code>backend/backend/Playbooks/</code></td><td>Embedded Ansible repository used by the worker.</td></tr>
+          <tr><td><code>frontend/</code></td><td>Operator UI, CRUD, installer pages, monitor, history, and result reports.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The Django application package is still called <code>auto_K8S</code> for migration compatibility.
+        The product name and repository name are LinDeploy.
+      </p>
+    </section>
+
+    <section id="stack">
+      <h2>4. Technology Stack</h2>
+      <table>
+        <thead><tr><th>Technology</th><th>Why it is used</th></tr></thead>
+        <tbody>
+          <tr><td>Django 6 + Django REST Framework</td><td>API, validation, persistence, and orchestration endpoints.</td></tr>
+          <tr><td>Celery</td><td>Runs long Ansible operations outside the HTTP request.</td></tr>
+          <tr><td>Redis</td><td>Celery broker, result backend, and progress metadata transport.</td></tr>
+          <tr><td>PostgreSQL</td><td>Recommended persistent database; SQLite is available for local development.</td></tr>
+          <tr><td>Ansible</td><td>Idempotent remote configuration over SSH.</td></tr>
+          <tr><td>React + TypeScript + Vite</td><td>Typed operator interface and live polling.</td></tr>
         </tbody>
       </table>
     </section>
 
-    <section>
-      <h2>12. What Is Still Important for Portability</h2>
+    <section id="settings">
+      <h2>5. Configuration and Environment</h2>
+      <p>Runtime configuration is loaded from <code>backend/.env</code>. The committed template is <code>backend/.env.example</code>.</p>
+      <pre>DJANGO_SECRET_KEY=replace-me
+DJANGO_DEBUG=False
+DJANGO_ALLOWED_HOSTS=lindeploy.example.local
+USE_SQLITE=False
+DB_NAME=lindeploy
+DB_USER=lindeploy
+DB_PASSWORD=replace-me
+DB_HOST=localhost
+DB_PORT=5432
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+ANSIBLE_RUNNER_BACKEND=linux
+ANSIBLE_REPO_ROOT=
+ANSIBLE_TIMEOUT=15
+ANSIBLE_HOST_KEY_CHECKING=True</pre>
       <ul>
-        <li>The database settings are already portable because they come from environment variables.</li>
-        <li>The backend still assumes Ansible runs inside <code>WSL Ubuntu</code> on Windows.</li>
-        <li>The backend still expects a local cloned Ansible repository with <code>ansible.cfg</code>, <code>roles</code>, and <code>playbooks</code>.</li>
-        <li>If you want full portability later, make the Ansible repo path configurable from an environment variable like <code>ANSIBLE_REPO_ROOT</code>.</li>
-        <li>You can also validate credentials before launching to fail earlier when a host has no valid SSH user or password.</li>
+        <li><code>ANSIBLE_RUNNER_BACKEND</code> accepts <code>linux</code> or <code>wsl</code>.</li>
+        <li><code>ANSIBLE_REPO_ROOT</code> overrides the embedded Playbooks directory when required.</li>
+        <li><code>CELERY_BROKER_URL</code> and <code>CELERY_RESULT_BACKEND</code> are environment driven, not hardcoded.</li>
+        <li>The permissive local defaults in <code>.env.example</code> must be hardened before production use.</li>
       </ul>
     </section>
 
-    <section>
-      <h2>13. Commands Used to Run the Backend</h2>
-      <pre>python -m venv .venv
-.venv\Scripts\activate
+    <section id="models">
+      <h2>6. Database Model</h2>
+      <table>
+        <thead><tr><th>Model</th><th>Main data</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>Credential</code></td><td>Authentication type, username, password, become password, private key.</td><td>Reusable SSH access configuration.</td></tr>
+          <tr><td><code>Host</code></td><td>Name, hostname, IPv4, port, OS, enabled state, credential, internal baseline facts.</td><td>Managed target inventory.</td></tr>
+          <tr><td><code>InstallationTemplate</code></td><td>System type, deployment type, playbook path, description.</td><td>Maps a web workflow to a controlled playbook.</td></tr>
+          <tr><td><code>Installation</code></td><td>Status, phase, progress, task ID, process ID, command, inventory, output, timings, configuration.</td><td>One complete queued execution.</td></tr>
+          <tr><td><code>InstallationTarget</code></td><td>Host, status, return code, stdout, stderr, operator output.</td><td>Per-host result inside one execution.</td></tr>
+        </tbody>
+      </table>
+      <h3>Installation statuses</h3>
+      <pre>pending -> running -> success
+                   -> partial_success
+                   -> failed
+                   -> cancelled</pre>
+      <h3>Execution phases</h3>
+      <pre>queued -> ssh_check -> running_playbook -> finalizing -> completed
+                                                  \-> failed
+                                                  \-> cancelled</pre>
+    </section>
+
+    <section id="api">
+      <h2>7. Current REST API</h2>
+      <table>
+        <thead><tr><th>Endpoint</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET /api/dashboard/</code></td><td>Operational counts and latest execution.</td></tr>
+          <tr><td><code>GET, POST /api/hosts/</code></td><td>List or create hosts.</td></tr>
+          <tr><td><code>GET, PUT, DELETE /api/hosts/&lt;id&gt;/</code></td><td>Read, update, or delete one host.</td></tr>
+          <tr><td><code>POST /api/hosts/&lt;id&gt;/detect/</code></td><td>Internal baseline detection for one host.</td></tr>
+          <tr><td><code>GET, POST /api/credentials/</code></td><td>List or create SSH credentials.</td></tr>
+          <tr><td><code>GET, PUT, DELETE /api/credentials/&lt;id&gt;/</code></td><td>Credential detail operations.</td></tr>
+          <tr><td><code>GET /api/templates/?system_type=...</code></td><td>List controlled installer and cleanup templates.</td></tr>
+          <tr><td><code>GET /api/installations/</code></td><td>Execution history.</td></tr>
+          <tr><td><code>DELETE /api/installations/clear-history/</code></td><td>Remove completed history records.</td></tr>
+          <tr><td><code>GET, DELETE /api/installations/&lt;id&gt;/</code></td><td>Poll execution detail or delete one history record.</td></tr>
+          <tr><td><code>POST /api/installations/precheck/</code></td><td>SSH and target eligibility check before launch.</td></tr>
+          <tr><td><code>POST /api/installations/launch/</code></td><td>Create records and queue the Celery task.</td></tr>
+          <tr><td><code>POST /api/installations/&lt;id&gt;/cancel/</code></td><td>Request cancellation and terminate the active runner process.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="flow">
+      <h2>8. Complete Execution Flow</h2>
+      <ol>
+        <li>The frontend submits the system, template, selected host IDs, cluster configuration, and host overrides.</li>
+        <li>Django validates enabled hosts, credentials, system type, playbook path, and normalized values.</li>
+        <li>Kubernetes auto mode can inspect baseline state to avoid unsafe reinitialization.</li>
+        <li>Django creates one <code>Installation</code> and one <code>InstallationTarget</code> per selected host.</li>
+        <li><code>run_installation_task.delay(installation.id)</code> queues the job in Redis.</li>
+        <li>The Celery worker reloads the database record and generates temporary inventory, key, and extra-vars files.</li>
+        <li>An SSH ping check separates reachable and unreachable targets.</li>
+        <li>If at least one target remains eligible, the playbook continues for those targets.</li>
+        <li>Ansible output is streamed, parsed, stored, and exposed as live progress.</li>
+        <li>The recap is parsed into per-target results.</li>
+        <li>Django computes the global status and stores timings and diagnostics.</li>
+        <li>The frontend polling loop displays the final report.</li>
+      </ol>
+    </section>
+
+    <section id="multi-target">
+      <h2>9. Multi-Target and Partial Success</h2>
+      <p>
+        The generated inventory uses the <code>selected_hosts</code> group. Playbooks use Ansible's
+        <code>free</code> strategy so a slow host does not unnecessarily block task progression on healthy hosts.
+      </p>
+      <table>
+        <thead><tr><th>Situation</th><th>Global result</th></tr></thead>
+        <tbody>
+          <tr><td>Every selected target succeeds.</td><td><code>success</code></td></tr>
+          <tr><td>At least one succeeds and at least one fails or is unreachable.</td><td><code>partial_success</code></td></tr>
+          <tr><td>No target succeeds.</td><td><code>failed</code></td></tr>
+          <tr><td>The operator cancels the run.</td><td><code>cancelled</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        A target can therefore fail SSH validation without stopping installation on reachable targets.
+        Each target keeps its own return code and relevant output.
+      </p>
+    </section>
+
+    <section id="runners">
+      <h2>10. Ansible Runner Abstraction</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>LinuxRunner</h3>
+          <p>Runs <code>ansible</code> and <code>ansible-playbook</code> directly on a native Linux controller.</p>
+        </div>
+        <div class="card">
+          <h3>WslRunner</h3>
+          <p>Converts Windows paths to <code>/mnt/&lt;drive&gt;/...</code> paths and executes Ansible in the configured WSL distribution.</p>
+        </div>
+      </div>
+      <p>
+        Both runners provide connectivity checks, ad-hoc commands, streaming playbook execution,
+        timing metadata, Ansible configuration variables, and callback activation.
+      </p>
+    </section>
+
+    <section id="workflows">
+      <h2>11. Installer, Conflict, and Cleanup Workflows</h2>
+      <table>
+        <thead><tr><th>Playbook</th><th>Behavior</th></tr></thead>
+        <tbody>
+          <tr><td><code>k8s_single_node.yml</code></td><td>Common preparation, containerd, Kubernetes packages, kubeadm initialization, Calico, and validation.</td></tr>
+          <tr><td><code>k8s_cleanup.yml</code></td><td>Reset cluster state but retain packages for a faster reinstall.</td></tr>
+          <tr><td><code>k8s_full_uninstall.yml</code></td><td>Remove cluster state and Kubernetes-managed packages and services.</td></tr>
+          <tr><td><code>k3s_single_node.yml</code></td><td>K3s installation, service configuration, kubectl access, and health validation.</td></tr>
+          <tr><td><code>k3s_cleanup.yml</code></td><td>Remove K3s service, binaries, state, kubeconfig, and managed interfaces.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        K3s and kubeadm Kubernetes must not coexist on the same single-node target. The playbooks detect
+        conflicting artifacts before destructive changes. The serializer converts known conflict messages into
+        an operator action so the UI can offer the correct cleanup workflow.
+      </p>
+    </section>
+
+    <section id="progress">
+      <h2>12. Progress, Timings, and Diagnostics</h2>
+      <ul>
+        <li>Celery publishes coarse execution steps and live Ansible task metadata.</li>
+        <li>The service parses play, role, task, recap, profile timings, and runner return code.</li>
+        <li><code>timings</code> stores SSH and playbook duration.</li>
+        <li><code>task_profile</code> stores slow Ansible tasks.</li>
+        <li><code>bottleneck_hints</code> explains likely download or rollout delays.</li>
+        <li>Target stdout/stderr is separated so result modals can show relevant output per host.</li>
+        <li>The database remains readable even if the Redis result metadata is temporarily unavailable.</li>
+      </ul>
+    </section>
+
+    <section id="security">
+      <h2>13. Security Model and Honest Boundaries</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Current protections</h3>
+          <ul>
+            <li>Serializer input validation.</li>
+            <li>Controlled playbook paths.</li>
+            <li>No shell interpolation for native Linux runner commands.</li>
+            <li>Generated temporary key files with restricted permissions.</li>
+            <li>Secret redaction from user-facing diagnostics.</li>
+            <li>Ansible <code>no_log</code> for selected sensitive tasks.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Current limitations</h3>
+          <ul>
+            <li>Credentials are stored in database fields without application-level encryption.</li>
+            <li><code>Installation.inventory_content</code> currently retains generated inventory content and can therefore retain SSH or become secrets.</li>
+            <li>The API has no application authentication or RBAC.</li>
+            <li>Development defaults disable strict SSH host-key checking.</li>
+            <li>There is no global host lock preventing two separate runs from targeting the same host simultaneously.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="warning">
+        LinDeploy is appropriate for controlled labs and workshops. Do not expose it to an untrusted network
+        until authentication, authorization, encrypted secret storage, inventory redaction, HTTPS, audit logging, and host locking are implemented.
+      </p>
+    </section>
+
+    <section id="operations">
+      <h2>14. Run and Validate</h2>
+      <h3>Backend</h3>
+      <pre>cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python manage.py makemigrations
+Copy-Item .env.example .env
 python manage.py migrate
 python manage.py runserver</pre>
-      <p>Database tables are created by migrations, not by writing SQL manually.</p>
+      <h3>Celery</h3>
+      <pre># Windows
+celery -A backend worker --loglevel=info --pool=solo
+
+# Native Linux
+celery -A backend worker --loglevel=info</pre>
+      <h3>Validation</h3>
+      <pre>python manage.py check
+python manage.py test
+
+cd ../frontend
+npm run lint
+npm run build
+
+cd ../backend/backend/Playbooks
+ansible-playbook --syntax-check playbooks/k8s_single_node.yml
+ansible-playbook --syntax-check playbooks/k3s_single_node.yml</pre>
+    </section>
+
+    <section id="troubleshooting">
+      <h2>15. Troubleshooting Map</h2>
+      <table>
+        <thead><tr><th>Symptom</th><th>Check first</th></tr></thead>
+        <tbody>
+          <tr><td>Launch remains pending.</td><td>Redis availability and Celery worker logs.</td></tr>
+          <tr><td>SSH verification fails.</td><td>Target IP, port, credential, sudo access, firewall, and routing.</td></tr>
+          <tr><td>One target fails but others continue.</td><td>This is expected; inspect the failed target result and global <code>partial_success</code>.</td></tr>
+          <tr><td>Wrong installer conflict.</td><td>Run the cleanup suggested by <code>operator_issue.cleanup_system</code>, then retry the original installer page.</td></tr>
+          <tr><td>Playbook appears blocked.</td><td>Current task, target reachability, task profile, service journal, and image download connectivity.</td></tr>
+          <tr><td>Cancellation does not finish immediately.</td><td>Runner PID, child processes, worker permissions, and target SSH timeout.</td></tr>
+          <tr><td>Frontend receives HTML instead of JSON.</td><td>Backend URL, Django process, reverse proxy, CORS, and incorrect route fallback.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="limits">
+      <h2>16. Current Limits and Roadmap</h2>
+      <ol>
+        <li>Add login, RBAC, API permissions, audit trail, and encrypted/external secret storage.</li>
+        <li>Add host-level execution locking and retry policies.</li>
+        <li>Add a local artifact repository and OCI registry for offline K3s and Kubernetes.</li>
+        <li>Add shared multi-node and HA topologies.</li>
+        <li>Add OpenShift SNO provisioning on KVM/libvirt with Agent-Based Installer and <code>oc-mirror v2</code>.</li>
+      </ol>
+    </section>
+
+    <section id="faq">
+      <h2>17. Presentation and Defense FAQ</h2>
+      <h3>Why use Django instead of running Ansible directly from React?</h3>
+      <p>Django validates input, protects controlled playbook selection, stores durable history, and provides one execution API. A browser must never receive SSH secrets or execute operating-system commands.</p>
+
+      <h3>Why use Ansible?</h3>
+      <p>Ansible provides remote SSH orchestration, reusable roles, conditional support for Linux families, handlers, retries, and idempotent modules.</p>
+
+      <h3>Why use Celery and Redis?</h3>
+      <p>Cluster installation can take many minutes. Celery removes that work from the HTTP request, while Redis transports queued tasks and progress metadata.</p>
+
+      <h3>What happens if one of three targets is unreachable?</h3>
+      <p>The target is marked failed, but reachable eligible targets continue. The final execution is <code>partial_success</code> if at least one target succeeds.</p>
+
+      <h3>Does selecting three hosts create a three-node cluster?</h3>
+      <p>No. The current mode creates three independent single-node clusters. Shared cluster topology is a roadmap feature.</p>
+
+      <h3>How is idempotency achieved?</h3>
+      <p>The backend selects and launches workflows; idempotency is primarily implemented in Ansible through state checks, native modules, conditions, handlers, and safe existing-install detection.</p>
+
+      <h3>What is the difference between reset and full uninstall?</h3>
+      <p>Kubernetes reset removes cluster state while retaining packages for fast reinstall. Full uninstall also removes Kubernetes packages and services. K3s currently has one optimized full cleanup workflow.</p>
+
+      <h3>Can K3s and Kubernetes be installed on the same target?</h3>
+      <p>No. LinDeploy intentionally blocks that configuration and proposes cleanup of the conflicting platform.</p>
+
+      <h3>Is WSL required?</h3>
+      <p>No. WSL is one controller backend. Native Linux is supported through <code>LinuxRunner</code>.</p>
+
+      <h3>Is LinDeploy production-ready?</h3>
+      <p>Its execution workflows are robust for controlled labs, but the web platform still requires authentication, RBAC, encrypted secrets, HTTPS, audit logging, and host locking before exposure in a production network.</p>
+
+      <h3>How will offline mode work?</h3>
+      <p>A dedicated mirror server will store verified binaries, packages, manifests, and container images. Targets will install from the LAN instead of repeatedly downloading from the Internet.</p>
+
+      <h3>How will OpenShift SNO fit the architecture?</h3>
+      <p>The same API, Celery, history, target result, and Ansible layers will orchestrate libvirt, DNS, mirror synchronization, Agent ISO generation, installation monitoring, validation, and teardown.</p>
     </section>
 
     <section>
-      <h2>14. Summary</h2>
-      <p class="good">
-        Your backend is now a simple but solid orchestration layer:
-        PostgreSQL stores the data, Django REST API exposes the endpoints,
-        serializers validate the input, services prepare the inventory and launch Ansible,
-        and the installation result is stored and returned to the frontend.
-      </p>
-      <p>
-        For a first version, the structure is coherent: models are minimal, views are understandable,
-        and the Ansible execution path is separated from the CRUD logic.
+      <h2>18. Summary</h2>
+      <p class="ok">
+        LinDeploy separates user interaction, durable orchestration state, asynchronous execution,
+        platform-independent runner logic, and Ansible configuration. This separation allows Kubernetes,
+        K3s, future mirror workflows, and OpenShift SNO to reuse the same execution foundation.
       </p>
     </section>
   </div>
