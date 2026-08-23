@@ -1,0 +1,61 @@
+---
+- name: Prepare the discovery ISO for qemu access
+  ansible.builtin.copy:
+    src: "{{ discovery_iso_path }}"
+    dest: "{{ libvirt_iso_runtime_path }}"
+    remote_src: true
+    owner: qemu
+    group: qemu
+    mode: "0640"
+  become: true
+  when: target_libvirt_vm_state == 'shut off'
+
+- name: Restore the runtime ISO SELinux label
+  ansible.builtin.command:
+    argv: [restorecon, -F, "{{ libvirt_iso_runtime_path }}"]
+  become: true
+  changed_when: false
+  when: target_libvirt_vm_state == 'shut off'
+
+- name: Insert the discovery ISO into the powered-off VM
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - change-media
+      - "{{ libvirt_vm_name }}"
+      - "{{ libvirt_iso_target | default('sda') }}"
+      - "{{ libvirt_iso_runtime_path }}"
+      - --insert
+      - --config
+  when:
+    - target_libvirt_vm_state == 'shut off'
+    - libvirt_iso_runtime_path not in target_libvirt_block_devices.stdout
+
+- name: Verify a running VM is using the requested ISO
+  ansible.builtin.assert:
+    that:
+      - libvirt_iso_runtime_path in target_libvirt_block_devices.stdout
+    fail_msg: >-
+      VM {{ libvirt_vm_name }} is running without the requested discovery ISO.
+      The automation will not forcibly stop a running VM.
+    quiet: true
+  when: target_libvirt_vm_state == 'running'
+
+- name: Start the libvirt target
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", start, "{{ libvirt_vm_name }}"]
+  when: target_libvirt_vm_state == 'shut off'
+
+- name: Store the libvirt boot result
+  ansible.builtin.set_fact:
+    target_boot_performed: "{{ target_libvirt_vm_state == 'shut off' }}"
+
+- name: Report the libvirt boot result
+  ansible.builtin.debug:
+    msg:
+      - "VM: {{ libvirt_vm_name }}"
+      - "Discovery ISO: {{ libvirt_iso_runtime_path }}"
+      - "VM started by this run: {{ target_boot_performed }}"
+      - The installation disk has not yet been erased.

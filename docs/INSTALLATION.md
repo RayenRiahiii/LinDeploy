@@ -93,6 +93,13 @@ cd LinDeploy\backend
 celery -A backend worker --loglevel=info --pool=solo
 ```
 
+Start Celery Beat in another terminal so LinDeploy can perform scheduled mirror
+version checks and prewarming:
+
+```powershell
+celery -A backend beat --loglevel=info
+```
+
 Sous Linux, ne pas utiliser `--pool=solo` sauf besoin particulier :
 
 ```bash
@@ -168,3 +175,23 @@ python manage.py migrate
 2. Arreter le worker Celery.
 3. Arreter Django et Vite.
 4. Arreter Redis uniquement lorsqu'aucune tache n'est en attente.
+
+## 9. Activer OpenShift SNO
+
+Appliquer toutes les migrations avant d'ouvrir la page OpenShift :
+
+```powershell
+cd LinDeploy\backend
+.\.venv\Scripts\Activate.ps1
+python manage.py migrate
+```
+
+Le mode connecte exige `OPENSHIFT_RED_HAT_OFFLINE_TOKEN` dans `backend/.env`.
+Le mode deconnecte n'utilise pas ce token, mais exige un pull secret Red Hat, un
+hote RHEL 8/9 x86_64 avec KVM/libvirt, un FQDN DNS stable pour Quay, au moins
+400 GiB disponibles pour le miroir et l'archive officielle
+`mirror-registry.tar.gz`.
+
+Consulter [OpenShift SNO](OPENSHIFT_SNO.md) avant le premier test reel. Utiliser
+une VM SNO et un pool de stockage jetables; ne jamais confirmer un disque
+physique contenant des donnees.

@@ -1,0 +1,504 @@
+---
+- name: Resolve effective Kubernetes control-plane endpoint
+  set_fact:
+    kubeadm_multi_effective_endpoint: >-
+      {{
+        kubeadm_multi_control_plane_endpoint
+        if kubeadm_multi_control_plane_endpoint | length > 0
+        else kubeadm_multi_advertise_address ~ ':' ~ (kubeadm_multi_api_port | string)
+      }}
+
+- name: Add API port when endpoint omits it
+  set_fact:
+    kubeadm_multi_effective_endpoint: >-
+      {{ kubeadm_multi_effective_endpoint }}:{{ kubeadm_multi_api_port }}
+  when: kubeadm_multi_effective_endpoint is not match('^.+:[0-9]+$')
+
+- name: Extract control-plane endpoint host
+  set_fact:
+    kubeadm_multi_endpoint_host: >-
+      {{ kubeadm_multi_effective_endpoint | regex_replace(':[0-9]+$', '') }}
+
+- name: Validate bootstrap configuration
+  assert:
+    that:
+      - groups.get('bootstrap', []) | length == 1
+      - inventory_hostname == groups['bootstrap'][0]
+      - kubeadm_multi_node_name | length > 0
+      - kubeadm_multi_advertise_address | length > 0
+      - kubeadm_multi_effective_endpoint | length > 0
+    fail_msg: "The bootstrap host or Kubernetes endpoint configuration is incomplete."
+
+- name: Warn when multiple control planes use the bootstrap node as endpoint
+  debug:
+    msg: >-
+      Multiple control planes are requested, but the endpoint resolves directly
+      to the bootstrap address. The cluster is multi-control-plane, but it is not
+      highly available until this endpoint is backed by a stable load balancer.
+  when:
+    - groups.get('control_plane', []) | length > 1
+    - kubeadm_multi_endpoint_host == kubeadm_multi_advertise_address
+
+- name: Inspect bootstrap Kubernetes state
+  stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ kubeadm_multi_admin_conf_path }}"
+    - "{{ kubeadm_multi_kubelet_conf_path }}"
+  register: kubeadm_multi_bootstrap_state
+
+- name: Track bootstrap initialization state
+  set_fact:
+    kubeadm_multi_bootstrap_initialized: "{{ kubeadm_multi_bootstrap_state.results[0].stat.exists }}"
+    kubeadm_multi_bootstrap_kubelet_configured: "{{ kubeadm_multi_bootstrap_state.results[1].stat.exists }}"
+
+- name: Refuse ambiguous partial bootstrap state
+  fail:
+    msg: >-
+      Partial Kubernetes bootstrap state exists on {{ inventory_hostname }}:
+      kubelet.conf is present but admin.conf is missing. Run the Kubernetes reset
+      cleanup for this host before retrying. No automatic destructive reset was run.
+  when:
+    - not kubeadm_multi_bootstrap_initialized | bool
+    - kubeadm_multi_bootstrap_kubelet_configured | bool
+
+- name: Read existing bootstrap admin configuration
+  slurp:
+    path: "{{ kubeadm_multi_admin_conf_path }}"
+  register: kubeadm_multi_existing_admin_conf
+  when: kubeadm_multi_bootstrap_initialized | bool
+
+- name: Verify existing cluster endpoint matches requested endpoint
+  vars:
+    kubeadm_multi_existing_server: >-
+      {{
+        kubeadm_multi_existing_admin_conf.content
+        | b64decode
+        | regex_findall('server: https://([^/\s]+)')
+        | first
+        | default('')
+      }}
+  assert:
+    that:
+      - kubeadm_multi_existing_server == kubeadm_multi_effective_endpoint
+    fail_msg: >-
+      Existing Kubernetes state on {{ inventory_hostname }} uses endpoint
+      {{ kubeadm_multi_existing_server }}, but this deployment requests
+      {{ kubeadm_multi_effective_endpoint }}. Reset the existing cluster before retrying.
+  when: kubeadm_multi_bootstrap_initialized | bool
+
+- name: Read existing kubeadm cluster identity
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_multi_admin_conf_path }}"
+      - get
+      - configmap
+      - kubeadm-config
+      - --namespace=kube-system
+      - '-o=jsonpath={.data.ClusterConfiguration}'
+  register: kubeadm_multi_existing_cluster_configuration
+  changed_when: false
+  failed_when: false
+  retries: 3
+  delay: 2
+  until: kubeadm_multi_existing_cluster_configuration.rc == 0
+  when:
+    - kubeadm_multi_bootstrap_initialized | bool
+    - cluster_name_explicit | default(false) | bool
+
+- name: Resolve existing kubeadm cluster name
+  set_fact:
+    kubeadm_multi_existing_cluster_name: >-
+      {{
+        kubeadm_multi_existing_cluster_configuration.stdout
+        | regex_findall('(?m)^clusterName:\s*([a-zA-Z0-9.-]+)\s*$')
+        | first
+        | default('kubernetes')
+      }}
+  when:
+    - kubeadm_multi_bootstrap_initialized | bool
+    - cluster_name_explicit | default(false) | bool
+
+- name: Verify existing kubeadm cluster name
+  assert:
+    that:
+      - kubeadm_multi_existing_cluster_configuration.rc == 0
+      - kubeadm_multi_existing_cluster_name == kubeadm_multi_cluster_name
+    fail_msg: >-
+      Existing Kubernetes cluster identity does not match the requested
+      configuration. The cluster is named '{{ kubeadm_multi_existing_cluster_name }}',
+      but LinDeploy requested '{{ kubeadm_multi_cluster_name }}'. Kubernetes cluster
+      and node names cannot be renamed safely in place. Run Reset Cluster on the
+      affected Kubernetes targets, then launch the installation with the new names.
+  when:
+    - kubeadm_multi_bootstrap_initialized | bool
+    - cluster_name_explicit | default(false) | bool
+
+- name: Ensure Kubernetes configuration directory exists
+  file:
+    path: /etc/kubernetes
+    state: directory
+    mode: "0755"
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Render secure kubeadm bootstrap configuration
+  template:
+    src: init-config.yaml.j2
+    dest: "{{ kubeadm_multi_init_config_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: List required Kubernetes control-plane images
+  command: "kubeadm config images list --config={{ kubeadm_multi_init_config_path }}"
+  register: kubeadm_multi_required_images
+  changed_when: false
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Inspect cached containerd images
+  command: ctr -n k8s.io images ls -q
+  register: kubeadm_multi_cached_images
+  changed_when: false
+  failed_when: false
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Build missing control-plane image list
+  set_fact:
+    kubeadm_multi_images_to_pull: >-
+      {{
+        kubeadm_multi_required_images.stdout_lines
+        if kubeadm_multi_images_pull_mode == 'always'
+        else (
+          kubeadm_multi_required_images.stdout_lines
+          | reject('in', kubeadm_multi_cached_images.stdout_lines | default([]))
+          | list
+        )
+      }}
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Pre-pull missing Kubernetes control-plane images
+  command:
+    argv: >-
+      {{
+        ['ctr', '-n', 'k8s.io', 'images', 'pull']
+        + (
+          (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled | default(false)) | bool)
+          | ternary(
+              ['--hosts-dir', containerd_registry_config_dir | default('/etc/containerd/certs.d')],
+              []
+            )
+        )
+        + [item]
+      }}
+  loop: "{{ kubeadm_multi_images_to_pull | default([]) }}"
+  register: kubeadm_multi_image_pull
+  changed_when: true
+  async: "{{ kubeadm_multi_image_pull_timeout }}"
+  poll: "{{ kubeadm_multi_image_pull_poll_interval }}"
+  retries: "{{ kubeadm_multi_images_pull_retries }}"
+  delay: "{{ kubeadm_multi_images_pull_retry_delay }}"
+  until: kubeadm_multi_image_pull.rc == 0
+  when:
+    - not kubeadm_multi_bootstrap_initialized | bool
+    - kubeadm_multi_images_pull_mode != 'never'
+    - kubeadm_multi_images_to_pull | default([]) | length > 0
+
+- name: Verify Kubernetes API bind port availability
+  block:
+    - name: Wait for local Kubernetes API port to be free
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ kubeadm_multi_api_port }}"
+        state: stopped
+        timeout: "{{ kubeadm_multi_api_bind_wait_timeout }}"
+  rescue:
+    - name: Inspect process using Kubernetes API port
+      command: "ss -lntpH '( sport = :{{ kubeadm_multi_api_port }} )'"
+      register: kubeadm_multi_api_listener
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse bootstrap while API port is occupied
+      fail:
+        msg: >-
+          Port {{ kubeadm_multi_api_port }} is already in use on
+          {{ inventory_hostname }}. Remove the conflicting cluster first.
+          Listener: {{ kubeadm_multi_api_listener.stdout | default('unknown') }}
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Initialize Kubernetes bootstrap control plane
+  block:
+    - name: Run secure kubeadm bootstrap
+      command: "kubeadm init --config={{ kubeadm_multi_init_config_path }} --upload-certs"
+      async: "{{ kubeadm_multi_init_timeout }}"
+      poll: "{{ kubeadm_multi_init_poll_interval }}"
+      no_log: true
+  rescue:
+    - name: Capture bootstrap service diagnostics
+      command:
+        argv:
+          - journalctl
+          - -u
+          - kubelet
+          - -u
+          - containerd
+          - -n
+          - "80"
+          - --no-pager
+      register: kubeadm_multi_bootstrap_diagnostics
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with sanitized bootstrap diagnostics
+      fail:
+        msg: |-
+          kubeadm init failed on {{ inventory_hostname }}. The join token and
+          certificate key were redacted. Service diagnostics:
+          {{ kubeadm_multi_bootstrap_diagnostics.stdout | default('unavailable') }}
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Wait for bootstrap API server
+  wait_for:
+    host: "{{ kubeadm_multi_advertise_address }}"
+    port: "{{ kubeadm_multi_api_port }}"
+    timeout: 180
+    delay: 3
+
+- name: Read existing Kubernetes node identities
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_multi_admin_conf_path }}"
+      - get
+      - nodes
+      - '-o=jsonpath={range .items[*]}{.metadata.name}{"="}{range .status.addresses[?(@.type=="InternalIP")]}{.address}{end}{"\n"}{end}'
+  register: kubeadm_multi_existing_node_identities
+  changed_when: false
+  failed_when: false
+  when: kubeadm_multi_bootstrap_initialized | bool
+
+- name: Resolve existing bootstrap node identity by internal address
+  set_fact:
+    kubeadm_multi_existing_bootstrap_identity_lines: >-
+      {{
+        kubeadm_multi_existing_node_identities.stdout_lines
+        | default([])
+        | select('match', '^.+=' ~ (kubeadm_multi_advertise_address | regex_escape) ~ '$')
+        | list
+      }}
+  when: kubeadm_multi_bootstrap_initialized | bool
+
+- name: Verify existing bootstrap node name
+  assert:
+    that:
+      - kubeadm_multi_existing_node_identities.rc == 0
+      - kubeadm_multi_existing_bootstrap_identity_lines | length == 1
+      - >-
+        (kubeadm_multi_existing_bootstrap_identity_lines | first).split('=', 1)[0]
+        == kubeadm_multi_node_name
+    fail_msg: >-
+      Existing Kubernetes cluster identity does not match the requested
+      configuration. The node at {{ kubeadm_multi_advertise_address }} is registered
+      as '{{ ((kubeadm_multi_existing_bootstrap_identity_lines | first | default('=' )).split('=', 1)[0]) }}',
+      but LinDeploy requested '{{ kubeadm_multi_node_name }}'. Kubernetes node names
+      cannot be renamed safely in place. Run Reset Cluster on the affected Kubernetes
+      targets, then launch the installation with the new names.
+  when: kubeadm_multi_bootstrap_initialized | bool
+
+- name: Publish existing bootstrap node identity
+  set_fact:
+    kubeadm_multi_registered_node_name: >-
+      {{ (kubeadm_multi_existing_bootstrap_identity_lines | first).split('=', 1)[0] }}
+  when: kubeadm_multi_bootstrap_initialized | bool
+
+- name: Read registered bootstrap node identity
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_multi_admin_conf_path }}"
+      - get
+      - node
+      - "{{ kubeadm_multi_node_name }}"
+      - -o
+      - "jsonpath={.metadata.name}"
+  register: kubeadm_multi_registered_node
+  changed_when: false
+  failed_when: false
+  retries: 12
+  delay: 5
+  until:
+    - kubeadm_multi_registered_node.rc == 0
+    - kubeadm_multi_registered_node.stdout | trim | length > 0
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Verify registered bootstrap node identity
+  assert:
+    that:
+      - kubeadm_multi_registered_node.rc == 0
+      - kubeadm_multi_registered_node.stdout | trim == kubeadm_multi_node_name
+    fail_msg: >-
+      Kubernetes registered bootstrap node
+      '{{ kubeadm_multi_registered_node.stdout | trim }}', but LinDeploy requested
+      '{{ kubeadm_multi_node_name }}'. Node names must be unique lowercase DNS labels.
+      Correct the host node name or reset this partially initialized cluster before retrying.
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Publish registered bootstrap node identity
+  set_fact:
+    kubeadm_multi_registered_node_name: "{{ kubeadm_multi_registered_node.stdout | trim }}"
+  when: not kubeadm_multi_bootstrap_initialized | bool
+
+- name: Ensure root kubeconfig directory exists
+  file:
+    path: "{{ kubeadm_multi_root_kubeconfig_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install root kubeconfig
+  copy:
+    src: "{{ kubeadm_multi_admin_conf_path }}"
+    dest: "{{ kubeadm_multi_root_kubeconfig_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Resolve remote operator account
+  command: "getent passwd {{ ansible_user }}"
+  register: kubeadm_multi_remote_user_passwd
+  changed_when: false
+  when:
+    - kubeadm_multi_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+- name: Track remote operator home directory
+  set_fact:
+    kubeadm_multi_remote_user_home: "{{ kubeadm_multi_remote_user_passwd.stdout.split(':')[5] }}"
+  when:
+    - kubeadm_multi_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+- name: Ensure remote operator kubeconfig directory exists
+  file:
+    path: "{{ kubeadm_multi_remote_user_home }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0700"
+  when:
+    - kubeadm_multi_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+- name: Install remote operator kubeconfig
+  copy:
+    src: "{{ kubeadm_multi_admin_conf_path }}"
+    dest: "{{ kubeadm_multi_remote_user_home }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0600"
+  when:
+    - kubeadm_multi_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+- name: Inspect packaged kubectl binary
+  stat:
+    path: "{{ kubeadm_multi_kubectl_binary_path }}"
+  register: kubeadm_multi_kubectl_binary
+
+- name: Ensure kubectl compatibility symlink exists
+  file:
+    src: "{{ kubeadm_multi_kubectl_binary_path }}"
+    dest: "{{ kubeadm_multi_kubectl_compat_symlink_path }}"
+    state: link
+    force: true
+  when:
+    - kubeadm_multi_manage_kubectl_compat_symlink | bool
+    - kubeadm_multi_kubectl_binary.stat.exists
+
+- name: Determine whether worker or control-plane joins are required
+  set_fact:
+    kubeadm_multi_worker_join_required: >-
+      {{
+        groups.get('workers', [])
+        | map('extract', hostvars, 'lindeploy_kubeadm_node_configured')
+        | select('equalto', false)
+        | list
+        | length > 0
+      }}
+    kubeadm_multi_control_plane_join_required: >-
+      {{
+        groups.get('control_plane', [])
+        | difference(groups.get('bootstrap', []))
+        | map('extract', hostvars, 'lindeploy_kubeadm_node_configured')
+        | select('equalto', false)
+        | list
+        | length > 0
+      }}
+
+- name: Generate short-lived worker join command
+  command: >-
+    kubeadm token create
+    --ttl {{ kubeadm_multi_join_token_ttl }}
+    --print-join-command
+  register: kubeadm_multi_worker_join_output
+  changed_when: true
+  no_log: true
+  when:
+    - kubeadm_multi_worker_join_required | bool or kubeadm_multi_control_plane_join_required | bool
+
+- name: Upload control-plane certificates for additional control planes
+  command: kubeadm init phase upload-certs --upload-certs
+  register: kubeadm_multi_certificate_upload
+  changed_when: true
+  no_log: true
+  when: kubeadm_multi_control_plane_join_required | bool
+
+- name: Store ephemeral verified worker join command
+  set_fact:
+    kubeadm_multi_worker_join_command: "{{ kubeadm_multi_worker_join_output.stdout | trim }}"
+  no_log: true
+  when:
+    - kubeadm_multi_worker_join_required | bool or kubeadm_multi_control_plane_join_required | bool
+
+- name: Store ephemeral verified control-plane join command
+  set_fact:
+    kubeadm_multi_control_plane_join_command: >-
+      {{
+        kubeadm_multi_worker_join_output.stdout | trim
+        ~ ' --control-plane --certificate-key '
+        ~ (
+          kubeadm_multi_certificate_upload.stdout
+          | regex_findall('(?m)^[a-f0-9]{64}$')
+          | first
+          | default('')
+        )
+      }}
+  no_log: true
+  when: kubeadm_multi_control_plane_join_required | bool
+
+- name: Validate generated worker join credentials
+  assert:
+    that:
+      - kubeadm_multi_worker_join_command is search('--discovery-token-ca-cert-hash sha256:')
+    fail_msg: "kubeadm did not generate secure join credentials."
+  no_log: true
+  when:
+    - kubeadm_multi_worker_join_required | bool or kubeadm_multi_control_plane_join_required | bool
+
+- name: Validate generated control-plane join credentials
+  assert:
+    that:
+      - kubeadm_multi_control_plane_join_command is search('--discovery-token-ca-cert-hash sha256:')
+      - kubeadm_multi_control_plane_join_command is search('--certificate-key [a-f0-9]{64}')
+    fail_msg: "kubeadm did not generate secure control-plane join credentials."
+  no_log: true
+  when: kubeadm_multi_control_plane_join_required | bool
+
+- name: Mark Kubernetes bootstrap ready for dependent plays
+  set_fact:
+    lindeploy_kubeadm_bootstrap_ready: true

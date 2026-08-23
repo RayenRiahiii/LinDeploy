@@ -1,0 +1,155 @@
+---
+- name: Require the DNS management inventory host
+  ansible.builtin.assert:
+    that:
+      - dnsmasq_inventory_host in hostvars
+    fail_msg: >-
+      DNS management host {{ dnsmasq_inventory_host }} is not present
+      in the Ansible inventory.
+    quiet: true
+
+- name: Test SSH connectivity to the DNS server
+  ansible.builtin.ping:
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+
+- name: Create the dnsmasq systemd drop-in directory
+  ansible.builtin.file:
+    path: "{{ dnsmasq_systemd_dropin_directory }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Install the dnsmasq network-ordering configuration
+  ansible.builtin.template:
+    src: dnsmasq-network-online.conf.j2
+    dest: "{{ dnsmasq_systemd_dropin_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: dnsmasq_systemd_configuration
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Install the OpenShift DNS records
+  ansible.builtin.template:
+    src: dnsmasq-openshift.conf.j2
+    dest: "{{ dnsmasq_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+    validate: "/usr/sbin/dnsmasq --test --conf-file=%s"
+  register: dnsmasq_record_configuration
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Reload systemd configuration
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: dnsmasq_systemd_configuration.changed
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Validate the complete dnsmasq configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/dnsmasq
+      - --test
+  changed_when: false
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Ensure dnsmasq is enabled and started
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    enabled: true
+    state: started
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Read current DNS listeners
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -lntup
+  register: dnsmasq_listener_check
+  changed_when: false
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Restart dnsmasq when configuration or binding changed
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    state: restarted
+  when:
+    - >-
+      dnsmasq_record_configuration.changed
+      or dnsmasq_systemd_configuration.changed
+      or
+      (dns_validation_server ~ ':53')
+      not in dnsmasq_listener_check.stdout
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Check whether firewalld is active
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --state
+  register: dns_firewall_state
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Check whether the DNS firewall service is allowed
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --query-service=dns
+  register: dns_firewall_query
+  changed_when: false
+  failed_when: false
+  when: dns_firewall_state.rc == 0
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Allow DNS through firewalld
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --add-service=dns
+  register: dns_firewall_add
+  changed_when: dns_firewall_add.rc == 0
+  when:
+    - dns_firewall_state.rc == 0
+    - dns_firewall_query.rc != 0
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Reload firewalld after allowing DNS
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --reload
+  when: dns_firewall_add.changed | default(false)
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true
+
+- name: Wait for dnsmasq to listen on the network address
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -lntup
+  register: final_dnsmasq_listeners
+  changed_when: false
+  until:
+    - (dns_validation_server ~ ':53') in final_dnsmasq_listeners.stdout
+  retries: 10
+  delay: 2
+  delegate_to: "{{ dnsmasq_inventory_host }}"
+  become: true

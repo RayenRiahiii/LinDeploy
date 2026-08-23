@@ -59,6 +59,10 @@
           - ansible_memtotal_mb
           - ansible_selinux
           - ansible_hostname
+          - ansible_architecture
+          - ansible_distribution
+          - ansible_distribution_major_version
+          - ansible_distribution_release
 
   roles:
     - common

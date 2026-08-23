@@ -1,0 +1,48 @@
+<domain type='kvm'>
+  <name>{{ libvirt_vm_name }}</name>
+  <metadata>
+    <workshop xmlns='https://example.local/sno-workshop'>{{ workshop_id }}</workshop>
+  </metadata>
+  <memory unit='MiB'>{{ libvirt_vm_memory_mb }}</memory>
+  <currentMemory unit='MiB'>{{ libvirt_vm_memory_mb }}</currentMemory>
+  <vcpu placement='static'>{{ libvirt_vm_vcpus }}</vcpu>
+  <os firmware='{{ libvirt_firmware }}'>
+    <type arch='x86_64' machine='{{ libvirt_machine_type }}'>hvm</type>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough' check='none'/>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <devices>
+    <emulator>/usr/libexec/qemu-kvm</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' discard='unmap'/>
+      <source file='{{ libvirt_volume_path }}'/>
+      <target dev='vda' bus='{{ libvirt_disk_bus }}'/>
+      <boot order='2'/>
+    </disk>
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <target dev='sda' bus='sata'/>
+      <readonly/>
+      <boot order='1'/>
+    </disk>
+    <interface type='network'>
+      <mac address='{{ sno_mac_address }}'/>
+      <source network='{{ libvirt_network_name }}'/>
+      <model type='{{ libvirt_network_model }}'/>
+    </interface>
+    <serial type='pty'>
+      <target type='isa-serial' port='0'/>
+    </serial>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+    <memballoon model='virtio'/>
+  </devices>
+</domain>

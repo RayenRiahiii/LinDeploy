@@ -31,7 +31,7 @@ type SectionMeta = {
   title: string;
   description: string;
   terminalSection: string;
-  installerId?: "kubernetes" | "k3s" | null;
+  installerId?: "kubernetes" | "k3s" | "openshift_sno" | null;
 };
 
 type NavigationItem = {
@@ -125,9 +125,9 @@ const sectionMetaMap: Array<{ match: (pathname: string) => boolean; meta: Sectio
     match: (pathname) => pathname === "/installers/kubernetes",
     meta: {
       badge: "Kubernetes Installer",
-      title: "Deploy Kubernetes from a focused single-node workflow",
+      title: "Deploy Kubernetes",
       description:
-        "Choose the target host, verify SSH connectivity, run the playbook, and keep cleanup actions available from the same operational page.",
+        "Choose a topology, assign target hosts, verify SSH connectivity, and follow deployment or cleanup from one operational page.",
       terminalSection: "kubernetes_installer",
       installerId: "kubernetes",
     },
@@ -136,9 +136,9 @@ const sectionMetaMap: Array<{ match: (pathname: string) => boolean; meta: Sectio
     match: (pathname) => pathname === "/installers/k3s",
     meta: {
       badge: "K3s Installer",
-      title: "Deploy K3s from a focused single-node workflow",
+      title: "Deploy K3s",
       description:
-        "Choose the target host, verify SSH connectivity, run the playbook, and keep cleanup actions available from the same operational page.",
+        "Choose a topology, assign target hosts, verify SSH connectivity, and follow deployment or cleanup from one operational page.",
       terminalSection: "k3s_installer",
       installerId: "k3s",
     },
@@ -147,10 +147,11 @@ const sectionMetaMap: Array<{ match: (pathname: string) => boolean; meta: Sectio
     match: (pathname) => pathname === "/installers/openshift-sno",
     meta: {
       badge: "OpenShift SNO",
-      title: "Prepare the future Single Node OpenShift workflow",
+      title: "Deploy Single Node OpenShift",
       description:
-        "This route remains reserved for the installer-specific OpenShift SNO form and execution path.",
+        "Define cluster identity, KVM resources, networking and credentials, then review readiness before launch.",
       terminalSection: "openshift_sno_installer",
+      installerId: "openshift_sno",
     },
   },
   {
@@ -203,6 +204,10 @@ type AppShellLayoutProps = {
 export default function AppShellLayout({ colorScheme, onToggleColorScheme }: AppShellLayoutProps) {
   const location = useLocation();
   const meta = getSectionMeta(location.pathname);
+  const isInstallerWorkflowPage =
+    location.pathname === "/installers/kubernetes" ||
+    location.pathname === "/installers/k3s" ||
+    location.pathname === "/installers/openshift-sno";
   const brandLogo = colorScheme === "dark" ? lindeployWordmarkDark : lindeployWordmark;
   const [topbarHidden, setTopbarHidden] = useState(false);
   const lastScrollYRef = useRef(0);
@@ -299,7 +304,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
         </header>
 
         <main className="workspace-main">
-          <Paper className="hero-panel" p="xl">
+          {!isInstallerWorkflowPage && <Paper className="hero-panel" p="xl">
             <Group justify="space-between" align="flex-start" gap="xl">
               <Stack gap={8}>
                 <Badge color="red" variant="light" size="lg">
@@ -330,7 +335,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                 </Text>
               </Stack>
             </Group>
-          </Paper>
+          </Paper>}
 
           <Box className="page-content">
             <Outlet />

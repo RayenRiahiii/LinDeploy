@@ -18,9 +18,15 @@ frontend/.env
 .idea/
 .DS_Store
 Thumbs.db
+instruction.md
+instructions.md
 
 # Logs
 *.log
+backend/runtime/
+infra/mirror/runtime/
+infra/mirror/.env
+backend/celerybeat-schedule*
 
 # Ansible controller-local and generated files
 backend/backend/Playbooks/inventory
@@ -29,3 +35,4 @@ backend/backend/Playbooks/host_vars/
 backend/backend/Playbooks/group_vars/private/
 backend/backend/Playbooks/**/*.retry
 backend/backend/Playbooks/**/*.swp
+backend/backend/Playbooks/-

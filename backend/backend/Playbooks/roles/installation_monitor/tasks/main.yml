@@ -1,0 +1,128 @@
+---
+- name: Read the current cluster details
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters/{{ sno_cluster_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: monitored_cluster
+  changed_when: false
+
+- name: Find the cluster infrastructure environment
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs?cluster_id={{ sno_cluster_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: monitor_infra_envs
+  changed_when: false
+
+- name: Select the monitoring infrastructure environment
+  ansible.builtin.set_fact:
+    monitor_matching_infra_envs: >-
+      {{
+        monitor_infra_envs.json
+        | selectattr('name', 'equalto', infra_env_name)
+        | list
+      }}
+
+- name: Require exactly one monitoring infrastructure environment
+  ansible.builtin.assert:
+    that:
+      - monitor_matching_infra_envs | length == 1
+    fail_msg: >-
+      Expected exactly one InfraEnv named {{ infra_env_name }}.
+    quiet: true
+
+- name: Store the monitoring infrastructure environment
+  ansible.builtin.set_fact:
+    sno_infra_env_id: "{{ monitor_matching_infra_envs[0].id }}"
+
+- name: Read the monitored SNO host
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs/{{ sno_infra_env_id }}/hosts
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: monitored_hosts
+  changed_when: false
+
+- name: Require exactly one monitored SNO host
+  ansible.builtin.assert:
+    that:
+      - monitored_hosts.json | length == 1
+    fail_msg: Expected exactly one SNO host during installation.
+    quiet: true
+
+- name: Store the monitored host
+  ansible.builtin.set_fact:
+    monitored_sno_host: "{{ monitored_hosts.json[0] }}"
+
+- name: Report current installation progress
+  ansible.builtin.debug:
+    msg:
+      - "Cluster status: {{ monitored_cluster.json.status }}"
+      - >-
+        Cluster information:
+        {{ monitored_cluster.json.status_info | default('not reported') }}
+      - "Host status: {{ monitored_sno_host.status }}"
+      - >-
+        Current stage:
+        {{
+          monitored_sno_host.progress.current_stage
+          | default('not reported')
+        }}
+      - >-
+        Stage progress:
+        {{
+          monitored_sno_host.progress.stage_percentage
+          | default('not reported')
+        }}%
+      - >-
+        Total installation progress:
+        {{
+          monitored_sno_host.progress.installation_percentage
+          | default('not reported')
+        }}%
+
+- name: Read recent Assisted Installer events
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/events?cluster_id={{ sno_cluster_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: monitored_events
+  changed_when: false
+
+- name: Report the latest Assisted Installer events
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.event_time | default('unknown time') }}
+      [{{ item.severity | default('unknown') }}]
+      {{ item.message | default('No message') }}
+  loop: "{{ monitored_events.json[-10:] }}"
+  loop_control:
+    label: "{{ item.event_time | default('event') }}"
+
+- name: Report plan-mode monitoring behavior
+  ansible.builtin.debug:
+    msg:
+      - Plan mode performed one read-only progress check.
+      - It did not wait for completion or modify the installation.
+  when: automation_mode == 'plan'
+
+- name: Wait for installation completion in apply mode
+  ansible.builtin.include_tasks:
+    file: wait.yml
+  when: automation_mode == 'apply'

@@ -1,0 +1,89 @@
+---
+- name: Verify the cluster creation decision
+  ansible.builtin.assert:
+    that:
+      - sno_workflow_action == 'create'
+      - not sno_cluster_exists | bool
+    fail_msg: Cluster creation is not allowed for the current workflow state.
+    quiet: true
+
+- name: Report the proposed cluster definition
+  ansible.builtin.debug:
+    msg:
+      - "Automation mode: {{ automation_mode }}"
+      - "Cluster name: {{ cluster_name }}"
+      - "Base DNS domain: {{ base_dns_domain }}"
+      - "OpenShift version: {{ openshift_version }}"
+      - "Architecture: {{ cpu_architecture }}"
+      - "Network type: {{ network_type }}"
+      - "Control-plane nodes: 1"
+      - "Schedulable control plane: true"
+
+- name: Create the SNO cluster definition
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      name: "{{ cluster_name }}"
+      openshift_version: "{{ openshift_version }}"
+      control_plane_count: 1
+      cpu_architecture: "{{ cpu_architecture }}"
+      base_dns_domain: "{{ base_dns_domain }}"
+      network_type: "{{ network_type }}"
+      cluster_network_cidr: "{{ cluster_network_cidr }}"
+      cluster_network_host_prefix: "{{ cluster_network_host_prefix }}"
+      service_network_cidr: "{{ service_network_cidr }}"
+      user_managed_networking: true
+      schedulable_masters: true
+      ssh_public_key: "{{ validated_ssh_public_key }}"
+      pull_secret: "{{ validated_pull_secret | to_json }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  register: created_sno_cluster
+  no_log: true
+  when: automation_mode == 'apply'
+
+- name: Store the newly created cluster state
+  ansible.builtin.set_fact:
+    sno_cluster_exists: true
+    sno_cluster_id: "{{ created_sno_cluster.json.id }}"
+    sno_cluster_status: "{{ created_sno_cluster.json.status }}"
+  when: automation_mode == 'apply'
+  no_log: true
+
+- name: Apply FIPS install-config override
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters/{{ sno_cluster_id }}/install-config"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body: "{{ {'fips': true} | to_json }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  no_log: true
+  when:
+    - automation_mode == 'apply'
+    - openshift_fips_enabled | bool
+
+- name: Report plan-mode behavior
+  ansible.builtin.debug:
+    msg: >-
+      Plan mode: the cluster definition was not created.
+      Change automation_mode to apply only when you are ready.
+  when: automation_mode == 'plan'
+
+- name: Report the created cluster
+  ansible.builtin.debug:
+    msg:
+      - "Cluster created: {{ cluster_name }}"
+      - "Cluster ID: {{ sno_cluster_id }}"
+      - "Initial status: {{ sno_cluster_status }}"
+  when: automation_mode == 'apply'

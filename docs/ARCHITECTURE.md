@@ -2,7 +2,7 @@
 
 ## Objectif
 
-LinDeploy separe l'experience operateur, l'orchestration asynchrone et l'automatisation systeme. Cette separation permettra d'ajouter OpenShift SNO sans melanger sa logique avec Kubernetes ou K3s.
+LinDeploy separe l'experience operateur, l'orchestration asynchrone et l'automatisation systeme. OpenShift SNO utilise ses propres templates et roles sans melanger sa logique avec Kubernetes ou K3s.
 
 ## Composants
 
@@ -43,10 +43,15 @@ Playbooks principaux :
 | Plateforme | Action | Playbook |
 |---|---|---|
 | Kubernetes | Installation | `playbooks/k8s_single_node.yml` |
+| Kubernetes | Installation multi-node | `playbooks/k8s_multi_node.yml` |
 | Kubernetes | Reset | `playbooks/k8s_cleanup.yml` |
 | Kubernetes | Suppression complete | `playbooks/k8s_full_uninstall.yml` |
 | K3s | Installation | `playbooks/k3s_single_node.yml` |
 | K3s | Suppression | `playbooks/k3s_cleanup.yml` |
+| OpenShift SNO | Installation connectee | `playbooks/openshift_sno.yml` |
+| OpenShift SNO | Preparation du miroir | `playbooks/openshift_mirror_prepare.yml` |
+| OpenShift SNO | Installation deconnectee | `playbooks/openshift_sno_disconnected.yml` |
+| OpenShift SNO | Cleanup VM | `playbooks/openshift_sno_cleanup.yml` |
 
 Roles principaux :
 
@@ -54,6 +59,10 @@ Roles principaux :
 - `containerd` : runtime Kubernetes kubeadm;
 - `kubernetes` : depot et paquets kubelet/kubeadm/kubectl;
 - `kubeadm_init` : images, configuration et initialisation du control plane;
+- `kubeadm_multi_bootstrap` : initialisation du premier control plane et
+  generation des credentials de join temporaires;
+- `kubeadm_multi_join` : ajout idempotent et verifie des control planes et workers;
+- `kubeadm_multi_validate` : validation globale des nodes, de l'API, de Calico et CoreDNS;
 - `cni_prepull` et `cni` : preparation et deploiement Calico;
 - `k3s` : installation, configuration, kubeconfig et health checks;
 - `kubernetes_cleanup` et `k3s_cleanup` : teardown idempotent.
@@ -87,16 +96,21 @@ Une cible inaccessible ne doit pas empecher les cibles eligibles de continuer. S
 
 ## Frontieres actuelles
 
-- un host correspond a un cluster single-node;
-- pas de topologie control-plane/worker partagee;
-- pas de registre prive gere depuis l'interface;
-- pas de mode air-gap complet;
-- OpenShift SNO n'est pas encore implemente;
+- Kubernetes supporte le mode single-node par host et un cluster multi-node partage;
+- K3s reste en mode single-node par host;
+- plusieurs control planes ne constituent une topologie HA que si l'endpoint
+  fourni repose sur un load balancer stable;
+- le cleanup multi-node dedie et le retrait individuel d'un node restent a ajouter;
+- le miroir OpenShift et l'hyperviseur KVM doivent actuellement etre le meme
+  hote RHEL 8/9 x86_64;
+- le workflow deconnecte synchronise une version OpenShift exacte mais pas de
+  catalogues Operators optionnels;
+- le deploiement de plusieurs SNO en une seule demande reste a ajouter;
 - pas encore d'authentification utilisateur ni de RBAC applicatif.
 
-## Extension OpenShift SNO
+## Architecture OpenShift SNO
 
-L'extension prevue doit ajouter un installer independant avec :
+L'installer OpenShift independant fournit :
 
 - configuration du bastion RHEL;
 - KVM/QEMU/libvirt;
@@ -105,7 +119,14 @@ L'extension prevue doit ajouter un installer independant avec :
 - creation et boot des VMs RHCOS;
 - suivi de `openshift-install agent wait-for install-complete`;
 - validation `oc get nodes`, ClusterOperators et console;
-- teardown des VMs, volumes, reseaux et DNS geres;
-- orchestration de plusieurs clusters SNO pour les workshops.
+- un miroir Quay permanent et une synchronisation `oc-mirror` v2 pour le mode
+  deconnecte;
+- validation du marqueur de version, du certificat, des mappings et du tag de
+  release avant creation de l'ISO;
+- application apres installation des ressources IDMS/ITMS et signatures
+  produites par `oc-mirror`;
+- teardown de la VM, du volume et des assets proteges par un marqueur de
+  propriete LinDeploy, sans suppression du miroir.
 
-Cette logique doit utiliser de nouveaux templates et roles sans modifier les contrats Kubernetes/K3s existants.
+La separation entre le workflow connecte et le workflow deconnecte conserve les
+contrats Kubernetes/K3s existants et evite toute dependance envers leurs roles.

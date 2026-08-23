@@ -1,0 +1,126 @@
+---
+- name: Read the libvirt storage pool
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", pool-info, "{{ libvirt_pool_name }}"]
+  environment:
+    LC_ALL: C
+  register: libvirt_pool_info
+  changed_when: false
+  failed_when: false
+
+- name: Report the libvirt storage plan
+  ansible.builtin.debug:
+    msg:
+      - "Pool: {{ libvirt_pool_name }}"
+      - "Path: {{ libvirt_pool_path }}"
+      - "Existing: {{ libvirt_pool_info.rc == 0 }}"
+      - "Automation mode: {{ automation_mode }}"
+
+- name: Create the storage pool directory in apply mode
+  ansible.builtin.file:
+    path: "{{ libvirt_pool_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0711"
+  become: true
+  when: automation_mode == 'apply'
+
+- name: Read SELinux file context rules
+  ansible.builtin.command:
+    argv: [semanage, fcontext, -l]
+  register: libvirt_fcontext_rules
+  changed_when: false
+  failed_when: false
+  become: true
+  when: automation_mode == 'apply'
+
+- name: Add the persistent libvirt image SELinux context
+  ansible.builtin.command:
+    argv:
+      - semanage
+      - fcontext
+      - -a
+      - -t
+      - virt_image_t
+      - "{{ libvirt_pool_path }}(/.*)?"
+  become: true
+  when:
+    - automation_mode == 'apply'
+    - libvirt_fcontext_rules.rc == 0
+    - libvirt_pool_path not in libvirt_fcontext_rules.stdout
+
+- name: Restore the storage pool SELinux labels
+  ansible.builtin.command:
+    argv: [restorecon, -RF, "{{ libvirt_pool_path }}"]
+  become: true
+  changed_when: false
+  when: automation_mode == 'apply'
+
+- name: Define the missing directory storage pool
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - pool-define-as
+      - "{{ libvirt_pool_name }}"
+      - dir
+      - --target
+      - "{{ libvirt_pool_path }}"
+  when:
+    - automation_mode == 'apply'
+    - libvirt_pool_info.rc != 0
+
+- name: Refresh the libvirt storage pool state
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", pool-info, "{{ libvirt_pool_name }}"]
+  environment:
+    LC_ALL: C
+  register: libvirt_current_pool_info
+  changed_when: false
+  failed_when: false
+
+- name: Read active libvirt storage pool names
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", pool-list, --name]
+  register: libvirt_active_pool_names
+  changed_when: false
+
+- name: Start the storage pool in apply mode
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", pool-start, "{{ libvirt_pool_name }}"]
+  when:
+    - automation_mode == 'apply'
+    - libvirt_current_pool_info.rc == 0
+    - libvirt_pool_name not in libvirt_active_pool_names.stdout_lines
+
+- name: Read autostart libvirt storage pool names
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", pool-list, --autostart, --name]
+  register: libvirt_autostart_pool_names
+  changed_when: false
+
+- name: Enable storage pool autostart in apply mode
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", pool-autostart, "{{ libvirt_pool_name }}"]
+  when:
+    - automation_mode == 'apply'
+    - libvirt_current_pool_info.rc == 0
+    - libvirt_pool_name not in libvirt_autostart_pool_names.stdout_lines
+
+- name: Read final active libvirt storage pool names
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", pool-list, --name]
+  register: libvirt_final_active_pool_names
+  changed_when: false
+
+- name: Require the storage pool after apply
+  ansible.builtin.assert:
+    that:
+      - libvirt_current_pool_info.rc == 0 or automation_mode == 'plan'
+      - >-
+        automation_mode == 'plan' or
+        libvirt_pool_name in libvirt_final_active_pool_names.stdout_lines
+    fail_msg: The libvirt storage pool is not available.
+    quiet: true

@@ -22,7 +22,7 @@
   when: cni_networkmanager_config.changed
 
 - name: Reset SSH connection after NetworkManager restart
-  meta: reset_connection
+  include_tasks: reset_connection.yml
   when: cni_networkmanager_config.changed
 
 - name: Recover SSH connection after NetworkManager restart
@@ -49,10 +49,29 @@
 # 3. Download Calico manifest
 # ==================================================
 - name: Download Calico manifest
-  get_url:
-    url: "{{ calico_manifest_url }}"
-    dest: "{{ calico_manifest_path }}"
-    mode: '0644'
+  block:
+    - name: Download Calico manifest from configured endpoint
+      get_url:
+        url: >-
+          {{
+            calico_manifest_url
+            if lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled | default(false)) | bool
+            else calico_manifest_upstream_url
+          }}
+        dest: "{{ calico_manifest_path }}"
+        mode: '0644'
+        timeout: "{{ calico_download_timeout }}"
+      register: cni_calico_download
+      until: cni_calico_download is succeeded
+      retries: "{{ calico_download_retries }}"
+      delay: "{{ calico_download_retry_delay }}"
+  rescue:
+    - name: Download Calico manifest from official endpoint
+      get_url:
+        url: "{{ calico_manifest_upstream_url }}"
+        dest: "{{ calico_manifest_path }}"
+        mode: '0644'
+        timeout: "{{ calico_download_timeout }}"
 
 # ==================================================
 # 4. Apply Calico manifest
@@ -118,3 +137,4 @@
     kubectl --kubeconfig={{ cni_kubeconfig_path }}
     rollout status deployment/coredns -n kube-system --timeout={{ cni_wait_timeout }}
   changed_when: false
+  when: cni_wait_for_coredns | bool

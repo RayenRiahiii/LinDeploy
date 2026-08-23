@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 
@@ -79,6 +81,7 @@ class InstallationTemplate(TimeStampedModel):
     class DeploymentType(models.TextChoices):
         PREPARE_NODE = "prepare_node", "Prepare Node"
         SINGLE_NODE = "single_node", "Single Node"
+        MULTI_NODE = "multi_node", "Multi Node"
         CLEANUP = "cleanup", "Cleanup"
 
     name = models.CharField(max_length=100, unique=True)
@@ -95,8 +98,29 @@ class InstallationTemplate(TimeStampedModel):
     )
     description = models.TextField(blank=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("system_type", "playbook_path"),
+                name="uniq_template_system_playbook",
+            )
+        ]
+
     def __str__(self):
         return self.name
+
+
+class OpenShiftSecretBundle(TimeStampedModel):
+    reference = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    encrypted_payload = models.BinaryField()
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"OpenShift secret bundle {str(self.reference)[:8]}…"
 
 
 class Installation(TimeStampedModel):
@@ -117,10 +141,28 @@ class Installation(TimeStampedModel):
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
+    class Topology(models.TextChoices):
+        SINGLE_NODE = "single_node", "Single Node"
+        MULTI_NODE = "multi_node", "Multi Node"
+
     template = models.ForeignKey(
         InstallationTemplate,
         on_delete=models.CASCADE,
         related_name="installations",
+    )
+    topology = models.CharField(
+        max_length=20,
+        choices=Topology.choices,
+        default=Topology.SINGLE_NODE,
+    )
+    cluster_name = models.CharField(max_length=253, blank=True)
+    control_plane_endpoint = models.CharField(max_length=255, blank=True)
+    bootstrap_host = models.ForeignKey(
+        Host,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bootstrap_installations",
     )
     status = models.CharField(
         max_length=20,
@@ -170,6 +212,18 @@ class InstallationTarget(TimeStampedModel):
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
+    class DesiredRole(models.TextChoices):
+        CONTROL_PLANE = "control_plane", "Control Plane"
+        WORKER = "worker", "Worker"
+
+    class JoinStatus(models.TextChoices):
+        NOT_APPLICABLE = "not_applicable", "Not Applicable"
+        NOT_STARTED = "not_started", "Not Started"
+        WAITING = "waiting", "Waiting"
+        JOINING = "joining", "Joining"
+        JOINED = "joined", "Joined"
+        FAILED = "failed", "Failed"
+
     installation = models.ForeignKey(
         Installation,
         on_delete=models.CASCADE,
@@ -185,6 +239,19 @@ class InstallationTarget(TimeStampedModel):
         choices=Status.choices,
         default=Status.PENDING,
     )
+    desired_role = models.CharField(
+        max_length=20,
+        choices=DesiredRole.choices,
+        default=DesiredRole.CONTROL_PLANE,
+    )
+    is_bootstrap = models.BooleanField(default=True)
+    join_status = models.CharField(
+        max_length=20,
+        choices=JoinStatus.choices,
+        default=JoinStatus.NOT_APPLICABLE,
+    )
+    node_name = models.CharField(max_length=253, blank=True)
+    cluster_name = models.CharField(max_length=253, blank=True)
     stdout = models.TextField(blank=True)
     stderr = models.TextField(blank=True)
     return_code = models.IntegerField(null=True, blank=True)

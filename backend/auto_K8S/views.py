@@ -1,29 +1,58 @@
+import ipaddress
 import time
 
-from django.db import IntegrityError
+from django.conf import settings
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from celery.result import AsyncResult
 
 from backend.celery import app as celery_app
 from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate
+from .openshift_secrets import (
+    OpenShiftSecretError,
+    create_secret_bundle,
+    validate_secret_reference,
+)
 from .serializers import (
     CredentialSerializer,
     HostSerializer,
+    InstallationLaunchSerializer,
     InstallationSerializer,
     InstallationTemplateSerializer,
+    OpenShiftRetrySerializer,
+    OpenShiftSecretBundleSerializer,
 )
 from .services import (
     build_inventory_file,
     detect_hosts_baseline,
     get_ansible_repo_root,
     normalize_host_overrides,
+    normalize_cluster_name,
+    redact_inventory_secrets,
+    read_live_output_lines,
     request_installation_cancellation,
     run_connectivity_check,
     select_installation_template,
 )
-from .tasks import run_installation_task
+from .mirror import mark_mirror_prewarm_queued, mirror_status_payload
+from .tasks import run_installation_task, run_mirror_prewarm_task
+
+
+@api_view(["POST"])
+def create_openshift_secret_bundle(request):
+    serializer = OpenShiftSecretBundleSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    bundle = create_secret_bundle(serializer.validated_data)
+    return Response(
+        {
+            "secret_reference": str(bundle.reference),
+            "expires_at": bundle.expires_at.isoformat(),
+        },
+        status=201,
+    )
 
 
 def get_hosts_missing_credentials(hosts):
@@ -36,6 +65,30 @@ def get_hosts_missing_credentials(hosts):
         for host in hosts
         if not host.credential or not host.credential.username
     ]
+
+
+def cancel_stale_pre_execution_installations(host_ids):
+    cutoff = timezone.now() - timezone.timedelta(
+        seconds=settings.INSTALLATION_PRE_EXECUTION_STALE_SECONDS
+    )
+    stale_installations = (
+        Installation.objects.filter(
+            targets__host_id__in=host_ids,
+            status__in=(Installation.Status.PENDING, Installation.Status.RUNNING),
+            phase__in=(Installation.Phase.QUEUED, Installation.Phase.SSH_CHECK),
+            runner_pid__isnull=True,
+            updated_at__lt=cutoff,
+        )
+        .distinct()
+    )
+
+    for installation in stale_installations:
+        request_installation_cancellation(installation)
+        installation.summary_message = (
+            "Execution automatically cancelled because it stopped reporting "
+            "progress before Ansible started. The selected hosts were released."
+        )
+        installation.save(update_fields=["summary_message", "updated_at"])
 
 
 def build_default_cluster_config(system_type):
@@ -65,21 +118,28 @@ def build_default_cluster_config(system_type):
     }
 
 
-def normalize_cluster_config(cluster_config, system_type, host_overrides):
+def normalize_cluster_config(cluster_config, system_type, host_overrides, topology=None):
     if cluster_config in (None, ""):
         cluster_config = {}
 
     if not isinstance(cluster_config, dict):
         raise ValueError("cluster_config must be an object.")
 
+    cluster_name_explicit = bool(str(cluster_config.get("cluster_name") or "").strip())
     merged = {
         **build_default_cluster_config(system_type),
         **cluster_config,
     }
 
-    merged["cluster_name"] = str(merged.get("cluster_name") or build_default_cluster_config(system_type)["cluster_name"]).strip()
+    merged["cluster_name"] = normalize_cluster_name(
+        merged.get("cluster_name"),
+        fallback=build_default_cluster_config(system_type)["cluster_name"],
+    )
+    merged["cluster_name_explicit"] = cluster_name_explicit
     merged["version"] = str(merged.get("version") or "stable").strip()
-    merged["topology_mode"] = str(merged.get("topology_mode") or "single_node").strip()
+    merged["topology_mode"] = (
+        topology or str(merged.get("topology_mode") or Installation.Topology.SINGLE_NODE).strip()
+    )
     merged["pod_cidr"] = str(merged.get("pod_cidr") or "").strip()
     merged["service_cidr"] = str(merged.get("service_cidr") or "").strip()
     merged["cluster_domain"] = str(merged.get("cluster_domain") or "cluster.local").strip()
@@ -144,9 +204,35 @@ def get_celery_progress(installation):
         }
 
         if isinstance(result.info, dict):
-            payload["meta"] = result.info
+            payload["meta"] = {**result.info}
         elif result.info:
             payload["meta"] = {"detail": str(result.info)}
+
+        live_output = read_live_output_lines(installation.id)
+        if not live_output and installation.status not in {
+            Installation.Status.PENDING,
+            Installation.Status.RUNNING,
+        }:
+            timestamp = (
+                installation.finished_at.isoformat()
+                if installation.finished_at
+                else installation.updated_at.isoformat()
+            )
+            fallback_lines = [
+                {
+                    "channel": channel,
+                    "line": line,
+                    "timestamp": timestamp,
+                }
+                for channel, content in (
+                    ("stdout", installation.stdout),
+                    ("stderr", installation.stderr),
+                )
+                for line in (content or "").splitlines()
+            ]
+            live_output = fallback_lines[-5000:]
+        if live_output:
+            payload.setdefault("meta", {})["output_lines"] = live_output
 
         return payload
     except Exception as exc:
@@ -322,6 +408,40 @@ def dashboard_summary(request):
     )
 
 
+@api_view(["GET"])
+def mirror_status(request):
+    return Response(mirror_status_payload())
+
+
+@api_view(["POST"])
+def prewarm_mirror(request):
+    if not settings.LINDEPLOY_MIRROR_ENABLED:
+        return Response(
+            {
+                "message": (
+                    "The LinDeploy mirror is disabled. Configure and start the "
+                    "mirror before requesting a prewarm."
+                )
+            },
+            status=409,
+        )
+
+    force = request.data.get("force", False)
+    if not isinstance(force, bool):
+        return Response({"message": "force must be a boolean."}, status=400)
+
+    state = mark_mirror_prewarm_queued()
+    task = run_mirror_prewarm_task.delay(force=force)
+    return Response(
+        {
+            "message": "Mirror prewarm queued.",
+            "task_id": task.id,
+            "state": state,
+        },
+        status=202,
+    )
+
+
 @api_view(["POST"])
 def detect_host_state(request, id):
     host = get_object_or_404(Host.objects.select_related("credential"), id=id, enabled=True)
@@ -383,7 +503,9 @@ def precheck_installation_hosts(request):
         system_type,
     )
     inventory_path = build_inventory_file(hosts, host_overrides=normalized_host_overrides)
-    inventory_content = inventory_path.read_text(encoding="utf-8")
+    inventory_content = redact_inventory_secrets(
+        inventory_path.read_text(encoding="utf-8")
+    )
     ansible_repo_root = get_ansible_repo_root()
 
     result, metadata = run_connectivity_check(
@@ -428,20 +550,197 @@ def precheck_installation_hosts(request):
 
 @api_view(["POST"])
 def launch_installation(request):
-    template_id = request.data.get("template_id")
-    host_ids = request.data.get("host_ids", [])
-    deployment_mode = request.data.get("deployment_mode", "auto")
-    system_type = (request.data.get("system_type") or InstallationTemplate.SystemType.KUBERNETES).strip().lower()
-    cluster_config = request.data.get("cluster_config", {})
-    host_overrides = request.data.get("host_overrides", [])
+    request_serializer = InstallationLaunchSerializer(data=request.data)
+    if not request_serializer.is_valid():
+        return Response(
+            {
+                "message": "The installation request is invalid.",
+                "errors": request_serializer.errors,
+            },
+            status=400,
+        )
 
-    if not host_ids:
-        return Response({"message": "host_ids is required."}, status=400)
+    request_data = request_serializer.validated_data
+    template_id = request_data.get("template_id")
+    host_ids = request_data["host_ids"]
+    deployment_mode = request_data["deployment_mode"]
+    system_type = request_data["system_type"]
+    topology = request_data["topology"]
+    cluster_config = request_data["cluster_config"]
+    host_overrides = request_data["host_overrides"]
+    control_plane_host_ids = request_data["control_plane_host_ids"]
+    worker_host_ids = request_data["worker_host_ids"]
+    bootstrap_host_id = request_data.get("bootstrap_host_id")
 
-    hosts = list(Host.objects.filter(id__in=host_ids, enabled=True).select_related("credential"))
+    if system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+        requested_template = None
+        if template_id:
+            requested_template = InstallationTemplate.objects.filter(
+                id=template_id,
+                system_type=InstallationTemplate.SystemType.OPENSHIFT_SNO,
+            ).first()
+        if requested_template is None:
+            return Response(
+                {"message": "The requested OpenShift workflow is not registered."},
+                status=400,
+            )
+        playbook_path = requested_template.playbook_path
+        is_mirror_prepare = playbook_path == "playbooks/openshift_mirror_prepare.yml"
+        is_disconnected_install = playbook_path == "playbooks/openshift_sno_disconnected.yml"
+        is_cleanup = playbook_path == "playbooks/openshift_sno_cleanup.yml"
+        is_connected_install = playbook_path == "playbooks/openshift_sno.yml"
 
-    if not hosts:
-        return Response({"message": "No valid enabled hosts found."}, status=400)
+        if not any(
+            (is_mirror_prepare, is_disconnected_install, is_cleanup, is_connected_install)
+        ):
+            return Response(
+                {"message": "The requested OpenShift workflow is not supported."},
+                status=400,
+            )
+
+        if deployment_mode != "manual" or not template_id:
+            return Response(
+                {"message": "OpenShift SNO requires a registered manual template."},
+                status=400,
+            )
+        if topology != Installation.Topology.SINGLE_NODE or len(host_ids) != 1:
+            return Response(
+                {"message": "OpenShift SNO requires exactly one KVM provisioning host."},
+                status=400,
+            )
+        if is_connected_install and not settings.OPENSHIFT_RED_HAT_OFFLINE_TOKEN:
+            return Response(
+                {"message": "The controller is missing OPENSHIFT_RED_HAT_OFFLINE_TOKEN."},
+                status=503,
+            )
+        disconnected = bool(cluster_config.get("disconnected"))
+        if disconnected and is_connected_install:
+            return Response(
+                {
+                    "message": (
+                        "Select the OpenShift disconnected template for a mirrored installation."
+                    )
+                },
+                status=400,
+            )
+        if (is_mirror_prepare or is_disconnected_install) and not disconnected:
+            return Response(
+                {"message": "This OpenShift workflow requires disconnected mode."},
+                status=400,
+            )
+        if is_mirror_prepare or is_disconnected_install:
+            mirror_registry = str(cluster_config.get("mirror_registry") or "").strip()
+            if not mirror_registry:
+                return Response(
+                    {"message": "A DNS-resolvable OpenShift mirror registry is required."},
+                    status=400,
+                )
+            if "://" in mirror_registry:
+                mirror_registry = mirror_registry.split("://", 1)[1]
+            mirror_registry = mirror_registry.rstrip("/")
+            if "/" in mirror_registry or "." not in mirror_registry.split(":", 1)[0]:
+                return Response(
+                    {
+                        "message": (
+                            "Mirror registry must be a DNS name and optional port, for "
+                            "example registry.lab.example.com:8443."
+                        )
+                    },
+                    status=400,
+                )
+            cluster_config["mirror_registry"] = mirror_registry
+        if not is_mirror_prepare and not is_cleanup:
+            try:
+                machine_network = ipaddress.ip_network(
+                    cluster_config.get("machine_network_cidr", ""), strict=True
+                )
+                node_address = ipaddress.ip_address(
+                    (host_overrides[0] if host_overrides else {}).get("node_ip", "")
+                )
+                rendezvous_address = ipaddress.ip_address(
+                    cluster_config.get("rendezvous_ip", "")
+                )
+            except ValueError:
+                return Response(
+                    {"message": "OpenShift machine network, node IP, or rendezvous IP is invalid."},
+                    status=400,
+                )
+            if (
+                node_address not in machine_network.hosts()
+                or rendezvous_address not in machine_network.hosts()
+            ):
+                return Response(
+                    {
+                        "message": (
+                            "OpenShift node and rendezvous IPs must be usable host "
+                            "addresses, not the network or broadcast address."
+                        )
+                    },
+                    status=400,
+                )
+        if not is_cleanup:
+            secret_reference = cluster_config.get("secret_reference")
+            try:
+                validate_secret_reference(secret_reference)
+            except OpenShiftSecretError as exc:
+                return Response({"message": str(exc)}, status=400)
+        if not is_mirror_prepare and not is_cleanup:
+            requested_disk = str((host_overrides[0] if host_overrides else {}).get("installation_disk") or "")
+            if (
+                not cluster_config.get("target_modification_approved")
+                or cluster_config.get("install_confirmation") != f"ERASE {requested_disk}"
+            ):
+                return Response(
+                    {"message": f"Confirm the destructive target by entering ERASE {requested_disk}."},
+                    status=400,
+                )
+
+    selected_hosts = Host.objects.filter(id__in=host_ids).select_related("credential")
+    hosts_by_id = {host.id: host for host in selected_hosts}
+    missing_host_ids = [host_id for host_id in host_ids if host_id not in hosts_by_id]
+    disabled_host_ids = [
+        host_id for host_id in host_ids if host_id in hosts_by_id and not hosts_by_id[host_id].enabled
+    ]
+    if missing_host_ids or disabled_host_ids:
+        return Response(
+            {
+                "message": "Some selected hosts cannot be used for installation.",
+                "errors": {
+                    "missing_host_ids": missing_host_ids,
+                    "disabled_host_ids": disabled_host_ids,
+                },
+            },
+            status=400,
+        )
+
+    hosts = [hosts_by_id[host_id] for host_id in host_ids]
+
+    cancel_stale_pre_execution_installations(host_ids)
+
+    busy_targets = InstallationTarget.objects.filter(
+        host_id__in=host_ids,
+        installation__status__in=(
+            Installation.Status.PENDING,
+            Installation.Status.RUNNING,
+        ),
+    ).select_related("host", "installation")
+    busy_hosts = [
+        {
+            "host_id": target.host_id,
+            "host_name": target.host.name,
+            "installation_id": target.installation_id,
+            "installation_status": target.installation.status,
+        }
+        for target in busy_targets
+    ]
+    if busy_hosts:
+        return Response(
+            {
+                "message": "Some selected hosts are already used by an active execution.",
+                "errors": {"busy_hosts": busy_hosts},
+            },
+            status=409,
+        )
 
     hosts_missing_credentials = get_hosts_missing_credentials(hosts)
     if hosts_missing_credentials:
@@ -459,14 +758,70 @@ def launch_installation(request):
         system_type,
     )
 
+    if topology == Installation.Topology.MULTI_NODE:
+        node_names = [item["node_name"] for item in normalized_host_overrides]
+        duplicate_node_names = sorted(
+            {node_name for node_name in node_names if node_names.count(node_name) > 1}
+        )
+        if duplicate_node_names:
+            return Response(
+                {
+                    "message": "Each node in a multi-node cluster must have a unique node name.",
+                    "errors": {
+                        "host_overrides": (
+                            "Duplicate node names after DNS normalization: "
+                            f"{', '.join(duplicate_node_names)}."
+                        )
+                    },
+                },
+                status=400,
+            )
+
+    control_plane_ids = set(control_plane_host_ids)
+    worker_ids = set(worker_host_ids)
+    if topology == Installation.Topology.MULTI_NODE:
+        ansible_control_plane_role = (
+            "server" if system_type == InstallationTemplate.SystemType.K3S else "control_plane"
+        )
+        ansible_worker_role = (
+            "agent" if system_type == InstallationTemplate.SystemType.K3S else "worker"
+        )
+        normalized_host_overrides = [
+            {
+                **item,
+                "node_role": (
+                    ansible_control_plane_role
+                    if item["host_id"] in control_plane_ids
+                    else ansible_worker_role
+                ),
+            }
+            for item in normalized_host_overrides
+        ]
+
+    bootstrap_host = hosts_by_id.get(bootstrap_host_id) if bootstrap_host_id else None
+    if topology == Installation.Topology.MULTI_NODE and not cluster_config.get(
+        "control_plane_endpoint"
+    ):
+        cluster_config = {
+            **cluster_config,
+            "control_plane_endpoint": f"{bootstrap_host.ip_address}:6443",
+        }
+
     try:
         normalized_cluster_config = normalize_cluster_config(
             cluster_config,
             system_type,
             normalized_host_overrides,
+            topology=topology,
         )
     except ValueError as exc:
         return Response({"message": str(exc)}, status=400)
+
+    if topology == Installation.Topology.MULTI_NODE:
+        normalized_host_overrides = [
+            {**item, "cluster_name": normalized_cluster_config["cluster_name"]}
+            for item in normalized_host_overrides
+        ]
 
     try:
         selection = select_installation_template(
@@ -474,6 +829,7 @@ def launch_installation(request):
             deployment_mode=deployment_mode,
             template_id=template_id,
             system_type=system_type,
+            topology=topology,
         )
     except InstallationTemplate.DoesNotExist:
         return Response(
@@ -500,22 +856,46 @@ def launch_installation(request):
             f"{len(excluded_targets)} target(s) were excluded before execution."
         )
 
-    installation = Installation.objects.create(
-        template=template,
-        status=Installation.Status.PENDING,
-        phase=Installation.Phase.QUEUED,
-        progress=0,
-        summary_message=queued_message,
-        cluster_config=normalized_cluster_config,
-        host_overrides=normalized_host_overrides,
-    )
-
-    for host in hosts:
-        InstallationTarget.objects.create(
-            installation=installation,
-            host=host,
-            status=InstallationTarget.Status.PENDING,
+    overrides_by_host_id = {
+        item["host_id"]: item for item in normalized_host_overrides
+    }
+    with transaction.atomic():
+        installation = Installation.objects.create(
+            template=template,
+            topology=topology,
+            cluster_name=normalized_cluster_config["cluster_name"],
+            control_plane_endpoint=normalized_cluster_config["control_plane_endpoint"],
+            bootstrap_host=bootstrap_host,
+            status=Installation.Status.PENDING,
+            phase=Installation.Phase.QUEUED,
+            progress=0,
+            summary_message=queued_message,
+            cluster_config=normalized_cluster_config,
+            host_overrides=normalized_host_overrides,
         )
+
+        for host in hosts:
+            is_multi_node = topology == Installation.Topology.MULTI_NODE
+            is_bootstrap = not is_multi_node or host.id == bootstrap_host_id
+            desired_role = (
+                InstallationTarget.DesiredRole.WORKER
+                if is_multi_node and host.id in worker_ids
+                else InstallationTarget.DesiredRole.CONTROL_PLANE
+            )
+            InstallationTarget.objects.create(
+                installation=installation,
+                host=host,
+                status=InstallationTarget.Status.PENDING,
+                desired_role=desired_role,
+                is_bootstrap=is_bootstrap,
+                join_status=(
+                    InstallationTarget.JoinStatus.NOT_STARTED
+                    if is_multi_node and not is_bootstrap
+                    else InstallationTarget.JoinStatus.NOT_APPLICABLE
+                ),
+                node_name=overrides_by_host_id[host.id]["node_name"],
+                cluster_name=overrides_by_host_id[host.id]["cluster_name"],
+            )
 
     celery_result = run_installation_task.delay(installation.id)
     installation.celery_task_id = celery_result.id
@@ -531,12 +911,148 @@ def launch_installation(request):
             "message": installation.summary_message,
             "cluster_config": installation.cluster_config,
             "host_overrides": installation.host_overrides,
+            "topology": installation.topology,
+            "cluster_name": installation.cluster_name,
+            "control_plane_endpoint": installation.control_plane_endpoint,
+            "bootstrap_host_id": installation.bootstrap_host_id,
             "selected_strategy": selection["strategy"],
             "selected_playbook": template.playbook_path,
             "detected_hosts": selection.get("detections", []),
             "eligible_host_names": selection.get("eligible_host_names", []),
             "detection_command": selection.get("detection_command"),
             "detection_seconds": selection.get("detection_seconds"),
+        },
+        status=202,
+    )
+
+
+@api_view(["POST"])
+def retry_openshift_installation(request, id):
+    source = get_object_or_404(
+        Installation.objects.select_related("template", "bootstrap_host").prefetch_related(
+            "targets__host__credential"
+        ),
+        id=id,
+    )
+    if source.template.system_type != InstallationTemplate.SystemType.OPENSHIFT_SNO:
+        return Response(
+            {"message": "This retry endpoint is only available for OpenShift SNO."},
+            status=400,
+        )
+    if source.status != Installation.Status.FAILED:
+        return Response(
+            {"message": "Only a failed OpenShift SNO installation can be restarted."},
+            status=409,
+        )
+    source_playbook = source.template.playbook_path
+    if (
+        source_playbook == "playbooks/openshift_sno.yml"
+        and not settings.OPENSHIFT_RED_HAT_OFFLINE_TOKEN
+    ):
+        return Response(
+            {"message": "The controller is missing OPENSHIFT_RED_HAT_OFFLINE_TOKEN."},
+            status=503,
+        )
+
+    serializer = OpenShiftRetrySerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    secret_reference = serializer.validated_data["secret_reference"]
+    try:
+        validate_secret_reference(secret_reference)
+    except OpenShiftSecretError as exc:
+        return Response({"message": str(exc)}, status=400)
+
+    source_targets = list(source.targets.select_related("host", "host__credential"))
+    if not source_targets:
+        return Response({"message": "The failed installation has no target to restart."}, status=400)
+
+    unavailable_hosts = [
+        target.host.name
+        for target in source_targets
+        if not target.host.enabled or target.host.credential_id is None
+    ]
+    if unavailable_hosts:
+        return Response(
+            {
+                "message": (
+                    "The original target is disabled or missing SSH credentials: "
+                    + ", ".join(unavailable_hosts)
+                )
+            },
+            status=409,
+        )
+
+    host_ids = [target.host_id for target in source_targets]
+    busy_targets = InstallationTarget.objects.filter(
+        host_id__in=host_ids,
+        installation__status__in=(Installation.Status.PENDING, Installation.Status.RUNNING),
+    ).exclude(installation=source)
+    if busy_targets.exists():
+        return Response(
+            {"message": "The original target is already used by another active execution."},
+            status=409,
+        )
+
+    cluster_config = {
+        **(source.cluster_config or {}),
+        "secret_reference": str(secret_reference),
+    }
+    host_overrides = [dict(item) for item in (source.host_overrides or [])]
+    requested_disk = str((host_overrides[0] if host_overrides else {}).get("installation_disk") or "")
+    requires_disk_confirmation = source_playbook not in {
+        "playbooks/openshift_mirror_prepare.yml",
+        "playbooks/openshift_sno_cleanup.yml",
+    }
+    if requires_disk_confirmation and (
+        not cluster_config.get("target_modification_approved")
+        or cluster_config.get("install_confirmation") != f"ERASE {requested_disk}"
+    ):
+        return Response(
+            {"message": f"The original execution does not contain approval for ERASE {requested_disk}."},
+            status=400,
+        )
+
+    with transaction.atomic():
+        restarted = Installation.objects.create(
+            template=source.template,
+            topology=source.topology,
+            cluster_name=source.cluster_name,
+            control_plane_endpoint=source.control_plane_endpoint,
+            bootstrap_host=source.bootstrap_host,
+            status=Installation.Status.PENDING,
+            phase=Installation.Phase.QUEUED,
+            progress=0,
+            summary_message=f"Restarted from failed OpenShift execution #{source.id}.",
+            cluster_config=cluster_config,
+            host_overrides=host_overrides,
+        )
+        for target in source_targets:
+            InstallationTarget.objects.create(
+                installation=restarted,
+                host=target.host,
+                status=InstallationTarget.Status.PENDING,
+                desired_role=target.desired_role,
+                is_bootstrap=target.is_bootstrap,
+                join_status=InstallationTarget.JoinStatus.NOT_STARTED
+                if target.join_status != InstallationTarget.JoinStatus.NOT_APPLICABLE
+                else InstallationTarget.JoinStatus.NOT_APPLICABLE,
+                node_name=target.node_name,
+                cluster_name=target.cluster_name,
+            )
+
+    celery_result = run_installation_task.delay(restarted.id)
+    restarted.celery_task_id = celery_result.id
+    restarted.save(update_fields=["celery_task_id", "updated_at"])
+
+    return Response(
+        {
+            "installation_id": restarted.id,
+            "retried_installation_id": source.id,
+            "celery_task_id": celery_result.id,
+            "status": restarted.status,
+            "phase": restarted.phase,
+            "progress": restarted.progress,
+            "message": restarted.summary_message,
         },
         status=202,
     )

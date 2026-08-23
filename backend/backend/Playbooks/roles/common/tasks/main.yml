@@ -3,46 +3,538 @@
 # 1. Base packages and swap management
 # ==================================================
 
-- name: Check trusted local RPM GPG key files
-  stat:
-    path: "{{ item }}"
-  loop: "{{ common_redhat_rpm_gpg_key_candidates }}"
-  register: common_rpm_gpg_key_stats
-  when: ansible_facts['os_family'] == 'RedHat'
-
-- name: Import trusted local RPM GPG keys
-  rpm_key:
-    state: present
-    key: "{{ item.stat.path }}"
-  loop: >-
-    {{
-      common_rpm_gpg_key_stats.results
-      | default([])
-      | selectattr('stat.exists')
-      | list
-    }}
-  loop_control:
-    label: "{{ item.stat.path }}"
+- name: Install LinDeploy mirror CA on Red Hat family
+  copy:
+    dest: "{{ common_mirror_ca_path_redhat }}"
+    content: "{{ lindeploy_mirror_ca_certificate }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: common_mirror_ca_redhat
   when:
     - ansible_facts['os_family'] == 'RedHat'
-    - (common_rpm_gpg_key_stats.results | default([]) | selectattr('stat.exists') | list | length) > 0
+    - lindeploy_mirror_enabled | bool
+    - lindeploy_mirror_ca_certificate | length > 0
 
-- name: Install base packages
-  dnf:
-    name: "{{ common_base_packages_redhat }}"
-    state: present
-    update_cache: "{{ common_redhat_update_cache }}"
-    install_weak_deps: "{{ common_redhat_install_weak_deps }}"
-    lock_timeout: "{{ common_redhat_lock_timeout }}"
+- name: Refresh Red Hat system CA trust for LinDeploy mirror
+  command: update-ca-trust extract
+  when:
+    - common_mirror_ca_redhat is defined
+    - common_mirror_ca_redhat.changed | default(false)
+
+- name: Install LinDeploy mirror CA on Debian family
+  copy:
+    dest: "{{ common_mirror_ca_path_debian }}"
+    content: "{{ lindeploy_mirror_ca_certificate }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: common_mirror_ca_debian
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - lindeploy_mirror_enabled | bool
+    - lindeploy_mirror_ca_certificate | length > 0
+
+- name: Refresh Debian system CA trust for LinDeploy mirror
+  command: update-ca-certificates
+  when:
+    - common_mirror_ca_debian is defined
+    - common_mirror_ca_debian.changed | default(false)
+
+- name: Validate LinDeploy mirror gateway from target
+  uri:
+    url: >-
+      {{ lindeploy_package_mirror_base_url
+         | regex_replace('/cache/?$', '/healthz') }}
+    method: HEAD
+    validate_certs: true
+    return_content: false
+    status_code: 200
+    timeout: "{{ common_package_mirror_connect_timeout }}"
+  register: common_lindeploy_mirror_gateway_probe
+  failed_when: false
+  changed_when: false
+  when:
+    - lindeploy_mirror_enabled | bool
+    - lindeploy_package_mirror_base_url | length > 0
+
+- name: Resolve effective LinDeploy mirror availability for this target
+  set_fact:
+    lindeploy_mirror_effective_enabled: >-
+      {{
+        lindeploy_mirror_enabled | bool
+        and common_lindeploy_mirror_gateway_probe.status | default(0) == 200
+      }}
+    lindeploy_system_package_cache_effective_enabled: >-
+      {{
+        lindeploy_system_package_cache_enabled | bool
+        and lindeploy_mirror_enabled | bool
+        and common_lindeploy_mirror_gateway_probe.status | default(0) == 200
+      }}
+
+- name: Report target-local mirror fallback
+  debug:
+    msg: >-
+      The LinDeploy LAN mirror is not reachable from {{ inventory_hostname }}.
+      This target will use its original signed repositories and upstream
+      registries for this installation.
+  when:
+    - lindeploy_mirror_enabled | bool
+    - not lindeploy_mirror_effective_enabled | bool
+
+- name: Resolve supported RPM package mirror identity
+  set_fact:
+    common_package_mirror_redhat_identity: >-
+      {{
+        {
+          'CentOS': {
+            'root': 'mirror.stream.centos.org/9-stream',
+            'gpgkey': common_package_mirror_redhat_gpgkeys['CentOS']
+          },
+          'Rocky': {
+            'root': 'dl.rockylinux.org/pub/rocky/9',
+            'gpgkey': common_package_mirror_redhat_gpgkeys['Rocky']
+          },
+          'AlmaLinux': {
+            'root': 'repo.almalinux.org/almalinux/9',
+            'gpgkey': common_package_mirror_redhat_gpgkeys['AlmaLinux']
+          }
+        }.get(ansible_facts['distribution'], {})
+      }}
   when: ansible_facts['os_family'] == 'RedHat'
 
-- name: Install base packages on Debian family
-  apt:
-    name: "{{ common_base_packages_debian }}"
-    state: present
-    update_cache: "{{ common_debian_update_cache }}"
-    cache_valid_time: "{{ common_debian_cache_valid_time }}"
+- name: Validate complete local RPM repository snapshots
+  uri:
+    url: >-
+      {{ lindeploy_package_mirror_base_url
+         | regex_replace('/cache/?$', '/cache-ready') }}/{{
+        common_package_mirror_redhat_identity.root
+      }}/{{ item }}/{{ ansible_facts['architecture'] }}/os/repodata/repomd.xml
+    method: GET
+    validate_certs: true
+    return_content: false
+    status_code:
+      - 200
+      - 503
+    timeout: "{{ common_package_mirror_connect_timeout }}"
+  register: common_package_mirror_redhat_probe
+  failed_when: false
+  changed_when: false
+  loop:
+    - BaseOS
+    - AppStream
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - lindeploy_mirror_effective_enabled | bool
+    - lindeploy_system_package_cache_effective_enabled | bool
+    - common_package_mirror_redhat_identity | default({}) | length > 0
+    - ansible_facts['distribution_major_version'] | int == 9
+
+- name: Check official RPM package signing key
+  stat:
+    path: "{{ common_package_mirror_redhat_identity.gpgkey }}"
+  register: common_package_mirror_redhat_gpgkey
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - common_package_mirror_redhat_identity | default({}) | length > 0
+
+- name: Track whether local RPM package mirror is usable
+  set_fact:
+    common_package_mirror_redhat_usable: >-
+      {{
+        common_package_mirror_redhat_probe is defined
+        and (
+          common_package_mirror_redhat_probe.results
+          | default([])
+          | selectattr('status', 'defined')
+          | selectattr('status', 'equalto', 200)
+          | list
+          | length
+        ) == 2
+        and common_package_mirror_redhat_gpgkey.stat.exists | default(false)
+      }}
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Report local RPM snapshot fallback
+  debug:
+    msg: >-
+      The LinDeploy RPM snapshots are not complete for
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_major_version'] }}
+      on {{ inventory_hostname }}. This target will use its original signed OS
+      repositories for base packages.
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - lindeploy_system_package_cache_effective_enabled | bool
+    - not common_package_mirror_redhat_usable | bool
+
+- name: Resolve supported APT package mirror identity
+  set_fact:
+    common_package_mirror_apt_identity: >-
+      {{
+        {
+          'Ubuntu': {
+            'root': 'archive.ubuntu.com/ubuntu',
+            'security_root': 'security.ubuntu.com/ubuntu',
+            'keyring': common_package_mirror_apt_keyrings['Ubuntu'],
+            'suite': ansible_facts['distribution_release'],
+            'components': 'main universe restricted multiverse'
+          },
+          'Debian': {
+            'root': 'deb.debian.org/debian',
+            'security_root': 'security.debian.org/debian-security',
+            'keyring': common_package_mirror_apt_keyrings['Debian'],
+            'suite': ansible_facts['distribution_release'],
+            'components': 'main contrib non-free non-free-firmware'
+          }
+        }.get(ansible_facts['distribution'], {})
+      }}
   when: ansible_facts['os_family'] == 'Debian'
+
+- name: Check official APT archive signing keyring
+  stat:
+    path: "{{ common_package_mirror_apt_identity.keyring }}"
+  register: common_package_mirror_apt_keyring
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - common_package_mirror_apt_identity | default({}) | length > 0
+
+- name: Validate local APT package mirror endpoint
+  uri:
+    url: >-
+      {{ lindeploy_package_mirror_base_url }}/{{
+        common_package_mirror_apt_identity.root
+      }}/dists/{{ common_package_mirror_apt_identity.suite }}/InRelease
+    method: HEAD
+    validate_certs: true
+    return_content: false
+    status_code: 200
+    timeout: "{{ common_package_mirror_connect_timeout }}"
+  register: common_package_mirror_apt_probe
+  failed_when: false
+  changed_when: false
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - lindeploy_mirror_effective_enabled | bool
+    - lindeploy_system_package_cache_effective_enabled | bool
+    - common_package_mirror_apt_identity | default({}) | length > 0
+
+- name: Track whether local APT package mirror is usable
+  set_fact:
+    common_package_mirror_apt_usable: >-
+      {{
+        common_package_mirror_apt_probe is defined
+        and common_package_mirror_apt_probe.status | default(0) == 200
+        and common_package_mirror_apt_keyring.stat.exists | default(false)
+      }}
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Create temporary LinDeploy APT source definition
+  copy:
+    dest: "{{ common_package_mirror_apt_source_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: {{ lindeploy_package_mirror_base_url }}/{{ common_package_mirror_apt_identity.root }}/
+      Suites: {{ common_package_mirror_apt_identity.suite }} {{ common_package_mirror_apt_identity.suite }}-updates
+      Components: {{ common_package_mirror_apt_identity.components }}
+      Signed-By: {{ common_package_mirror_apt_identity.keyring }}
+
+      Types: deb
+      URIs: {{ lindeploy_package_mirror_base_url }}/{{ common_package_mirror_apt_identity.security_root }}/
+      Suites: {{ common_package_mirror_apt_identity.suite }}-security
+      Components: {{ common_package_mirror_apt_identity.components }}
+      Signed-By: {{ common_package_mirror_apt_identity.keyring }}
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - common_package_mirror_apt_usable | default(false) | bool
+
+- name: Create temporary APT cache-only configuration
+  copy:
+    dest: "{{ common_package_mirror_apt_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Dir::Etc::sourcelist "{{ common_package_mirror_apt_source_path }}";
+      Dir::Etc::sourceparts "-";
+      Acquire::Retries "2";
+      Acquire::http::Timeout "{{ common_package_mirror_connect_timeout }}";
+      Acquire::https::Timeout "{{ common_package_mirror_connect_timeout }}";
+      DPkg::Lock::Timeout "{{ common_redhat_lock_timeout }}";
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - common_package_mirror_apt_usable | default(false) | bool
+
+- name: Create temporary LinDeploy RPM repositories
+  yum_repository:
+    name: "lindeploy-{{ item.name | lower }}"
+    description: "LinDeploy cached {{ ansible_facts['distribution'] }} {{ item.name }}"
+    baseurl: >-
+      {{ lindeploy_package_mirror_base_url }}/{{
+        common_package_mirror_redhat_identity.root
+      }}/{{ item.name }}/$basearch/os/
+    enabled: false
+    gpgcheck: true
+    repo_gpgcheck: false
+    gpgkey: "file://{{ common_package_mirror_redhat_identity.gpgkey }}"
+    metadata_expire: 3600
+    timeout: "{{ common_package_mirror_operation_timeout }}"
+    retries: 2
+  loop:
+    - name: BaseOS
+    - name: AppStream
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - common_package_mirror_redhat_usable | default(false) | bool
+
+- name: Prepare Red Hat package prerequisites without PackageKit contention
+  block:
+    - name: Temporarily block PackageKit during managed RPM transactions
+      command:
+        argv:
+          - systemctl
+          - mask
+          - --runtime
+          - packagekit.service
+      register: common_packagekit_runtime_mask
+      changed_when: false
+      failed_when: false
+
+    - name: Request graceful PackageKit stop without blocking
+      command:
+        argv:
+          - systemctl
+          - stop
+          - --no-block
+          - packagekit.service
+      changed_when: false
+      failed_when: false
+
+    - name: Allow PackageKit a short graceful shutdown window
+      command:
+        argv:
+          - systemctl
+          - is-active
+          - packagekit.service
+      register: common_packagekit_active
+      changed_when: false
+      failed_when: false
+      retries: 10
+      delay: 1
+      until: common_packagekit_active.stdout != 'active'
+
+    - name: Check trusted local RPM GPG key files
+      stat:
+        path: "{{ item }}"
+      loop: "{{ common_redhat_rpm_gpg_key_candidates }}"
+      register: common_rpm_gpg_key_stats
+
+    - name: Import trusted local RPM GPG keys
+      rpm_key:
+        state: present
+        key: "{{ item.stat.path }}"
+      loop: >-
+        {{
+          common_rpm_gpg_key_stats.results
+          | default([])
+          | selectattr('stat.exists')
+          | list
+        }}
+      loop_control:
+        label: "{{ item.stat.path }}"
+      when: >-
+        (common_rpm_gpg_key_stats.results | default([])
+        | selectattr('stat.exists') | list | length) > 0
+
+    - name: Install base packages through local RPM cache
+      block:
+        - name: Install cached Red Hat base packages
+          dnf:
+            name: "{{ common_base_packages_redhat }}"
+            state: present
+            update_cache: true
+            install_weak_deps: "{{ common_redhat_install_weak_deps }}"
+            lock_timeout: "{{ common_redhat_lock_timeout }}"
+            disablerepo: "*"
+            enablerepo: "{{ common_package_mirror_repo_ids }}"
+      rescue:
+        - name: Record local RPM cache fallback
+          debug:
+            msg: >-
+              The local RPM cache could not complete this transaction on
+              {{ inventory_hostname }}. Retrying once with the target's
+              original signed repositories.
+
+        - name: Install Red Hat base packages from original repositories
+          dnf:
+            name: "{{ common_base_packages_redhat }}"
+            state: present
+            update_cache: "{{ common_redhat_update_cache }}"
+            install_weak_deps: "{{ common_redhat_install_weak_deps }}"
+            lock_timeout: "{{ common_redhat_lock_timeout }}"
+            disablerepo: "{{ common_redhat_base_package_disabled_repositories }}"
+      when: common_package_mirror_redhat_usable | default(false) | bool
+
+    - name: Install base packages from original RPM repositories
+      dnf:
+        name: "{{ common_base_packages_redhat }}"
+        state: present
+        update_cache: "{{ common_redhat_update_cache }}"
+        install_weak_deps: "{{ common_redhat_install_weak_deps }}"
+        lock_timeout: "{{ common_redhat_lock_timeout }}"
+        disablerepo: "{{ common_redhat_base_package_disabled_repositories }}"
+      when: not common_package_mirror_redhat_usable | default(false) | bool
+  always:
+    - name: Remove temporary LinDeploy RPM repositories
+      yum_repository:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ common_package_mirror_repo_ids }}"
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Restore PackageKit availability after managed RPM transactions
+      command:
+        argv:
+          - systemctl
+          - unmask
+          - --runtime
+          - packagekit.service
+      changed_when: false
+      failed_when: false
+      when:
+        - common_packagekit_runtime_mask is defined
+        - common_packagekit_runtime_mask.rc | default(1) == 0
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Install Debian family base packages
+  block:
+    - name: Install base packages through local APT cache
+      block:
+        - name: Ensure LinDeploy APT metadata state directory exists
+          file:
+            path: "{{ common_package_mirror_apt_metadata_state_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Inspect LinDeploy APT metadata freshness marker
+          stat:
+            path: "{{ common_package_mirror_apt_metadata_stamp_path }}"
+          register: common_package_mirror_apt_metadata_stamp
+
+        - name: Refresh isolated local APT cache metadata
+          command:
+            argv:
+              - apt-get
+              - -c
+              - "{{ common_package_mirror_apt_config_path }}"
+              - update
+          changed_when: false
+          register: common_package_mirror_apt_metadata_refresh
+          when: >-
+            not common_package_mirror_apt_metadata_stamp.stat.exists
+            or
+            (
+              (lookup('pipe', 'date +%s') | int)
+              - (common_package_mirror_apt_metadata_stamp.stat.mtime | default(0) | int)
+            ) >= (common_package_mirror_apt_metadata_valid_time | int)
+
+        - name: Record successful LinDeploy APT metadata refresh
+          copy:
+            dest: "{{ common_package_mirror_apt_metadata_stamp_path }}"
+            owner: root
+            group: root
+            mode: "0644"
+            content: "refreshed\n"
+          when:
+            - common_package_mirror_apt_metadata_refresh is defined
+            - not common_package_mirror_apt_metadata_refresh.skipped | default(false)
+            - common_package_mirror_apt_metadata_refresh.rc | default(1) == 0
+
+        - name: Install cached Debian family base packages
+          command:
+            argv: "{{ ['apt-get', '-c', common_package_mirror_apt_config_path, '-y', 'install'] + common_base_packages_debian }}"
+          register: common_cached_apt_install
+          changed_when: >-
+            '0 upgraded, 0 newly installed' not in common_cached_apt_install.stdout
+      rescue:
+        - name: Record local APT cache fallback
+          debug:
+            msg: >-
+              The local APT cache could not complete this transaction on
+              {{ inventory_hostname }}. Retrying once with the target's
+              original signed repositories.
+
+        - name: Remove temporary APT cache configuration before fallback
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ common_package_mirror_apt_source_path }}"
+            - "{{ common_package_mirror_apt_config_path }}"
+
+        - name: Invalidate LinDeploy APT metadata cache after mirror failure
+          file:
+            path: "{{ common_package_mirror_apt_metadata_stamp_path }}"
+            state: absent
+
+        - name: Install Debian family base packages from original repositories
+          apt:
+            name: "{{ common_base_packages_debian }}"
+            state: present
+            update_cache: "{{ common_debian_update_cache }}"
+            cache_valid_time: "{{ common_debian_cache_valid_time }}"
+      when: common_package_mirror_apt_usable | default(false) | bool
+
+    - name: Install base packages from original APT repositories
+      apt:
+        name: "{{ common_base_packages_debian }}"
+        state: present
+        update_cache: "{{ common_debian_update_cache }}"
+        cache_valid_time: "{{ common_debian_cache_valid_time }}"
+      when: not common_package_mirror_apt_usable | default(false) | bool
+  always:
+    - name: Remove temporary LinDeploy APT configuration
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ common_package_mirror_apt_source_path }}"
+        - "{{ common_package_mirror_apt_config_path }}"
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Remove unused LinDeploy mirror CA on Red Hat family
+  file:
+    path: "{{ common_mirror_ca_path_redhat }}"
+    state: absent
+  register: common_mirror_ca_redhat_absent
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - not lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Refresh Red Hat system CA trust after mirror CA removal
+  command: update-ca-trust extract
+  when:
+    - common_mirror_ca_redhat_absent is defined
+    - common_mirror_ca_redhat_absent.changed | default(false)
+
+- name: Remove unused LinDeploy mirror CA on Debian family
+  file:
+    path: "{{ common_mirror_ca_path_debian }}"
+    state: absent
+  register: common_mirror_ca_debian_absent
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - not lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Refresh Debian system CA trust after mirror CA removal
+  command: update-ca-certificates
+  when:
+    - common_mirror_ca_debian_absent is defined
+    - common_mirror_ca_debian_absent.changed | default(false)
 
 - name: Disable swap immediately
   command: swapoff -a
@@ -144,44 +636,88 @@
     state: "{{ common_firewalld_state }}"
   when: common_manage_firewalld | bool
 
+- name: Verify firewalld command interface is responsive
+  command:
+    argv:
+      - timeout
+      - "{{ common_firewalld_command_timeout | string }}"
+      - firewall-cmd
+      - --state
+  register: common_firewalld_health
+  changed_when: false
+  retries: "{{ common_firewalld_health_retries }}"
+  delay: "{{ common_firewalld_health_delay }}"
+  until: common_firewalld_health.rc == 0
+  when:
+    - common_manage_firewalld | bool
+    - common_firewalld_state != 'stopped'
+
 - name: Check permanent firewalld ports
-  command: "firewall-cmd --permanent --zone={{ common_firewalld_zone }} --query-port={{ item }}"
+  command:
+    argv:
+      - timeout
+      - "{{ common_firewalld_command_timeout | string }}"
+      - firewall-cmd
+      - --permanent
+      - "--zone={{ common_firewalld_zone }}"
+      - "--query-port={{ item }}"
   register: common_firewalld_port_queries
   changed_when: false
-  failed_when: false
+  failed_when: common_firewalld_port_queries.rc not in [0, 1]
   loop: "{{ common_firewalld_ports }}"
   when:
     - common_manage_firewalld | bool
     - common_firewalld_state != 'stopped'
 
 - name: Add permanent firewalld ports
-  command: "firewall-cmd --permanent --zone={{ common_firewalld_zone }} --add-port={{ item.item }}"
+  command:
+    argv:
+      - timeout
+      - "{{ common_firewalld_command_timeout | string }}"
+      - firewall-cmd
+      - --permanent
+      - "--zone={{ common_firewalld_zone }}"
+      - "--add-port={{ item.item }}"
   loop: "{{ common_firewalld_port_queries.results | default([]) }}"
   when:
     - common_manage_firewalld | bool
     - common_firewalld_state != 'stopped'
     - item.rc is defined
-    - item.rc != 0
+    - item.rc == 1
   changed_when: true
   notify: Reload firewalld
 
 - name: Check trusted firewalld source CIDRs
-  command: "firewall-cmd --permanent --zone={{ common_firewalld_trusted_zone }} --query-source={{ item }}"
+  command:
+    argv:
+      - timeout
+      - "{{ common_firewalld_command_timeout | string }}"
+      - firewall-cmd
+      - --permanent
+      - "--zone={{ common_firewalld_trusted_zone }}"
+      - "--query-source={{ item }}"
   register: common_firewalld_source_queries
   changed_when: false
-  failed_when: false
+  failed_when: common_firewalld_source_queries.rc not in [0, 1]
   loop: "{{ common_firewalld_sources }}"
   when:
     - common_manage_firewalld | bool
     - common_firewalld_state != 'stopped'
 
 - name: Add trusted firewalld source CIDRs
-  command: "firewall-cmd --permanent --zone={{ common_firewalld_trusted_zone }} --add-source={{ item.item }}"
+  command:
+    argv:
+      - timeout
+      - "{{ common_firewalld_command_timeout | string }}"
+      - firewall-cmd
+      - --permanent
+      - "--zone={{ common_firewalld_trusted_zone }}"
+      - "--add-source={{ item.item }}"
   loop: "{{ common_firewalld_source_queries.results | default([]) }}"
   when:
     - common_manage_firewalld | bool
     - common_firewalld_state != 'stopped'
     - item.rc is defined
-    - item.rc != 0
+    - item.rc == 1
   changed_when: true
   notify: Reload firewalld

@@ -1,0 +1,13 @@
+apiVersion: mirror.openshift.io/v2alpha1
+kind: ImageSetConfiguration
+mirror:
+  platform:
+    architectures:
+      - {{ 'amd64' if cpu_architecture == 'x86_64' else cpu_architecture }}
+    channels:
+      - name: stable-{{ openshift_version.split('.')[0:2] | join('.') }}
+        minVersion: {{ openshift_version }}
+        maxVersion: {{ openshift_version }}
+        type: ocp
+    graph: {{ openshift_mirror_include_graph | bool | lower }}
+

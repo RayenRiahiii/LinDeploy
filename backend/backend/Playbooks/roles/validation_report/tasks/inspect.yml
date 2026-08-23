@@ -1,0 +1,110 @@
+---
+- name: Read the current cluster details
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters/{{ sno_cluster_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: validation_cluster
+  changed_when: false
+
+- name: Read the current host details
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs/{{ sno_infra_env_id }}/hosts/{{ sno_host_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: validation_host
+  changed_when: false
+
+- name: Parse Assisted Installer validations
+  ansible.builtin.set_fact:
+    sno_cluster_validations: >-
+      {{
+        validation_cluster.json.validations_info
+        | default('{}', true)
+        | from_json
+      }}
+    sno_host_validations: >-
+      {{
+        validation_host.json.validations_info
+        | default('{}', true)
+        | from_json
+      }}
+
+- name: Select non-successful cluster validations
+  ansible.builtin.set_fact:
+    sno_cluster_validation_issues: >-
+      {{
+        sno_cluster_validations
+        | dict2items
+        | map(attribute='value')
+        | flatten
+        | rejectattr('status', 'equalto', 'success')
+        | list
+      }}
+
+- name: Select non-successful host validations
+  ansible.builtin.set_fact:
+    sno_host_validation_issues: >-
+      {{
+        sno_host_validations
+        | dict2items
+        | map(attribute='value')
+        | flatten
+        | rejectattr('status', 'equalto', 'success')
+        | list
+      }}
+
+- name: Store current readiness
+  ansible.builtin.set_fact:
+    sno_installation_ready: >-
+      {{
+        validation_cluster.json.status == 'ready'
+        and validation_host.json.status == 'known'
+      }}
+
+- name: Report validation summary
+  ansible.builtin.debug:
+    msg:
+      - "Cluster status: {{ validation_cluster.json.status }}"
+      - >-
+        Cluster information:
+        {{ validation_cluster.json.status_info | default('none') }}
+      - "Host status: {{ validation_host.json.status }}"
+      - >-
+        Host information:
+        {{ validation_host.json.status_info | default('none') }}
+      - >-
+        Cluster validation issues:
+        {{ sno_cluster_validation_issues | length }}
+      - >-
+        Host validation issues:
+        {{ sno_host_validation_issues | length }}
+      - "Ready to select installation disk: {{ sno_installation_ready }}"
+      - This inspection did not modify the cluster or host.
+
+- name: Report cluster validation issues
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.id | default('unknown') }}:
+      {{ item.status | default('unknown') }} -
+      {{ item.message | default('No message reported') }}
+  loop: "{{ sno_cluster_validation_issues }}"
+  loop_control:
+    label: "{{ item.id | default('cluster-validation') }}"
+
+- name: Report host validation issues
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.id | default('unknown') }}:
+      {{ item.status | default('unknown') }} -
+      {{ item.message | default('No message reported') }}
+  loop: "{{ sno_host_validation_issues }}"
+  loop_control:
+    label: "{{ item.id | default('host-validation') }}"

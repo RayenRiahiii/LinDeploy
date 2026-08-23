@@ -1,0 +1,80 @@
+name: lindeploy-mirror
+
+services:
+  registry-k8s:
+    image: ghcr.io/project-zot/zot-linux-amd64:v2.1.18
+    restart: unless-stopped
+    command: ["serve", "/etc/zot/config.json"]
+    volumes:
+      - registry-k8s-data:/var/lib/zot
+      - ./registry/zot-k8s.json:/etc/zot/config.json:ro
+    networks: [mirror]
+
+  registry-quay:
+    image: ghcr.io/project-zot/zot-linux-amd64:v2.1.18
+    restart: unless-stopped
+    command: ["serve", "/etc/zot/config.json"]
+    volumes:
+      - registry-quay-data:/var/lib/zot
+      - ./registry/zot-quay.json:/etc/zot/config.json:ro
+    networks: [mirror]
+
+  registry-docker:
+    image: ghcr.io/project-zot/zot-linux-amd64:v2.1.18
+    restart: unless-stopped
+    command: ["serve", "/etc/zot/config.json"]
+    volumes:
+      - registry-docker-data:/var/lib/zot
+      - ./registry/zot-docker.json:/etc/zot/config.json:ro
+    networks: [mirror]
+
+  artifact-cache:
+    build:
+      context: ./artifact-cache
+    restart: unless-stopped
+    environment:
+      MIRROR_CACHE_DIR: /var/cache/lindeploy
+      MIRROR_CACHE_MAX_BYTES: ${MIRROR_CACHE_MAX_BYTES:-12884901888}
+      MIRROR_UPSTREAM_TIMEOUT: ${MIRROR_UPSTREAM_TIMEOUT:-900}
+      MIRROR_METADATA_TTL: ${MIRROR_METADATA_TTL:-3600}
+      MIRROR_PAYLOAD_REVALIDATE_TTL: ${MIRROR_PAYLOAD_REVALIDATE_TTL:-300}
+    volumes:
+      - artifact-cache-data:/var/cache/lindeploy
+    networks: [mirror]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  gateway:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    depends_on:
+      artifact-cache:
+        condition: service_healthy
+      registry-k8s:
+        condition: service_started
+      registry-quay:
+        condition: service_started
+      registry-docker:
+        condition: service_started
+    ports:
+      - "0.0.0.0:5001:5001"
+      - "0.0.0.0:5002:5002"
+      - "0.0.0.0:5003:5003"
+      - "0.0.0.0:8443:8443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./runtime/certs:/etc/nginx/certs:ro
+    networks: [mirror]
+
+networks:
+  mirror:
+    driver: bridge
+
+volumes:
+  registry-k8s-data:
+  registry-quay-data:
+  registry-docker-data:
+  artifact-cache-data:

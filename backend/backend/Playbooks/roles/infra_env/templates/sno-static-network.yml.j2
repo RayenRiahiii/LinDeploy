@@ -1,0 +1,26 @@
+interfaces:
+  - name: {{ sno_interface_name }}
+    type: ethernet
+    state: up
+    mac-address: {{ sno_mac_address }}
+    ipv4:
+      enabled: true
+      dhcp: false
+      address:
+        - ip: {{ sno_ip_address }}
+          prefix-length: {{ sno_prefix_length }}
+    ipv6:
+      enabled: false
+
+routes:
+  config:
+    - destination: 0.0.0.0/0
+      next-hop-interface: {{ sno_interface_name }}
+      next-hop-address: {{ sno_gateway }}
+
+dns-resolver:
+  config:
+    server:
+{% for dns_server in sno_dns_servers %}
+      - {{ dns_server }}
+{% endfor %}

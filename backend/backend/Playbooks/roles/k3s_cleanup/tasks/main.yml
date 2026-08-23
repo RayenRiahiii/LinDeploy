@@ -158,21 +158,37 @@
     k3s_cleanup_uninstall_failed: false
     k3s_cleanup_uninstall_error: ""
 
-- name: Run K3s uninstall helper when present
+- name: Run the appropriate K3s cleanup helper
   block:
-    - name: Execute K3s uninstall script
+    - name: Execute K3s killall helper for reusable-node cleanup
+      command: "{{ k3s_cleanup_killall_script_path }}"
+      register: k3s_cleanup_killall_result
+      changed_when: true
+      async: "{{ k3s_cleanup_uninstall_timeout }}"
+      poll: "{{ k3s_cleanup_uninstall_poll_interval }}"
+      when:
+        - k3s_cleanup_preserve_selinux_policy | bool
+        - k3s_cleanup_killall_script.stat.exists
+
+    - name: Execute K3s uninstall script when full package removal is required
       command: "{{ k3s_cleanup_uninstall_script_path }}"
       register: k3s_cleanup_uninstall_result
       changed_when: true
       async: "{{ k3s_cleanup_uninstall_timeout }}"
       poll: "{{ k3s_cleanup_uninstall_poll_interval }}"
-      when: k3s_cleanup_uninstall_script.stat.exists
+      when:
+        - k3s_cleanup_uninstall_script.stat.exists
+        - >-
+          (not k3s_cleanup_preserve_selinux_policy | bool)
+          or
+          (not k3s_cleanup_killall_script.stat.exists)
 
     - name: Execute K3s killall helper when uninstall script is absent
       command: "{{ k3s_cleanup_killall_script_path }}"
       register: k3s_cleanup_killall_result
       changed_when: true
       when:
+        - not k3s_cleanup_preserve_selinux_policy | bool
         - not k3s_cleanup_uninstall_script.stat.exists
         - k3s_cleanup_killall_script.stat.exists
   rescue:

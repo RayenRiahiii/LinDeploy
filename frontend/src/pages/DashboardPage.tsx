@@ -17,6 +17,7 @@ import {
   IconTerminal2,
 } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
+import MirrorStatusPanel from "../components/mirror/MirrorStatusPanel";
 
 type DashboardSummary = {
   hosts: {
@@ -159,6 +160,8 @@ export default function DashboardPage() {
           </Card>
         </SimpleGrid>
       )}
+
+      <MirrorStatusPanel />
 
       <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
         <Card className="installer-card" padding="lg" component={Link} to="/installers">

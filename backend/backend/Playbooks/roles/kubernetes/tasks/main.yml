@@ -2,14 +2,72 @@
 # ==================================================
 # 1. Add official Kubernetes repository
 # ==================================================
+- name: Probe configured Kubernetes RPM repository
+  uri:
+    url: "{{ kubernetes_repo_baseurl }}repodata/repomd.xml"
+    method: HEAD
+    return_content: false
+    validate_certs: true
+    timeout: "{{ kubernetes_repo_probe_timeout }}"
+    status_code: 200
+  register: kubernetes_rpm_repository_probe
+  changed_when: false
+  failed_when: false
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Select reachable Kubernetes RPM repository
+  set_fact:
+    kubernetes_effective_repo_baseurl: >-
+      {{
+        kubernetes_repo_baseurl
+        if kubernetes_rpm_repository_probe.status | default(0) == 200
+        else kubernetes_repo_upstream_baseurl
+      }}
+    kubernetes_effective_repo_gpgkey: >-
+      {{
+        kubernetes_repo_gpgkey
+        if kubernetes_rpm_repository_probe.status | default(0) == 200
+        else kubernetes_repo_upstream_gpgkey
+      }}
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Probe configured Kubernetes APT repository
+  uri:
+    url: "{{ kubernetes_apt_repo_url }}Release"
+    method: HEAD
+    return_content: false
+    validate_certs: true
+    timeout: "{{ kubernetes_repo_probe_timeout }}"
+    status_code: 200
+  register: kubernetes_apt_repository_probe
+  changed_when: false
+  failed_when: false
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Select reachable Kubernetes APT repository
+  set_fact:
+    kubernetes_effective_apt_repo_url: >-
+      {{
+        kubernetes_apt_repo_url
+        if kubernetes_apt_repository_probe.status | default(0) == 200
+        else kubernetes_apt_upstream_repo_url
+      }}
+    kubernetes_effective_apt_key_url: >-
+      {{
+        kubernetes_apt_repo_key_url
+        if kubernetes_apt_repository_probe.status | default(0) == 200
+        else kubernetes_apt_upstream_key_url
+      }}
+  when: ansible_facts["os_family"] == "Debian"
+
 - name: Add Kubernetes repository
   yum_repository:
     name: "{{ kubernetes_repo_name }}"
     description: "{{ kubernetes_repo_description }}"
-    baseurl: "{{ kubernetes_repo_baseurl }}"
+    baseurl: "{{ kubernetes_effective_repo_baseurl }}"
     enabled: true
     gpgcheck: true
-    gpgkey: "{{ kubernetes_repo_gpgkey }}"
+    gpgkey: "{{ kubernetes_effective_repo_gpgkey }}"
     exclude: "{{ kubernetes_repo_exclude | join(' ') }}"
   when: ansible_facts["os_family"] == "RedHat"
 
@@ -28,7 +86,7 @@
 
 - name: Download Kubernetes apt repository key
   get_url:
-    url: "{{ kubernetes_apt_repo_key_url }}"
+    url: "{{ kubernetes_effective_apt_key_url }}"
     dest: "{{ kubernetes_apt_keyring_path }}.asc"
     mode: "0644"
     timeout: "{{ kubernetes_repo_download_timeout }}"
@@ -66,7 +124,7 @@
 
 - name: Add Kubernetes apt repository
   apt_repository:
-    repo: "deb [signed-by={{ kubernetes_apt_keyring_path }}] {{ kubernetes_apt_repo_url }} /"
+    repo: "deb [signed-by={{ kubernetes_apt_keyring_path }}] {{ kubernetes_effective_apt_repo_url }} /"
     filename: kubernetes
     state: present
     update_cache: false

@@ -1,15 +1,28 @@
 import {
   Badge,
+  Button,
   Card,
   Group,
+  Modal,
   Progress,
   RingProgress,
+  ScrollArea,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from "@mantine/core";
-import { IconCheck, IconClockHour4 } from "@tabler/icons-react";
+import {
+  IconActivity,
+  IconAlertTriangle,
+  IconCheck,
+  IconChevronDown,
+  IconChevronUp,
+  IconClockHour4,
+  IconPlayerStop,
+  IconTerminal2,
+} from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   type ExecutionStage,
   formatDuration,
@@ -27,9 +40,25 @@ type LiveExecution = {
   currentTask?: string;
   seenTasks: number;
   completedTasks: number;
+  totalTasks: number;
   progress: number;
   elapsedSeconds: number;
   installationId?: number | null;
+  recentEvents?: Array<{
+    kind: "play_started" | "task_started" | "task_result";
+    play?: string;
+    role?: string;
+    task?: string;
+    host?: string;
+    status?: string;
+    line?: string;
+    timestamp?: string;
+  }>;
+  outputLines?: Array<{
+    channel: string;
+    line: string;
+    timestamp?: string;
+  }>;
 };
 
 type LastExecution = {
@@ -46,6 +75,8 @@ type DeploymentMonitorProps = {
   activeStage: ExecutionStage;
   stages: ExecutionStage[];
   pipelineStageIndex: number;
+  actions?: ReactNode;
+  onCancel?: () => void;
 };
 
 export default function DeploymentMonitor({
@@ -55,12 +86,57 @@ export default function DeploymentMonitor({
   activeStage,
   stages,
   pipelineStageIndex,
+  actions,
+  onCancel,
 }: DeploymentMonitorProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const status = loading ? live.status : result?.status;
   const statusColor = getStatusColor(status) === "gray" ? "teal" : getStatusColor(status);
-  const progress = loading ? live.progress : result?.status === "success" ? 100 : 0;
+  const progress = loading ? live.progress : result ? 100 : 0;
   const duration = loading ? live.elapsedSeconds : result?.durationSeconds;
   const installationId = loading ? live.installationId : result?.installationId;
+  const recentEvents = useMemo(() => live.recentEvents || [], [live.recentEvents]);
+  const outputLines = useMemo(() => live.outputLines || [], [live.outputLines]);
+  const outputViewportRef = useRef<HTMLDivElement>(null);
+  const hostActivity = useMemo(() => {
+    const hosts = new Map<string, { status: string; results: number; task: string }>();
+
+    recentEvents.forEach((event) => {
+      if (!event.host) {
+        return;
+      }
+
+      const current = hosts.get(event.host) || { status: "running", results: 0, task: "" };
+      hosts.set(event.host, {
+        status: event.status || current.status,
+        results: current.results + (event.kind === "task_result" ? 1 : 0),
+        task: event.task || current.task,
+      });
+    });
+
+    return Array.from(hosts.entries());
+  }, [recentEvents]);
+
+  function eventColor(eventStatus?: string) {
+    if (eventStatus === "failed" || eventStatus === "unreachable") return "red";
+    if (eventStatus === "ok" || eventStatus === "changed") return "teal";
+    if (eventStatus === "skipping") return "gray";
+    return "blue";
+  }
+
+  useEffect(() => {
+    if (!loading) {
+      setDetailsOpen(false);
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    if (!detailsOpen || !outputViewportRef.current) {
+      return;
+    }
+
+    outputViewportRef.current.scrollTop = outputViewportRef.current.scrollHeight;
+  }, [detailsOpen, outputLines]);
 
   return (
     <Card className="console-panel" padding="lg">
@@ -72,9 +148,23 @@ export default function DeploymentMonitor({
               Live progress and pipeline status for the current installer run.
             </Text>
           </div>
-          <Badge color={loading ? "red" : getStatusColor(result?.status)} variant="light">
-            {loading ? "running" : `last run ${result?.status ?? "idle"}`}
-          </Badge>
+          <Group className="monitor-header-actions" gap="sm" justify="flex-end">
+            <Badge color={loading ? "red" : getStatusColor(result?.status)} variant="light">
+              {loading ? "running" : `last run ${result?.status ?? "idle"}`}
+            </Badge>
+            {loading && onCancel && (
+              <Button
+                color="red"
+                variant="light"
+                size="xs"
+                onClick={onCancel}
+                leftSection={<IconPlayerStop size={14} />}
+              >
+                Cancel Installation
+              </Button>
+            )}
+            {!loading && actions}
+          </Group>
         </Group>
 
         <div className="monitor-layout">
@@ -113,18 +203,24 @@ export default function DeploymentMonitor({
                 {loading && live.summaryMessage && <Text size="sm" mt={6}>{live.summaryMessage}</Text>}
 
                 {loading && (live.currentPlay || live.currentTask) && (
-                  <Text size="sm" mt={6}>
-                    {live.currentPlay ? `Play: ${live.currentPlay}` : ""}
-                    {live.currentPlay && live.currentTask ? " | " : ""}
-                    {live.currentRole ? `Role: ${live.currentRole}` : ""}
-                    {live.currentRole && live.currentTask ? " | " : ""}
-                    {live.currentTask ? `Task: ${live.currentTask}` : ""}
-                  </Text>
+                  <div className="monitor-current-task">
+                    <Group gap="sm" wrap="nowrap" align="flex-start">
+                      <ThemeIcon color="teal" variant="light" radius="xl" size={30}>
+                        <IconActivity size={16} />
+                      </ThemeIcon>
+                      <div>
+                        <Text size="xs" c="dimmed" fw={700}>CURRENT TASK</Text>
+                        <Text size="sm" fw={800}>{live.currentTask || live.currentPlay}</Text>
+                        {live.currentRole && <Text size="xs" c="dimmed">Role: {live.currentRole}</Text>}
+                      </div>
+                    </Group>
+                  </div>
                 )}
 
                 {loading && (live.seenTasks > 0 || live.completedTasks > 0) && (
                   <Text size="sm" mt={6}>
-                    Seen tasks: {live.seenTasks} | Completed tasks: {live.completedTasks}
+                    Completed tasks: {live.completedTasks}
+                    {live.totalTasks > 0 ? ` / ${live.totalTasks} planned` : ` | ${live.seenTasks} observed`}
                   </Text>
                 )}
 
@@ -136,6 +232,17 @@ export default function DeploymentMonitor({
                   )}
                   {installationId && (
                     <Badge color="gray" variant="outline">installation #{installationId}</Badge>
+                  )}
+                  {loading && (
+                    <Button
+                      variant="subtle"
+                      size="compact-sm"
+                      onClick={() => setDetailsOpen((open) => !open)}
+                      leftSection={<IconTerminal2 size={14} />}
+                      rightSection={detailsOpen ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                    >
+                      {detailsOpen ? "Hide job output" : "View job output"}
+                    </Button>
                   )}
                 </Group>
               </div>
@@ -151,6 +258,95 @@ export default function DeploymentMonitor({
               radius="xl"
               animated={loading}
             />
+
+            <Modal
+              opened={loading && detailsOpen}
+              onClose={() => setDetailsOpen(false)}
+              title="Live Playbook Job Output"
+              size="78rem"
+              centered
+              classNames={{ content: "job-output-modal-content", header: "terminal-modal-header" }}
+            >
+              <div className="monitor-detail-drawer monitor-detail-modal-body">
+                <Group justify="space-between" align="center" mb="md">
+                  <div>
+                    <Text fw={800}>Live job output</Text>
+                    <Text size="xs" c="dimmed">Ansible activity reported by the controller, similar to an AAP job stream.</Text>
+                  </div>
+                  <Badge color="gray" variant="outline">{recentEvents.length} recent events</Badge>
+                </Group>
+
+                <div className="monitor-detail-grid">
+                  <div>
+                    <Text size="xs" c="dimmed" fw={700}>PLAY</Text>
+                    <Text size="sm" fw={600}>{live.currentPlay || "Preparing execution"}</Text>
+                  </div>
+                  <div>
+                    <Text size="xs" c="dimmed" fw={700}>ROLE</Text>
+                    <Text size="sm" fw={600}>{live.currentRole || "Waiting for role context"}</Text>
+                  </div>
+                  <div>
+                    <Text size="xs" c="dimmed" fw={700}>TASKS</Text>
+                    <Text size="sm" fw={600}>
+                      {live.completedTasks} completed
+                      {live.totalTasks > 0 ? ` / ${live.totalTasks} planned` : ` / ${live.seenTasks} observed`}
+                    </Text>
+                  </div>
+                </div>
+
+                {hostActivity.length > 0 && (
+                  <div className="monitor-host-strip">
+                    {hostActivity.map(([host, activity]) => (
+                      <div className="monitor-host-status" key={host}>
+                        <ThemeIcon color={eventColor(activity.status)} variant="light" radius="xl" size={26}>
+                          {activity.status === "failed" || activity.status === "unreachable"
+                            ? <IconAlertTriangle size={14} />
+                            : <IconCheck size={14} />}
+                        </ThemeIcon>
+                        <div>
+                          <Text size="sm" fw={700}>{host}</Text>
+                          <Text size="xs" c="dimmed">{activity.status} · {activity.results} updates</Text>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="monitor-job-stream">
+                  <div className="monitor-job-stream-header">
+                    <span>ANSIBLE PLAYBOOK OUTPUT</span>
+                    <span className="monitor-job-stream-count">
+                      {outputLines.length} live lines
+                    </span>
+                  </div>
+                  <ScrollArea
+                    h={440}
+                    type="auto"
+                    offsetScrollbars
+                    viewportRef={outputViewportRef}
+                    className="monitor-terminal-scroll"
+                  >
+                    {outputLines.length > 0 ? (
+                      <pre className="monitor-terminal-output" aria-live="polite">
+                        {outputLines.map((entry, index) => (
+                          <span
+                            className={entry.channel === "stderr" ? "is-stderr" : undefined}
+                            key={`${entry.timestamp || "line"}-${index}`}
+                          >
+                            {entry.line}{"\n"}
+                          </span>
+                        ))}
+                      </pre>
+                    ) : (
+                      <div className="monitor-job-empty">
+                        <IconTerminal2 size={24} />
+                        <Text size="sm" c="dimmed">Waiting for Ansible to produce job output.</Text>
+                      </div>
+                    )}
+                  </ScrollArea>
+                </div>
+              </div>
+            </Modal>
           </div>
 
           <div className="monitor-pipeline-panel">

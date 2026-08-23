@@ -1,5 +1,6 @@
 import time
 import shlex
+from types import SimpleNamespace
 from pathlib import Path
 
 from django.conf import settings
@@ -84,15 +85,76 @@ class WslRunner(BaseRunner):
         shell_command = self.build_ansible_shell_command(
             repo_root=repo_root,
             inventory_path=inventory_path,
-            command_suffix=f"ansible-playbook -i '{inventory_path_wsl}' '{playbook_relative_path}'{extra_vars_suffix}",
+            command_suffix=f"exec ansible-playbook -i '{inventory_path_wsl}' '{playbook_relative_path}'{extra_vars_suffix}",
+        )
+
+        pid_file = Path(inventory_path).with_suffix(".wsl-runner.pid")
+        pid_file_wsl = self.windows_to_wsl_path(pid_file)
+        wrapped_command = (
+            f"printf '%s\\n' \"$$\" > '{pid_file_wsl}'; "
+            "exec sh -c "
+            + shlex.quote(shell_command)
+        )
+
+        def report_process_start(process):
+            if not on_process_start:
+                return
+            for _ in range(50):
+                try:
+                    wsl_pid = int(pid_file.read_text(encoding="utf-8").strip())
+                    on_process_start(SimpleNamespace(pid=-wsl_pid))
+                    return
+                except (FileNotFoundError, ValueError, OSError):
+                    time.sleep(0.05)
+            on_process_start(process)
+
+        started_at = time.perf_counter()
+        try:
+            result = self.run_streaming_subprocess(
+                ["wsl", "-d", self.distro_name, "sh", "-lc", wrapped_command],
+                on_stdout_line=on_stdout_line,
+                on_stderr_line=on_stderr_line,
+                on_process_start=report_process_start,
+            )
+        finally:
+            pid_file.unlink(missing_ok=True)
+        execution_seconds = round(time.perf_counter() - started_at, 3)
+
+        return result, {
+            "command": shell_command,
+            "execution_seconds": execution_seconds,
+            "runner_backend": "wsl",
+            "runner_target": self.distro_name,
+        }
+
+    def list_playbook_tasks(
+        self,
+        repo_root,
+        playbook_relative_path,
+        inventory_path,
+        extra_vars_path=None,
+    ):
+        repo_root = Path(repo_root)
+        playbook_path = repo_root / playbook_relative_path
+        inventory_path_wsl = self.windows_to_wsl_path(inventory_path)
+        extra_vars_path_wsl = self.windows_to_wsl_path(extra_vars_path) if extra_vars_path else None
+
+        if not playbook_path.exists():
+            raise FileNotFoundError(f"Playbook not found: {playbook_path}")
+
+        extra_vars_suffix = f" -e '@{extra_vars_path_wsl}'" if extra_vars_path_wsl else ""
+        shell_command = self.build_ansible_shell_command(
+            repo_root=repo_root,
+            inventory_path=inventory_path,
+            command_suffix=(
+                f"ansible-playbook -i '{inventory_path_wsl}' "
+                f"'{playbook_relative_path}'{extra_vars_suffix} --list-tasks"
+            ),
         )
 
         started_at = time.perf_counter()
-        result = self.run_streaming_subprocess(
+        result = self.run_subprocess(
             ["wsl", "-d", self.distro_name, "sh", "-lc", shell_command],
-            on_stdout_line=on_stdout_line,
-            on_stderr_line=on_stderr_line,
-            on_process_start=on_process_start,
         )
         execution_seconds = round(time.perf_counter() - started_at, 3)
 

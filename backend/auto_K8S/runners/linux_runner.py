@@ -82,6 +82,45 @@ class LinuxRunner(BaseRunner):
             "runner_target": str(repo_root),
         }
 
+    def list_playbook_tasks(
+        self,
+        repo_root,
+        playbook_relative_path,
+        inventory_path,
+        extra_vars_path=None,
+    ):
+        repo_root = Path(repo_root)
+        playbook_path = repo_root / playbook_relative_path
+        env_overrides = self.build_command_env_prefix(repo_root)
+
+        if not playbook_path.exists():
+            raise FileNotFoundError(f"Playbook not found: {playbook_path}")
+
+        command = [
+            "ansible-playbook",
+            "-i",
+            str(Path(inventory_path).resolve()),
+            playbook_relative_path,
+        ]
+        if extra_vars_path:
+            command.extend(["-e", f"@{str(Path(extra_vars_path).resolve())}"])
+        command.append("--list-tasks")
+
+        started_at = time.perf_counter()
+        result = self.run_subprocess_with_env(
+            command,
+            cwd=repo_root,
+            env_overrides=env_overrides,
+        )
+        execution_seconds = round(time.perf_counter() - started_at, 3)
+
+        return result, {
+            "command": " ".join(shlex.quote(part) for part in command),
+            "execution_seconds": execution_seconds,
+            "runner_backend": "linux",
+            "runner_target": str(repo_root),
+        }
+
     def run_ad_hoc_command(self, repo_root, inventory_path, module_name, module_args):
         repo_root = Path(repo_root)
         env_overrides = self.build_command_env_prefix(repo_root)

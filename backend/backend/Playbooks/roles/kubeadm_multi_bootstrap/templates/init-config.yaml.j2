@@ -1,0 +1,27 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "{{ kubeadm_multi_advertise_address }}"
+  bindPort: {{ kubeadm_multi_api_port }}
+nodeRegistration:
+  criSocket: "{{ kubeadm_multi_cri_socket }}"
+  name: "{{ kubeadm_multi_node_name }}"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+clusterName: "{{ kubeadm_multi_cluster_name }}"
+controlPlaneEndpoint: "{{ kubeadm_multi_effective_endpoint }}"
+{% if kubeadm_multi_kubernetes_version | length > 0 %}
+kubernetesVersion: "{{ kubeadm_multi_kubernetes_version }}"
+{% endif %}
+{% if kubeadm_multi_image_repository | length > 0 %}
+imageRepository: "{{ kubeadm_multi_image_repository }}"
+{% endif %}
+apiServer:
+  certSANs:
+    - "{{ kubeadm_multi_endpoint_host }}"
+    - "{{ kubeadm_multi_advertise_address }}"
+networking:
+  dnsDomain: "{{ kubeadm_multi_cluster_domain }}"
+  podSubnet: "{{ kubeadm_multi_pod_network_cidr }}"
+  serviceSubnet: "{{ kubeadm_multi_service_cidr }}"

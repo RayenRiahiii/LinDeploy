@@ -1,0 +1,212 @@
+---
+- name: Find infrastructure environments for the cluster
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs?cluster_id={{ sno_cluster_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: assisted_infra_envs
+  changed_when: false
+
+- name: Select the requested infrastructure environment
+  ansible.builtin.set_fact:
+    matching_infra_envs: >-
+      {{
+        assisted_infra_envs.json
+        | selectattr('name', 'equalto', infra_env_name)
+        | list
+      }}
+
+- name: Refuse ambiguous infrastructure environment reuse
+  ansible.builtin.assert:
+    that:
+      - matching_infra_envs | length <= 1
+    fail_msg: >-
+      More than one infrastructure environment is named
+      {{ infra_env_name }} for this cluster.
+    quiet: true
+
+- name: Create the infrastructure environment
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/infra-envs"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      name: "{{ infra_env_name }}"
+      cluster_id: "{{ sno_cluster_id }}"
+      cpu_architecture: "{{ cpu_architecture }}"
+      image_type: "{{ discovery_image_type }}"
+      ssh_authorized_key: "{{ validated_ssh_public_key }}"
+      pull_secret: "{{ validated_pull_secret | to_json }}"
+      additional_trust_bundle: "{{ validated_additional_trust_bundle }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  register: created_sno_infra_env
+  when: matching_infra_envs | length == 0
+  no_log: true
+
+- name: Update the trust bundle on a reused infrastructure environment
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/infra-envs/{{ matching_infra_envs[0].id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      additional_trust_bundle: "{{ validated_additional_trust_bundle }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  no_log: true
+  when:
+    - matching_infra_envs | length == 1
+    - (matching_infra_envs[0].additional_trust_bundle | default('')) != validated_additional_trust_bundle
+
+- name: Store the infrastructure environment state
+  ansible.builtin.set_fact:
+    sno_infra_env_id: >-
+      {{
+        created_sno_infra_env.json.id
+        if matching_infra_envs | length == 0
+        else matching_infra_envs[0].id
+      }}
+    sno_infra_env_created: >-
+      {{ matching_infra_envs | length == 0 }}
+    current_static_network_config: >-
+      {{
+        []
+        if matching_infra_envs | length == 0
+        else
+        (matching_infra_envs[0].static_network_config | default([]))
+      }}
+
+- name: Build the desired static network API object
+  ansible.builtin.set_fact:
+    desired_static_network_config:
+      - network_yaml: "{{ planned_static_network_yaml }}"
+        mac_interface_map:
+          - mac_address: "{{ sno_mac_address }}"
+            logical_nic_name: "{{ sno_interface_name }}"
+  when: sno_static_network_enabled | bool
+
+- name: Apply the static network configuration when required
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs/{{ sno_infra_env_id }}
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      static_network_config: "{{ desired_static_network_config }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  register: static_network_update
+  when:
+    - sno_static_network_enabled | bool
+    - >-
+      current_static_network_config != desired_static_network_config
+
+- name: Check for an existing discovery ISO
+  ansible.builtin.stat:
+    path: "{{ discovery_iso_path }}"
+  register: discovery_iso_file
+
+- name: Decide whether the discovery ISO must be downloaded
+  ansible.builtin.set_fact:
+    discovery_iso_required: >-
+      {{
+        (sno_infra_env_created | bool)
+        or (static_network_update.changed | default(false) | bool)
+        or (not discovery_iso_file.stat.exists)
+        or ((discovery_iso_file.stat.size | default(0) | int) <= 100000000)
+      }}
+
+- name: Create the local artifacts directory
+  ansible.builtin.file:
+    path: "{{ discovery_iso_path | dirname }}"
+    state: directory
+    mode: "0700"
+  when: discovery_iso_required | bool
+
+- name: Initialize resilient discovery ISO download state
+  ansible.builtin.set_fact:
+    discovery_iso_download_valid: false
+  when: discovery_iso_required | bool
+
+- name: Download the discovery ISO with fresh signed URLs
+  ansible.builtin.include_tasks:
+    file: download_attempt.yml
+  loop: "{{ range(1, 5) | list }}"
+  loop_control:
+    loop_var: discovery_iso_attempt
+    label: "attempt {{ discovery_iso_attempt }}/4"
+  when:
+    - discovery_iso_required | bool
+    - not (discovery_iso_download_valid | default(false) | bool)
+
+- name: Require a successful resilient ISO download
+  ansible.builtin.assert:
+    that:
+      - discovery_iso_download_valid | bool
+    fail_msg: >-
+      The discovery ISO could not be downloaded after four attempts.
+      The partial file was preserved at {{ discovery_iso_path }}.part.
+    quiet: true
+  when: discovery_iso_required | bool
+
+- name: Publish the completed discovery ISO atomically
+  ansible.builtin.command:
+    argv:
+      - mv
+      - -f
+      - "{{ discovery_iso_path }}.part"
+      - "{{ discovery_iso_path }}"
+  when: discovery_iso_required | bool
+
+- name: Protect the completed discovery ISO
+  ansible.builtin.file:
+    path: "{{ discovery_iso_path }}"
+    mode: "0600"
+  when: discovery_iso_required | bool
+
+- name: Validate the downloaded discovery ISO size
+  ansible.builtin.stat:
+    path: "{{ discovery_iso_path }}"
+  register: downloaded_discovery_iso
+  when: discovery_iso_required | bool
+
+- name: Require a plausible downloaded discovery ISO
+  ansible.builtin.assert:
+    that:
+      - downloaded_discovery_iso.stat.exists
+      - downloaded_discovery_iso.stat.size > 100000000
+    fail_msg: The discovery ISO download completed but the resulting file is invalid.
+    quiet: true
+  when: discovery_iso_required | bool
+
+- name: Report the prepared installation media
+  ansible.builtin.debug:
+    msg:
+      - "Cluster ID: {{ sno_cluster_id }}"
+      - "InfraEnv ID: {{ sno_infra_env_id }}"
+      - "InfraEnv newly created: {{ sno_infra_env_created }}"
+      - "Discovery ISO: {{ discovery_iso_path }}"
+      - >-
+        ISO result:
+        {{
+          'downloaded'
+          if discovery_iso_required | bool
+          else 'reused existing file'
+        }}
+      - The target has not been booted and its disk was not modified.

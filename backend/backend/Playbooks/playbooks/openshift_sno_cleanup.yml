@@ -1,0 +1,113 @@
+---
+- name: Remove a LinDeploy managed Single Node OpenShift VM
+  hosts: selected_hosts
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: false
+
+  vars:
+    sno_request: "{{ cluster_config }}"
+    sno_host_request: "{{ selected_hosts_config | first }}"
+    libvirt_uri: qemu:///system
+    libvirt_vm_name: "{{ sno_host_request.vm_name }}"
+    libvirt_pool_name: "{{ sno_host_request.storage_pool }}"
+    libvirt_volume_name: "{{ libvirt_vm_name }}.qcow2"
+    workshop_id: "lindeploy-{{ sno_request.cluster_name }}"
+    openshift_ownership_marker_path: "{{ ansible_env.HOME }}/.local/share/lindeploy/ownership/{{ sno_request.cluster_name }}.json"
+    openshift_cluster_asset_directories:
+      - "{{ ansible_env.HOME }}/.local/share/lindeploy/openshift-agent/{{ sno_request.cluster_name }}"
+      - "{{ ansible_env.HOME }}/.local/share/lindeploy/openshift/{{ sno_request.cluster_name }}"
+
+  tasks:
+    - name: Read managed SNO domain
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", dumpxml, "{{ libvirt_vm_name }}"]
+      register: openshift_cleanup_domain
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse to remove an unmanaged domain
+      ansible.builtin.assert:
+        that:
+          - openshift_cleanup_domain.rc != 0 or workshop_id in openshift_cleanup_domain.stdout
+        fail_msg: The existing VM does not contain the expected LinDeploy ownership marker.
+        quiet: true
+
+    - name: Destroy running managed SNO domain
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", destroy, "{{ libvirt_vm_name }}"]
+      register: openshift_cleanup_destroy
+      changed_when: openshift_cleanup_destroy.rc == 0
+      failed_when: false
+      when: openshift_cleanup_domain.rc == 0
+
+    - name: Undefine managed SNO domain
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['virsh', '--connect', libvirt_uri, 'undefine', libvirt_vm_name]
+            + (['--nvram'] if '<nvram' in openshift_cleanup_domain.stdout else [])
+          }}
+      when: openshift_cleanup_domain.rc == 0
+
+    - name: Read managed SNO volume
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", vol-info, --pool, "{{ libvirt_pool_name }}", "{{ libvirt_volume_name }}"]
+      register: openshift_cleanup_volume
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect the LinDeploy ownership marker
+      ansible.builtin.stat:
+        path: "{{ openshift_ownership_marker_path }}"
+      register: openshift_cleanup_ownership_marker
+
+    - name: Read the LinDeploy ownership marker
+      ansible.builtin.slurp:
+        src: "{{ openshift_ownership_marker_path }}"
+      register: openshift_cleanup_ownership_marker_content
+      when: openshift_cleanup_ownership_marker.stat.isreg | default(false)
+
+    - name: Decode the LinDeploy ownership marker
+      ansible.builtin.set_fact:
+        openshift_cleanup_ownership_data: >-
+          {{ openshift_cleanup_ownership_marker_content.content | b64decode | from_json }}
+      when: openshift_cleanup_ownership_marker.stat.isreg | default(false)
+
+    - name: Refuse to remove an unowned orphan volume
+      ansible.builtin.assert:
+        that:
+          - openshift_cleanup_ownership_marker.stat.isreg | default(false)
+          - openshift_cleanup_ownership_data.workshop_id == workshop_id
+          - openshift_cleanup_ownership_data.vm_name == libvirt_vm_name
+          - openshift_cleanup_ownership_data.pool_name == libvirt_pool_name
+          - openshift_cleanup_ownership_data.volume_name == libvirt_volume_name
+        fail_msg: >-
+          The VM domain is absent, but its volume has no matching LinDeploy
+          ownership marker. The volume was preserved for manual review.
+        quiet: true
+      when:
+        - openshift_cleanup_domain.rc != 0
+        - openshift_cleanup_volume.rc == 0
+
+    - name: Delete managed SNO volume
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", vol-delete, --pool, "{{ libvirt_pool_name }}", "{{ libvirt_volume_name }}"]
+      when: openshift_cleanup_volume.rc == 0
+
+    - name: Remove cluster-specific installation assets
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ openshift_cluster_asset_directories }}"
+
+    - name: Remove the LinDeploy ownership marker
+      ansible.builtin.file:
+        path: "{{ openshift_ownership_marker_path }}"
+        state: absent
+
+    - name: Confirm preserved mirror content
+      ansible.builtin.debug:
+        msg:
+          - "Managed SNO VM and cluster assets were removed."
+          - OpenShift mirror registry and synchronized release content were preserved.

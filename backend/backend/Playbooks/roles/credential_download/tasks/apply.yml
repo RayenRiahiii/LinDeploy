@@ -1,0 +1,95 @@
+---
+- name: Refresh the API token for credential downloads
+  ansible.builtin.uri:
+    url: "{{ redhat_sso_token_url }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: refresh_token
+      client_id: cloud-services
+      refresh_token: "{{ redhat_offline_token }}"
+    status_code: 200
+    return_content: true
+  register: credential_authentication
+  no_log: true
+
+- name: Store the fresh credential-download token
+  ansible.builtin.set_fact:
+    credential_api_token: >-
+      {{ credential_authentication.json.access_token }}
+  no_log: true
+
+- name: Create the private credentials directory
+  ansible.builtin.file:
+    path: "{{ credentials_directory }}"
+    state: directory
+    mode: "0700"
+
+- name: Download the administrator kubeconfig
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/clusters/{{ sno_cluster_id
+      }}/downloads/credentials?file_name=kubeconfig
+    method: GET
+    headers:
+      Authorization: "Bearer {{ credential_api_token }}"
+    status_code: 200
+    dest: "{{ kubeconfig_path }}"
+  no_log: true
+
+- name: Download the kubeadmin password
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/clusters/{{ sno_cluster_id
+      }}/downloads/credentials?file_name=kubeadmin-password
+    method: GET
+    headers:
+      Authorization: "Bearer {{ credential_api_token }}"
+    status_code: 200
+    dest: "{{ kubeadmin_password_path }}"
+  no_log: true
+
+- name: Protect the downloaded credential files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: file
+    mode: "0600"
+  loop:
+    - "{{ kubeconfig_path }}"
+    - "{{ kubeadmin_password_path }}"
+  no_log: true
+
+- name: Check the downloaded kubeconfig
+  ansible.builtin.stat:
+    path: "{{ kubeconfig_path }}"
+  register: downloaded_kubeconfig
+  no_log: true
+
+- name: Check the downloaded kubeadmin password
+  ansible.builtin.stat:
+    path: "{{ kubeadmin_password_path }}"
+  register: downloaded_kubeadmin_password
+  no_log: true
+
+- name: Require non-empty credential files
+  ansible.builtin.assert:
+    that:
+      - downloaded_kubeconfig.stat.exists
+      - downloaded_kubeconfig.stat.size > 0
+      - downloaded_kubeadmin_password.stat.exists
+      - downloaded_kubeadmin_password.stat.size > 0
+    fail_msg: Assisted Installer returned missing or empty credentials.
+    quiet: true
+  no_log: true
+
+- name: Store credential availability
+  ansible.builtin.set_fact:
+    sno_credentials_available: true
+
+- name: Report credential download
+  ansible.builtin.debug:
+    msg:
+      - Credentials were downloaded successfully.
+      - "Kubeconfig: {{ kubeconfig_path }}"
+      - "Kubeadmin password: {{ kubeadmin_password_path }}"
+      - Credential contents were not printed.

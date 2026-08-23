@@ -1,12 +1,67 @@
 ---
-# ==================================================
-# 1. Install tools required to manage repositories
-# ==================================================
-- name: Install dnf plugins
-  dnf:
-    name: dnf-plugins-core
-    state: present
+- name: Probe configured Docker RPM repository
+  uri:
+    url: >-
+      {{ (
+           (containerd_repo_baseurl | regex_replace('/cache/', '/cache-ready/'))
+           if (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool and '/cache/' in containerd_repo_baseurl)
+           else containerd_repo_baseurl
+         ) | replace('$basearch', ansible_facts['architecture'])
+      }}/repodata/repomd.xml
+    method: GET
+    return_content: false
+    validate_certs: true
+    timeout: "{{ containerd_repo_probe_timeout }}"
+    status_code: 200
+  register: containerd_rpm_repository_probe
+  changed_when: false
+  failed_when: false
   when: ansible_facts["os_family"] == "RedHat"
+
+- name: Select reachable Docker RPM repository
+  set_fact:
+    containerd_effective_repo_baseurl: >-
+      {{
+        containerd_repo_baseurl
+        if containerd_rpm_repository_probe.status | default(0) == 200
+        else containerd_repo_upstream_baseurl
+      }}
+    containerd_effective_repo_gpgkey: >-
+      {{
+        containerd_repo_gpgkey
+        if containerd_rpm_repository_probe.status | default(0) == 200
+        else containerd_repo_upstream_gpgkey
+      }}
+  when: ansible_facts["os_family"] == "RedHat"
+
+- name: Probe configured Docker APT repository
+  uri:
+    url: "{{ containerd_apt_repo_url }}/dists/{{ containerd_apt_repo_distribution }}/Release"
+    method: HEAD
+    return_content: false
+    validate_certs: true
+    timeout: "{{ containerd_repo_probe_timeout }}"
+    status_code: 200
+  register: containerd_apt_repository_probe
+  changed_when: false
+  failed_when: false
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Select reachable Docker APT repository
+  set_fact:
+    containerd_effective_apt_repo_url: >-
+      {{
+        containerd_apt_repo_url
+        if containerd_apt_repository_probe.status | default(0) == 200
+        else containerd_apt_upstream_repo_url
+      }}
+    containerd_effective_apt_key_url: >-
+      {{
+        containerd_apt_key_url
+        if containerd_apt_repository_probe.status | default(0) == 200
+        else containerd_apt_upstream_key_url
+      }}
+  when: ansible_facts["os_family"] == "Debian"
 
 - name: Ensure apt keyrings directory exists
   file:
@@ -22,12 +77,22 @@
   when: ansible_facts["os_family"] == "Debian"
 
 - name: Download Docker apt repository key
-  get_url:
-    url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
-    dest: "{{ containerd_apt_keyring_path }}"
-    mode: "0644"
-    force: true
-  register: containerd_apt_key_download
+  block:
+    - name: Download Docker apt key from configured endpoint
+      get_url:
+        url: "{{ containerd_effective_apt_key_url }}"
+        dest: "{{ containerd_apt_keyring_path }}"
+        mode: "0644"
+        force: true
+      register: containerd_apt_key_download
+  rescue:
+    - name: Download Docker apt key from official endpoint
+      get_url:
+        url: "{{ containerd_apt_upstream_key_url }}"
+        dest: "{{ containerd_apt_keyring_path }}"
+        mode: "0644"
+        force: true
+      register: containerd_apt_key_fallback_download
   when:
     - ansible_facts["os_family"] == "Debian"
     - >
@@ -44,15 +109,17 @@
   yum_repository:
     name: "{{ containerd_repo_name }}"
     description: "{{ containerd_repo_description }}"
-    baseurl: "{{ containerd_repo_baseurl }}"
+    baseurl: "{{ containerd_effective_repo_baseurl }}"
     enabled: true
     gpgcheck: true
-    gpgkey: "{{ containerd_repo_gpgkey }}"
+    gpgkey: "{{ containerd_effective_repo_gpgkey }}"
+    timeout: "{{ containerd_repo_timeout }}"
+    retries: "{{ containerd_repo_retries }}"
   when: ansible_facts["os_family"] == "RedHat"
 
 - name: Add Docker apt repository
   apt_repository:
-    repo: "deb [arch={{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else ansible_facts['architecture'] }} signed-by={{ containerd_apt_keyring_path }}] {{ containerd_apt_repo_url }} {{ containerd_apt_repo_distribution }} {{ containerd_apt_repo_components }}"
+    repo: "deb [arch={{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else ansible_facts['architecture'] }} signed-by={{ containerd_apt_keyring_path }}] {{ containerd_effective_apt_repo_url }} {{ containerd_apt_repo_distribution }} {{ containerd_apt_repo_components }}"
     filename: docker
     state: present
     update_cache: false
@@ -68,24 +135,106 @@
     - >
       (containerd_apt_key_download is defined and containerd_apt_key_download.changed | default(false))
       or
+      (containerd_apt_key_fallback_download is defined and containerd_apt_key_fallback_download.changed | default(false))
+      or
       (containerd_apt_repository is defined and containerd_apt_repository.changed | default(false))
 
 # ==================================================
 # 3. Install containerd
 # ==================================================
-- name: Install containerd package
-  dnf:
-    name: "{{ containerd_package_name_redhat }}"
-    state: present
-    update_cache: "{{ containerd_redhat_update_cache }}"
+- name: Install containerd package on Red Hat family
+  block:
+    - name: Install containerd from configured repository
+      dnf:
+        name: "{{ containerd_package_name_redhat }}"
+        state: present
+        update_cache: "{{ containerd_redhat_update_cache }}"
+  rescue:
+    - name: Stop after direct upstream containerd failure
+      fail:
+        msg: >-
+          The signed Docker repository selected for {{ inventory_hostname }}
+          could not provide {{ containerd_package_name_redhat }}. The local
+          mirror was not ready or was not selected, and retrying the same
+          upstream repository would only repeat the timeout. Verify Internet
+          access or complete the LinDeploy mirror prewarm, then retry.
+      when: containerd_effective_repo_baseurl == containerd_repo_upstream_baseurl
+
+    - name: Report containerd mirror fallback
+      debug:
+        msg: >-
+          The configured containerd repository could not complete the
+          transaction on {{ inventory_hostname }}. Retrying once through the
+          official signed Docker repository.
+      when: containerd_effective_repo_baseurl != containerd_repo_upstream_baseurl
+
+    - name: Temporarily configure official Docker repository
+      yum_repository:
+        name: "{{ containerd_repo_name }}"
+        description: "{{ containerd_repo_description }}"
+        baseurl: "{{ containerd_repo_upstream_baseurl }}"
+        enabled: true
+        gpgcheck: true
+        gpgkey: "{{ containerd_repo_upstream_gpgkey }}"
+        timeout: "{{ containerd_repo_timeout }}"
+        retries: "{{ containerd_repo_retries }}"
+      when: containerd_effective_repo_baseurl != containerd_repo_upstream_baseurl
+
+    - name: Install containerd from official Docker repository
+      dnf:
+        name: "{{ containerd_package_name_redhat }}"
+        state: present
+        update_cache: true
+      when: containerd_effective_repo_baseurl != containerd_repo_upstream_baseurl
+  always:
+    - name: Restore configured Docker repository
+      yum_repository:
+        name: "{{ containerd_repo_name }}"
+        description: "{{ containerd_repo_description }}"
+        baseurl: "{{ containerd_effective_repo_baseurl }}"
+        enabled: true
+        gpgcheck: true
+        gpgkey: "{{ containerd_effective_repo_gpgkey }}"
+        timeout: "{{ containerd_repo_timeout }}"
+        retries: "{{ containerd_repo_retries }}"
   when: ansible_facts["os_family"] == "RedHat"
 
 - name: Install containerd package on Debian family
-  apt:
-    name: "{{ containerd_package_name_debian }}"
-    state: present
-    update_cache: false
-    lock_timeout: "{{ containerd_apt_lock_timeout }}"
+  block:
+    - name: Install containerd from configured apt repository
+      apt:
+        name: "{{ containerd_package_name_debian }}"
+        state: present
+        update_cache: false
+        lock_timeout: "{{ containerd_apt_lock_timeout }}"
+  rescue:
+    - name: Report containerd apt mirror fallback
+      debug:
+        msg: >-
+          The configured containerd apt repository could not complete the
+          transaction on {{ inventory_hostname }}. Retrying once through the
+          official signed Docker repository.
+
+    - name: Temporarily configure official Docker apt repository
+      apt_repository:
+        repo: "deb [arch={{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else ansible_facts['architecture'] }} signed-by={{ containerd_apt_keyring_path }}] {{ containerd_apt_upstream_repo_url }} {{ containerd_apt_repo_distribution }} {{ containerd_apt_repo_components }}"
+        filename: docker
+        state: present
+        update_cache: true
+
+    - name: Install containerd from official Docker apt repository
+      apt:
+        name: "{{ containerd_package_name_debian }}"
+        state: present
+        update_cache: false
+        lock_timeout: "{{ containerd_apt_lock_timeout }}"
+  always:
+    - name: Restore configured Docker apt repository
+      apt_repository:
+        repo: "deb [arch={{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else ansible_facts['architecture'] }} signed-by={{ containerd_apt_keyring_path }}] {{ containerd_effective_apt_repo_url }} {{ containerd_apt_repo_distribution }} {{ containerd_apt_repo_components }}"
+        filename: docker
+        state: present
+        update_cache: false
   when: ansible_facts["os_family"] == "Debian"
 
 # ==================================================
@@ -105,19 +254,40 @@
     path: "{{ containerd_config_path }}"
   register: containerd_config_stat
 
+- name: Read existing containerd config
+  slurp:
+    path: "{{ containerd_config_path }}"
+  register: containerd_existing_config
+  when: containerd_config_stat.stat.exists
+
+- name: Determine whether containerd config must be generated
+  set_fact:
+    containerd_config_requires_generation: >-
+      {{
+        (not containerd_config_stat.stat.exists)
+        or
+        (
+          'SystemdCgroup'
+          not in (containerd_existing_config.content | default('') | b64decode)
+        )
+      }}
+
 - name: Generate default containerd config
   command: containerd config default
   register: containerd_default_config
   changed_when: false
-  when: not containerd_config_stat.stat.exists
+  when: containerd_config_requires_generation | bool
 
 - name: Write containerd config
   copy:
     dest: "{{ containerd_config_path }}"
     content: "{{ containerd_default_config.stdout }}"
+    owner: root
+    group: root
     mode: '0644'
+    backup: "{{ containerd_config_stat.stat.exists }}"
   notify: Restart containerd
-  when: not containerd_config_stat.stat.exists
+  when: containerd_config_requires_generation | bool
 
 # ==================================================
 # 6. Set SystemdCgroup=true
@@ -137,7 +307,135 @@
   notify: Restart containerd
 
 # ==================================================
-# 7. Enable and start containerd service
+# 7. Configure transparent OCI pull-through mirrors
+# ==================================================
+- name: Validate containerd mirror configuration
+  assert:
+    that:
+      - lindeploy_registry_mirrors | length > 0
+      - item.key is string
+      - item.value is string
+      - item.key is match('^[a-zA-Z0-9.-]+(:[0-9]+)?$')
+      - item.value is match('^https?://[^/]+/?$')
+      - >-
+        item.value is match('^https://')
+        or lindeploy_mirror_allow_insecure_http | bool
+    fail_msg: >-
+      Invalid registry mirror entry {{ item.key }}={{ item.value }}. Registry
+      names must not contain a URL scheme and endpoints must be an HTTP(S)
+      origin without a path.
+  loop: "{{ lindeploy_registry_mirrors | dict2items }}"
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Find registry directories previously managed by LinDeploy
+  find:
+    paths: "{{ containerd_registry_config_dir }}"
+    patterns: .lindeploy-managed
+    file_type: file
+    recurse: true
+  register: containerd_lindeploy_managed_registry_markers
+  when: containerd_config_stat.stat.exists
+
+- name: Remove disabled or stale LinDeploy registry mirror directories
+  file:
+    path: "{{ item.path | dirname }}"
+    state: absent
+  loop: "{{ containerd_lindeploy_managed_registry_markers.files | default([]) }}"
+  when:
+    - >-
+      (not lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool)
+      or ((item.path | dirname | basename) not in lindeploy_registry_mirrors)
+
+- name: Remove unused LinDeploy containerd mirror CA
+  file:
+    path: "{{ lindeploy_mirror_ca_path }}"
+    state: absent
+  when:
+    - not lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - containerd_config_stat.stat.exists
+
+- name: Ensure containerd registry configuration directory exists
+  file:
+    path: "{{ containerd_registry_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Install LinDeploy mirror CA for containerd
+  copy:
+    dest: "{{ lindeploy_mirror_ca_path }}"
+    content: "{{ lindeploy_mirror_ca_certificate }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - lindeploy_mirror_ca_certificate | length > 0
+
+- name: Create per-registry containerd mirror directories
+  file:
+    path: "{{ containerd_registry_config_dir }}/{{ item.key }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ lindeploy_registry_mirrors | dict2items }}"
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Render containerd pull-through mirror configuration
+  template:
+    src: registry-hosts.toml.j2
+    dest: "{{ containerd_registry_config_dir }}/{{ item.key }}/hosts.toml"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ lindeploy_registry_mirrors | dict2items }}"
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Mark containerd registry directories managed by LinDeploy
+  copy:
+    dest: "{{ containerd_registry_config_dir }}/{{ item.key }}/.lindeploy-managed"
+    content: "managed by LinDeploy\n"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ lindeploy_registry_mirrors | dict2items }}"
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Enable containerd registry hosts configuration directory
+  replace:
+    path: "{{ containerd_config_path }}"
+    regexp: >-
+      (?ms)(^\s*\[plugins\.["'](?:io\.containerd\.grpc\.v1\.cri|io\.containerd\.cri\.v1\.images)["']\.registry\]\s*.*?^\s*config_path\s*=\s*)["']{2}
+    replace: '\1"{{ containerd_registry_config_dir }}"'
+  register: containerd_registry_config_path
+  notify: Restart containerd
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Verify containerd registry configuration path is active
+  command:
+    argv:
+      - grep
+      - -Eq
+      - '^[[:space:]]*config_path[[:space:]]*=[[:space:]]*["'']([^"'']*:)?{{ containerd_registry_config_dir | regex_escape }}(:[^"'']*)?["''][[:space:]]*$'
+      - "{{ containerd_config_path }}"
+  changed_when: false
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Validate effective containerd configuration
+  command:
+    argv:
+      - containerd
+      - --config
+      - "{{ containerd_config_path }}"
+      - config
+      - dump
+  changed_when: false
+
+# ==================================================
+# 8. Enable and start containerd service
 # ==================================================
 - name: Enable and start containerd
   systemd:
@@ -147,7 +445,7 @@
     daemon_reload: true
 
 # ==================================================
-# 8. Apply pending containerd restart before kubeadm
+# 9. Apply pending containerd restart before kubeadm
 # ==================================================
 - name: Flush containerd handlers
   meta: flush_handlers

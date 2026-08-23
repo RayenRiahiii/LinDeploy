@@ -1,7 +1,9 @@
 import tempfile
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import Mock, patch
+import json
 from pathlib import Path
 
 from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate
@@ -13,10 +15,379 @@ from .serializers import (
     InstallationTemplateSerializer,
 )
 from .services import (
+    append_live_output_line,
+    apply_playbook_results,
+    build_extra_vars_file,
+    build_inventory_file,
     classify_baseline_facts,
+    compute_live_playbook_progress,
     parse_connectivity_output,
+    parse_listed_task_count,
+    parse_listed_task_work_count,
     parse_play_recap,
+    normalize_host_overrides,
+    read_live_output_lines,
+    reset_live_output,
 )
+
+
+class LiveExecutionProgressTests(TestCase):
+    def test_counts_only_listed_ansible_tasks(self):
+        output = """
+playbook: playbooks/k8s_single_node.yml
+
+  play #1 (selected_hosts): Install Kubernetes Single Node TAGS: []
+    tasks:
+      Probe conflicting K3s installation artifacts TAGS: []
+      common : Install base packages TAGS: []
+      containerd : Enable and start containerd TAGS: []
+"""
+
+        self.assertEqual(parse_listed_task_count(output), 3)
+
+    def test_progress_uses_completed_task_ratio(self):
+        self.assertEqual(compute_live_playbook_progress(0, 100), 35)
+        self.assertEqual(compute_live_playbook_progress(50, 100), 63)
+        self.assertEqual(compute_live_playbook_progress(100, 100), 91)
+
+    def test_weights_free_strategy_tasks_by_matching_host_count(self):
+        output = """
+  play #1 (localhost): Validate inventory TAGS: []
+    tasks:
+      Validate groups TAGS: []
+  play #2 (selected_hosts): Prepare nodes TAGS: []
+    tasks:
+      Install packages TAGS: []
+      Configure runtime TAGS: []
+  play #3 (workers): Join workers TAGS: []
+    tasks:
+      Join cluster TAGS: []
+"""
+
+        self.assertEqual(
+            parse_listed_task_work_count(
+                output,
+                free_strategy_group_sizes={"selected_hosts": 3, "workers": 2},
+            ),
+            9,
+        )
+
+    def test_live_output_is_durable_and_limited(self):
+        import threading
+
+        with tempfile.TemporaryDirectory() as directory:
+            with override_settings(BASE_DIR=Path(directory)):
+                output_path = reset_live_output(42)
+                output_lock = threading.Lock()
+                for index in range(5):
+                    append_live_output_line(
+                        output_path,
+                        output_lock,
+                        channel="stderr" if index == 4 else "stdout",
+                        line=f"line {index}",
+                        timestamp=f"2026-08-16T12:00:0{index}+00:00",
+                    )
+
+                output = read_live_output_lines(42, limit=3)
+
+        self.assertEqual([item["line"] for item in output], ["line 2", "line 3", "line 4"])
+        self.assertEqual(output[-1]["channel"], "stderr")
+
+
+class MirrorApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    @override_settings(LINDEPLOY_MIRROR_ENABLED=False)
+    def test_mirror_status_reports_disabled_state(self):
+        response = self.client.get("/api/mirror/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["enabled"])
+        self.assertIn("kubernetes", response.data["components"])
+        self.assertIn("k3s", response.data["components"])
+
+    @override_settings(LINDEPLOY_MIRROR_ENABLED=False)
+    def test_mirror_prewarm_rejects_disabled_mirror(self):
+        response = self.client.post("/api/mirror/prewarm/", {"force": False}, format="json")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("disabled", response.data["message"].lower())
+
+    @override_settings(LINDEPLOY_MIRROR_ENABLED=True)
+    @patch("auto_K8S.views.run_mirror_prewarm_task.delay")
+    @patch("auto_K8S.views.mark_mirror_prewarm_queued")
+    def test_mirror_prewarm_is_queued_asynchronously(self, mark_queued, delay):
+        mark_queued.return_value = {"updated_at": "", "components": {}}
+        delay.return_value = Mock(id="prewarm-task-1")
+
+        response = self.client.post("/api/mirror/prewarm/", {"force": True}, format="json")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data["task_id"], "prewarm-task-1")
+        mark_queued.assert_called_once_with()
+        delay.assert_called_once_with(force=True)
+
+    @patch("auto_K8S.mirror.MIRROR_STATE_PATH")
+    def test_mirror_state_recovers_final_mapping_from_legacy_output_array(self, state_path):
+        from .mirror import read_mirror_state
+
+        legacy_state = {
+            "components": {
+                "kubernetes": [
+                    "progress output",
+                    {"status": "ready", "active_version": "v1.36.3"},
+                ],
+                "k3s": [
+                    "progress output",
+                    {"status": "ready", "active_version": "v1.36.3+k3s1"},
+                ],
+            }
+        }
+        state_path.read_text.return_value = json.dumps(legacy_state)
+
+        state = read_mirror_state()
+
+        self.assertEqual(state["components"]["kubernetes"]["status"], "ready")
+        self.assertEqual(state["components"]["k3s"]["active_version"], "v1.36.3+k3s1")
+
+
+class TopologyInventoryTests(TestCase):
+    def setUp(self):
+        self.credential = Credential.objects.create(
+            name="inventory-credential",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="automation",
+            password="test-password",
+            become_password="test-become-password",
+        )
+        self.control_plane = Host.objects.create(
+            name="control-01",
+            ip_address="192.0.2.10",
+            credential=self.credential,
+        )
+        self.worker = Host.objects.create(
+            name="worker-01",
+            ip_address="192.0.2.20",
+            credential=self.credential,
+        )
+        self.host_overrides = [
+            {
+                "host_id": self.control_plane.id,
+                "host_name": self.control_plane.name,
+                "node_name": "production-control-01",
+                "node_role": "control_plane",
+                "advertise_address": "192.0.2.10",
+            },
+            {
+                "host_id": self.worker.id,
+                "host_name": self.worker.name,
+                "node_name": "production-worker-01",
+                "node_role": "worker",
+                "advertise_address": "192.0.2.20",
+            },
+        ]
+
+    def test_single_node_inventory_keeps_flat_selected_hosts_group(self):
+        inventory_path = build_inventory_file(
+            [self.control_plane],
+            host_overrides=[self.host_overrides[0]],
+        )
+        inventory = inventory_path.read_text(encoding="utf-8")
+
+        self.assertIn("    selected_hosts:\n      hosts:\n", inventory)
+        self.assertNotIn("        control_plane:", inventory)
+        self.assertNotIn("lindeploy_desired_role", inventory)
+        self.assertIn('lindeploy_node_name: "production-control-01"', inventory)
+        self.assertIn('lindeploy_cluster_name: "kubernetes-production-control-01"', inventory)
+
+    def test_multi_node_inventory_groups_hosts_and_marks_bootstrap(self):
+        inventory_path = build_inventory_file(
+            [self.control_plane, self.worker],
+            host_overrides=self.host_overrides,
+            topology=Installation.Topology.MULTI_NODE,
+            bootstrap_host_id=self.control_plane.id,
+        )
+        inventory = inventory_path.read_text(encoding="utf-8")
+
+        self.assertIn("        control_plane:\n          hosts:\n", inventory)
+        self.assertIn("        workers:\n          hosts:\n", inventory)
+        self.assertIn("        bootstrap:\n          hosts:\n", inventory)
+        self.assertIn("            control-01: {}", inventory)
+        self.assertIn("lindeploy_is_bootstrap: true", inventory)
+        self.assertIn("lindeploy_desired_role: control_plane", inventory)
+        self.assertIn("lindeploy_desired_role: worker", inventory)
+        self.assertIn('lindeploy_node_name: "production-worker-01"', inventory)
+
+    def test_multi_node_inventory_rejects_missing_bootstrap(self):
+        with self.assertRaisesMessage(ValueError, "reachable bootstrap host"):
+            build_inventory_file(
+                [self.control_plane, self.worker],
+                host_overrides=self.host_overrides,
+                topology=Installation.Topology.MULTI_NODE,
+                bootstrap_host_id=99999,
+            )
+
+    def test_multi_node_extra_vars_expose_role_groups_and_bootstrap(self):
+        extra_vars_path = build_extra_vars_file(
+            cluster_config={
+                "cluster_name": "production",
+                "control_plane_endpoint": "192.0.2.10:6443",
+            },
+            host_overrides=self.host_overrides,
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            topology=Installation.Topology.MULTI_NODE,
+            bootstrap_host_id=self.control_plane.id,
+        )
+        payload = json.loads(extra_vars_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["deployment_topology"], "multi_node")
+        self.assertEqual(payload["bootstrap_host_name"], "control-01")
+        self.assertEqual(payload["bootstrap_node_name"], "production-control-01")
+        self.assertEqual(payload["primary_host_name"], "control-01")
+        self.assertEqual(len(payload["control_plane_hosts"]), 1)
+        self.assertEqual(len(payload["worker_hosts"]), 1)
+
+    @override_settings(
+        LINDEPLOY_MIRROR_ENABLED=True,
+        LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP=False,
+        LINDEPLOY_REGISTRY_MIRRORS={
+            "registry.k8s.io": "https://mirror.internal:5001",
+            "quay.io": "https://mirror.internal:5002",
+        },
+        LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE="",
+        LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED=True,
+        LINDEPLOY_PACKAGE_MIRROR_BASE_URL="https://mirror.internal:8443/cache",
+        LINDEPLOY_K3S_INSTALL_SCRIPT_URL="https://mirror.internal/cache/get.k3s.io",
+        LINDEPLOY_K3S_CHANNEL_URL="https://mirror.internal/cache/k3s-channel",
+        LINDEPLOY_K3S_ARTIFACT_URL="https://mirror.internal/cache/k3s-artifacts",
+        LINDEPLOY_CALICO_MANIFEST_URL="",
+        LINDEPLOY_CONTAINERD_RPM_BASEURL="",
+        LINDEPLOY_CONTAINERD_RPM_GPGKEY="",
+        LINDEPLOY_CONTAINERD_APT_REPO_URL="",
+        LINDEPLOY_CONTAINERD_APT_KEY_URL="",
+        LINDEPLOY_KUBERNETES_RPM_BASEURL="",
+        LINDEPLOY_KUBERNETES_RPM_GPGKEY="",
+        LINDEPLOY_KUBERNETES_APT_REPO_URL="",
+        LINDEPLOY_KUBERNETES_APT_KEY_URL="",
+    )
+    def test_extra_vars_inject_global_mirror_configuration(self):
+        extra_vars_path = build_extra_vars_file(
+            system_type=InstallationTemplate.SystemType.K3S,
+        )
+        payload = json.loads(extra_vars_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(payload["lindeploy_mirror_enabled"])
+        self.assertEqual(
+            payload["lindeploy_registry_mirrors"]["registry.k8s.io"],
+            "https://mirror.internal:5001",
+        )
+        self.assertEqual(
+            payload["k3s_install_artifact_url"],
+            "https://mirror.internal/cache/k3s-artifacts",
+        )
+        self.assertTrue(payload["lindeploy_system_package_cache_enabled"])
+        self.assertEqual(
+            payload["lindeploy_package_mirror_base_url"],
+            "https://mirror.internal:8443/cache",
+        )
+        self.assertNotIn("kubeadm_kubernetes_version", payload)
+
+    @override_settings(
+        LINDEPLOY_MIRROR_ENABLED=True,
+        LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP=False,
+        LINDEPLOY_REGISTRY_MIRRORS={
+            "registry.k8s.io": "https://mirror.internal:5001",
+        },
+        LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE="",
+        LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED=False,
+        LINDEPLOY_K3S_INSTALL_SCRIPT_URL="",
+        LINDEPLOY_K3S_CHANNEL_URL="",
+        LINDEPLOY_K3S_ARTIFACT_URL="",
+        LINDEPLOY_CALICO_MANIFEST_URL="",
+        LINDEPLOY_CONTAINERD_RPM_BASEURL="",
+        LINDEPLOY_CONTAINERD_RPM_GPGKEY="",
+        LINDEPLOY_CONTAINERD_APT_REPO_URL="",
+        LINDEPLOY_CONTAINERD_APT_KEY_URL="",
+        LINDEPLOY_KUBERNETES_RPM_BASEURL="",
+        LINDEPLOY_KUBERNETES_RPM_GPGKEY="",
+        LINDEPLOY_KUBERNETES_APT_REPO_URL="",
+        LINDEPLOY_KUBERNETES_APT_KEY_URL="",
+    )
+    @patch("auto_K8S.services.read_mirror_state")
+    def test_kubernetes_uses_verified_prewarmed_control_plane_version(
+        self,
+        mirror_state,
+    ):
+        mirror_state.return_value = {
+            "components": {
+                "kubernetes": {
+                    "status": "ready",
+                    "active_version": "v1.36.4",
+                    "manifest_sha256": "a" * 64,
+                }
+            }
+        }
+
+        extra_vars_path = build_extra_vars_file(
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+        )
+        payload = json.loads(extra_vars_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["kubeadm_kubernetes_version"], "v1.36.4")
+
+    @override_settings(
+        LINDEPLOY_MIRROR_ENABLED=True,
+        LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP=False,
+        LINDEPLOY_REGISTRY_MIRRORS={
+            "registry.k8s.io": "https://mirror.internal:5001",
+        },
+        LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE="",
+        LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED=True,
+        LINDEPLOY_PACKAGE_MIRROR_BASE_URL="http://mirror.internal:8080/cache",
+    )
+    def test_extra_vars_reject_insecure_system_package_cache(self):
+        with self.assertRaisesMessage(
+            ValueError,
+            "requires an HTTPS LINDEPLOY_PACKAGE_MIRROR_BASE_URL",
+        ):
+            build_extra_vars_file()
+
+    @override_settings(
+        LINDEPLOY_MIRROR_ENABLED=True,
+        LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP=False,
+        LINDEPLOY_REGISTRY_MIRRORS={},
+    )
+    def test_extra_vars_reject_enabled_mirror_without_registry_endpoints(self):
+        with self.assertRaisesMessage(ValueError, "requires at least one registry"):
+            build_extra_vars_file()
+
+    def test_node_names_are_normalized_as_kubernetes_dns_labels(self):
+        self.control_plane.hostname = "Control Plane 01.example.local"
+        self.control_plane.save(update_fields=["hostname"])
+
+        normalized = normalize_host_overrides(
+            [self.control_plane],
+            [{"host_id": self.control_plane.id, "node_name": "Control_Plane 01"}],
+            InstallationTemplate.SystemType.KUBERNETES,
+        )
+
+        self.assertEqual(normalized[0]["node_name"], "control-plane-01")
+
+    def test_node_name_defaults_to_normalized_hostname(self):
+        self.control_plane.hostname = "CP-01.EXAMPLE.LOCAL"
+        self.control_plane.save(update_fields=["hostname"])
+
+        normalized = normalize_host_overrides(
+            [self.control_plane],
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+        )
+
+        self.assertEqual(normalized[0]["node_name"], "cp-01-example-local")
+        self.assertEqual(
+            normalized[0]["cluster_name"],
+            "kubernetes-cp-01-example-local",
+        )
 
 
 class CredentialSerializerTests(TestCase):
@@ -62,6 +433,85 @@ class TemplateSerializerTests(TestCase):
         self.assertIn("playbook_path", serializer.errors)
 
 
+class InstallationTopologyModelTests(TestCase):
+    def setUp(self):
+        self.host = Host.objects.create(
+            name="topology-node-01",
+            ip_address="192.0.2.30",
+        )
+        self.template = InstallationTemplate.objects.create(
+            name="topology-model-template",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            playbook_path="playbooks/test_topology_model.yml",
+            deployment_type=InstallationTemplate.DeploymentType.SINGLE_NODE,
+        )
+
+    def test_existing_creation_path_defaults_to_single_node_bootstrap(self):
+        installation = Installation.objects.create(template=self.template)
+        target = InstallationTarget.objects.create(
+            installation=installation,
+            host=self.host,
+        )
+
+        self.assertEqual(installation.topology, Installation.Topology.SINGLE_NODE)
+        self.assertIsNone(installation.bootstrap_host)
+        self.assertEqual(target.desired_role, InstallationTarget.DesiredRole.CONTROL_PLANE)
+        self.assertTrue(target.is_bootstrap)
+        self.assertEqual(target.join_status, InstallationTarget.JoinStatus.NOT_APPLICABLE)
+
+    def test_multi_node_topology_stores_bootstrap_and_worker_state(self):
+        installation = Installation.objects.create(
+            template=self.template,
+            topology=Installation.Topology.MULTI_NODE,
+            cluster_name="production",
+            control_plane_endpoint="192.0.2.30:6443",
+            bootstrap_host=self.host,
+        )
+        target = InstallationTarget.objects.create(
+            installation=installation,
+            host=self.host,
+            desired_role=InstallationTarget.DesiredRole.CONTROL_PLANE,
+            is_bootstrap=True,
+            join_status=InstallationTarget.JoinStatus.JOINED,
+            node_name="production-cp-01",
+        )
+
+        self.assertEqual(installation.topology, Installation.Topology.MULTI_NODE)
+        self.assertEqual(installation.bootstrap_host, self.host)
+        self.assertEqual(target.node_name, "production-cp-01")
+        self.assertEqual(target.join_status, InstallationTarget.JoinStatus.JOINED)
+
+    def test_successful_multi_node_worker_recap_marks_join_complete(self):
+        installation = Installation.objects.create(
+            template=self.template,
+            topology=Installation.Topology.MULTI_NODE,
+            cluster_name="production",
+            control_plane_endpoint="192.0.2.30:6443",
+            bootstrap_host=self.host,
+        )
+        target = InstallationTarget.objects.create(
+            installation=installation,
+            host=self.host,
+            desired_role=InstallationTarget.DesiredRole.WORKER,
+            is_bootstrap=False,
+            join_status=InstallationTarget.JoinStatus.NOT_STARTED,
+            node_name="production-worker-01",
+        )
+
+        apply_playbook_results(
+            [target],
+            "PLAY RECAP\n"
+            "topology-node-01 : ok=10 changed=1 unreachable=0 failed=0 "
+            "skipped=2 rescued=0 ignored=0\n",
+            "",
+            0,
+        )
+
+        target.refresh_from_db()
+        self.assertEqual(target.status, InstallationTarget.Status.SUCCESS)
+        self.assertEqual(target.join_status, InstallationTarget.JoinStatus.JOINED)
+
+
 class ConnectivityParserTests(TestCase):
     def test_marks_missing_hosts_as_failed(self):
         parsed = parse_connectivity_output(
@@ -89,6 +539,36 @@ target2                    : ok=8    changed=2    unreachable=0    failed=1    s
         self.assertEqual(recap["target1"]["unreachable"], 0)
         self.assertEqual(recap["target2"]["failed"], 1)
 
+    def test_zero_return_code_without_recap_is_not_a_success(self):
+        credential = Credential.objects.create(
+            name="missing-recap-credential",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="user",
+            password="secret",
+        )
+        host = Host.objects.create(
+            name="missing-recap-host",
+            ip_address="192.0.2.90",
+            credential=credential,
+        )
+        template = InstallationTemplate.objects.create(
+            name="missing-recap-template",
+            playbook_path="playbooks/test_missing_recap.yml",
+        )
+        installation = Installation.objects.create(template=template)
+        target = InstallationTarget.objects.create(
+            installation=installation,
+            host=host,
+        )
+
+        result = apply_playbook_results([target], "", "", 0)
+
+        target.refresh_from_db()
+        self.assertEqual(target.status, InstallationTarget.Status.FAILED)
+        self.assertEqual(result["success_count"], 0)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertIn("without a PLAY RECAP", target.output)
+
 
 class InstallationTargetOperatorIssueTests(TestCase):
     def test_serializes_k3s_conflict_as_actionable_issue(self):
@@ -99,7 +579,7 @@ class InstallationTargetOperatorIssueTests(TestCase):
         template = InstallationTemplate.objects.create(
             name="kubernetes-single-node-operator-issue-test",
             system_type=InstallationTemplate.SystemType.KUBERNETES,
-            playbook_path="playbooks/k8s_single_node.yml",
+            playbook_path="playbooks/test_kubernetes_operator_issue.yml",
             deployment_type=InstallationTemplate.DeploymentType.SINGLE_NODE,
         )
         installation = Installation.objects.create(
@@ -138,7 +618,7 @@ class InstallationTargetOperatorIssueTests(TestCase):
         template = InstallationTemplate.objects.create(
             name="k3s-single-node-operator-issue-test",
             system_type=InstallationTemplate.SystemType.K3S,
-            playbook_path="playbooks/k3s_single_node.yml",
+            playbook_path="playbooks/test_k3s_operator_issue.yml",
             deployment_type=InstallationTemplate.DeploymentType.SINGLE_NODE,
         )
         installation = Installation.objects.create(
@@ -170,6 +650,42 @@ class InstallationTargetOperatorIssueTests(TestCase):
         self.assertEqual(
             issue["artifacts"],
             ["/etc/kubernetes/admin.conf", "/etc/cni/net.d/10-calico.conflist"],
+        )
+
+    def test_serializes_kubernetes_identity_conflict_as_reset_action(self):
+        host = Host.objects.create(
+            name="renamed-node",
+            ip_address="192.0.2.12",
+        )
+        template = InstallationTemplate.objects.create(
+            name="kubernetes-identity-operator-issue-test",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            playbook_path="playbooks/test_kubernetes_identity_issue.yml",
+            deployment_type=InstallationTemplate.DeploymentType.MULTI_NODE,
+        )
+        installation = Installation.objects.create(
+            template=template,
+            status=Installation.Status.FAILED,
+            phase=Installation.Phase.FAILED,
+        )
+        InstallationTarget.objects.create(
+            installation=installation,
+            host=host,
+            status=InstallationTarget.Status.FAILED,
+            stderr=(
+                'fatal: [renamed-node]: FAILED! => {"msg": "Existing Kubernetes '
+                "cluster identity does not match the requested configuration. "
+                'Run Reset Cluster."}'
+            ),
+            return_code=2,
+        )
+
+        issue = InstallationSerializer(installation).data["targets"][0]["operator_issue"]
+
+        self.assertEqual(issue["code"], "kubernetes_identity_conflict")
+        self.assertEqual(
+            issue["cleanup_system"],
+            InstallationTemplate.SystemType.KUBERNETES,
         )
 
 
@@ -324,7 +840,7 @@ class DashboardApiTests(TestCase):
         )
         template = InstallationTemplate.objects.create(
             name="single-node",
-            playbook_path="playbooks/k8s_single_node.yml",
+            playbook_path="playbooks/test_dashboard_single_node.yml",
         )
         Installation.objects.create(template=template)
 
@@ -345,12 +861,12 @@ class TemplatesApiTests(TestCase):
         InstallationTemplate.objects.create(
             name="k8s-template",
             system_type=InstallationTemplate.SystemType.KUBERNETES,
-            playbook_path="playbooks/k8s_single_node.yml",
+            playbook_path="playbooks/test_templates_kubernetes.yml",
         )
         InstallationTemplate.objects.create(
             name="k3s-template",
             system_type=InstallationTemplate.SystemType.K3S,
-            playbook_path="playbooks/k3s_single_node.yml",
+            playbook_path="playbooks/test_templates_k3s.yml",
         )
 
     def test_templates_endpoint_can_filter_by_system_type(self):
@@ -485,6 +1001,264 @@ class LaunchInstallationAutoModeTests(TestCase):
         self.assertEqual(response.status_code, 202)
         installation = Installation.objects.get(pk=response.json()["installation_id"])
         self.assertEqual(installation.targets.count(), 2)
+        self.assertEqual(installation.topology, Installation.Topology.SINGLE_NODE)
+        self.assertIsNone(installation.bootstrap_host)
+        self.assertTrue(all(target.is_bootstrap for target in installation.targets.all()))
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_persists_valid_multi_node_topology(self, select_template_mock, run_task_mock):
+        multi_node_template = InstallationTemplate.objects.create(
+            name="kubernetes-multi-node-template",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            playbook_path="playbooks/test_launch_k8s_multi_node.yml",
+            deployment_type=InstallationTemplate.DeploymentType.MULTI_NODE,
+        )
+        select_template_mock.return_value = {
+            "template": multi_node_template,
+            "strategy": "multi_node",
+            "detections": [],
+            "eligible_host_names": [self.host.name, self.host_two.name],
+        }
+        run_task_mock.delay.return_value = Mock(id="celery-task-multi-node")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "system_type": "kubernetes",
+                "control_plane_host_ids": [self.host.id],
+                "worker_host_ids": [self.host_two.id],
+                "bootstrap_host_id": self.host.id,
+                "cluster_config": {"cluster_name": "production"},
+                "host_overrides": [
+                    {"host_id": self.host.id, "node_name": "production-cp-01"},
+                    {"host_id": self.host_two.id, "node_name": "production-worker-01"},
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202, response.json())
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        self.assertEqual(installation.topology, Installation.Topology.MULTI_NODE)
+        self.assertEqual(installation.cluster_name, "production")
+        self.assertEqual(installation.control_plane_endpoint, "192.168.100.51:6443")
+        self.assertEqual(installation.bootstrap_host, self.host)
+
+        targets = {target.host_id: target for target in installation.targets.all()}
+        self.assertEqual(
+            targets[self.host.id].desired_role,
+            InstallationTarget.DesiredRole.CONTROL_PLANE,
+        )
+        self.assertTrue(targets[self.host.id].is_bootstrap)
+        self.assertEqual(
+            targets[self.host.id].join_status,
+            InstallationTarget.JoinStatus.NOT_APPLICABLE,
+        )
+        self.assertEqual(
+            targets[self.host_two.id].desired_role,
+            InstallationTarget.DesiredRole.WORKER,
+        )
+        self.assertFalse(targets[self.host_two.id].is_bootstrap)
+        self.assertEqual(
+            targets[self.host_two.id].join_status,
+            InstallationTarget.JoinStatus.NOT_STARTED,
+        )
+        self.assertEqual(targets[self.host_two.id].node_name, "production-worker-01")
+        self.assertEqual(response.json()["topology"], "multi_node")
+
+    def test_launch_rejects_host_in_both_multi_node_roles(self):
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "control_plane_host_ids": [self.host.id],
+                "worker_host_ids": [self.host.id],
+                "bootstrap_host_id": self.host.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("worker_host_ids", response.json()["errors"])
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_rejects_duplicate_normalized_multi_node_names(
+        self, select_template_mock, run_task_mock
+    ):
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "system_type": "kubernetes",
+                "control_plane_host_ids": [self.host.id],
+                "worker_host_ids": [self.host_two.id],
+                "bootstrap_host_id": self.host.id,
+                "host_overrides": [
+                    {"host_id": self.host.id, "node_name": "NODE 01"},
+                    {"host_id": self.host_two.id, "node_name": "node-01"},
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Duplicate node names", response.json()["errors"]["host_overrides"])
+        select_template_mock.assert_not_called()
+        run_task_mock.delay.assert_not_called()
+
+    def test_launch_rejects_bootstrap_outside_control_plane_group(self):
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "control_plane_host_ids": [self.host.id],
+                "worker_host_ids": [self.host_two.id],
+                "bootstrap_host_id": self.host_two.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("bootstrap_host_id", response.json()["errors"])
+
+    def test_launch_rejects_multi_node_without_worker(self):
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "control_plane_host_ids": [self.host.id],
+                "bootstrap_host_id": self.host.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("worker_host_ids", response.json()["errors"])
+
+    def test_launch_rejects_single_node_template_for_multi_node_request(self):
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "deployment_mode": "manual",
+                "template_id": self.template.id,
+                "system_type": "kubernetes",
+                "control_plane_host_ids": [self.host.id],
+                "worker_host_ids": [self.host_two.id],
+                "bootstrap_host_id": self.host.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not a multi-node", response.json()["message"])
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_maps_k3s_multi_node_roles_to_server_and_agent(
+        self,
+        select_template_mock,
+        run_task_mock,
+    ):
+        k3s_template = InstallationTemplate.objects.create(
+            name="k3s-multi-node-template",
+            system_type=InstallationTemplate.SystemType.K3S,
+            playbook_path="playbooks/k3s_multi_node.yml",
+            deployment_type=InstallationTemplate.DeploymentType.MULTI_NODE,
+        )
+        select_template_mock.return_value = {
+            "template": k3s_template,
+            "strategy": "multi_node",
+            "detections": [],
+        }
+        run_task_mock.delay.return_value = Mock(id="celery-task-k3s-multi-node")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "system_type": "k3s",
+                "control_plane_host_ids": [self.host.id],
+                "worker_host_ids": [self.host_two.id],
+                "bootstrap_host_id": self.host.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202, response.json())
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        roles_by_host_id = {
+            item["host_id"]: item["node_role"] for item in installation.host_overrides
+        }
+        self.assertEqual(roles_by_host_id[self.host.id], "server")
+        self.assertEqual(roles_by_host_id[self.host_two.id], "agent")
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_rejects_host_used_by_active_execution(
+        self,
+        select_template_mock,
+        run_task_mock,
+    ):
+        active_installation = Installation.objects.create(
+            template=self.template,
+            status=Installation.Status.RUNNING,
+        )
+        InstallationTarget.objects.create(
+            installation=active_installation,
+            host=self.host,
+        )
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {"host_ids": [self.host.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["errors"]["busy_hosts"][0]["host_id"], self.host.id)
+        select_template_mock.assert_not_called()
+        run_task_mock.delay.assert_not_called()
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_launch_releases_host_from_stale_pre_execution_job(
+        self,
+        select_template_mock,
+        run_task_mock,
+    ):
+        stale_installation = Installation.objects.create(
+            template=self.template,
+            status=Installation.Status.RUNNING,
+            phase=Installation.Phase.SSH_CHECK,
+        )
+        InstallationTarget.objects.create(
+            installation=stale_installation,
+            host=self.host,
+        )
+        Installation.objects.filter(pk=stale_installation.pk).update(
+            updated_at=timezone.now() - timezone.timedelta(minutes=20)
+        )
+        select_template_mock.return_value = {
+            "template": self.template,
+            "strategy": "single_node",
+            "detections": [],
+        }
+        run_task_mock.delay.return_value = Mock(id="replacement-task")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {"host_ids": [self.host.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202, response.json())
+        stale_installation.refresh_from_db()
+        self.assertEqual(stale_installation.status, Installation.Status.CANCELLED)
+        self.assertIn("automatically cancelled", stale_installation.summary_message)
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
@@ -492,7 +1266,7 @@ class LaunchInstallationAutoModeTests(TestCase):
         k3s_template = InstallationTemplate.objects.create(
             name="k3s-single-node-template",
             system_type=InstallationTemplate.SystemType.K3S,
-            playbook_path="playbooks/k3s_single_node.yml",
+            playbook_path="playbooks/test_launch_k3s_single_node.yml",
         )
         select_template_mock.return_value = {
             "template": k3s_template,
@@ -508,7 +1282,10 @@ class LaunchInstallationAutoModeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json()["selected_playbook"], "playbooks/k3s_single_node.yml")
+        self.assertEqual(
+            response.json()["selected_playbook"],
+            "playbooks/test_launch_k3s_single_node.yml",
+        )
         select_template_mock.assert_called_once()
         run_task_mock.delay.assert_called_once()
 
@@ -518,7 +1295,7 @@ class LaunchInstallationAutoModeTests(TestCase):
         cleanup_template = InstallationTemplate.objects.create(
             name="k8s-cleanup-template",
             system_type=InstallationTemplate.SystemType.KUBERNETES,
-            playbook_path="playbooks/k8s_cleanup.yml",
+            playbook_path="playbooks/test_launch_k8s_cleanup.yml",
             deployment_type=InstallationTemplate.DeploymentType.CLEANUP,
         )
         select_template_mock.return_value = {
@@ -541,7 +1318,10 @@ class LaunchInstallationAutoModeTests(TestCase):
 
         self.assertEqual(response.status_code, 202)
         installation = Installation.objects.get(pk=response.json()["installation_id"])
-        self.assertEqual(installation.template.playbook_path, "playbooks/k8s_cleanup.yml")
+        self.assertEqual(
+            installation.template.playbook_path,
+            "playbooks/test_launch_k8s_cleanup.yml",
+        )
         self.assertEqual(installation.targets.count(), 2)
 
     @patch("auto_K8S.views.run_installation_task")
@@ -550,7 +1330,7 @@ class LaunchInstallationAutoModeTests(TestCase):
         cleanup_template = InstallationTemplate.objects.create(
             name="k3s-cleanup-template",
             system_type=InstallationTemplate.SystemType.K3S,
-            playbook_path="playbooks/k3s_cleanup.yml",
+            playbook_path="playbooks/test_launch_k3s_cleanup.yml",
             deployment_type=InstallationTemplate.DeploymentType.CLEANUP,
         )
         select_template_mock.return_value = {
@@ -573,7 +1353,10 @@ class LaunchInstallationAutoModeTests(TestCase):
 
         self.assertEqual(response.status_code, 202)
         installation = Installation.objects.get(pk=response.json()["installation_id"])
-        self.assertEqual(installation.template.playbook_path, "playbooks/k3s_cleanup.yml")
+        self.assertEqual(
+            installation.template.playbook_path,
+            "playbooks/test_launch_k3s_cleanup.yml",
+        )
         self.assertEqual(installation.targets.count(), 2)
 
     @patch("auto_K8S.views.run_installation_task")
@@ -599,6 +1382,7 @@ class LaunchInstallationAutoModeTests(TestCase):
                 "host_overrides": [
                     {
                         "host_id": self.host.id,
+                        "cluster_name": "Single Lab 01",
                         "node_name": "cp-01",
                         "node_role": "control_plane",
                         "advertise_address": self.host.ip_address,
@@ -618,6 +1402,10 @@ class LaunchInstallationAutoModeTests(TestCase):
         self.assertEqual(installation.cluster_config["control_plane_count"], 1)
         self.assertEqual(installation.host_overrides[0]["ssh_port"], 2222)
         self.assertEqual(installation.host_overrides[0]["ansible_user"], "custom-user")
+        self.assertEqual(installation.host_overrides[0]["cluster_name"], "single-lab-01")
+        target = installation.targets.get(host=self.host)
+        self.assertEqual(target.node_name, "cp-01")
+        self.assertEqual(target.cluster_name, "single-lab-01")
 
 
 class RunnerConfigTests(TestCase):
@@ -653,7 +1441,7 @@ class InstallationCancellationApiTests(TestCase):
         )
         self.template = InstallationTemplate.objects.create(
             name="cancel-template",
-            playbook_path="playbooks/k8s_single_node.yml",
+            playbook_path="playbooks/test_cancel_installation.yml",
         )
 
     def test_cancel_endpoint_marks_installation_and_target_cancelled(self):
@@ -684,7 +1472,7 @@ class InstallationHistoryApiTests(TestCase):
         self.client = APIClient()
         self.template = InstallationTemplate.objects.create(
             name="history-template",
-            playbook_path="playbooks/k8s_single_node.yml",
+            playbook_path="playbooks/test_history_installation.yml",
         )
 
     def test_clear_history_deletes_only_finished_installations(self):

@@ -1,0 +1,6 @@
+[Unit]
+Wants=network-online.target
+After=network-online.target NetworkManager.service
+
+[Service]
+ExecStartPre=/usr/bin/nm-online -s -q --timeout=30

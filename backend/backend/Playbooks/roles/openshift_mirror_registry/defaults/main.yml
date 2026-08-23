@@ -1,0 +1,7 @@
+---
+openshift_mirror_quay_root: /opt/quay
+openshift_mirror_archive_download_path: /var/tmp/lindeploy-mirror-registry.tar.gz
+openshift_mirror_extract_directory: /var/tmp/lindeploy-mirror-registry
+openshift_mirror_ca_path: "{{ openshift_mirror_quay_root }}/quay-rootCA/rootCA.pem"
+openshift_mirror_auth_file: "{{ openshift_mirror_state_directory }}/auth.json"
+

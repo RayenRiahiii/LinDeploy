@@ -1,0 +1,84 @@
+---
+- name: Require the DNS validation server
+  ansible.builtin.assert:
+    that:
+      - dns_validation_server is defined
+      - dns_validation_server | length > 0
+    fail_msg: dns_validation_server is required.
+    quiet: true
+
+- name: Check the dig command
+  ansible.builtin.command:
+    argv:
+      - dig
+      - -v
+  register: dns_dig_check
+  changed_when: false
+  failed_when: false
+
+- name: Require DNS query tools
+  ansible.builtin.assert:
+    that:
+      - dns_dig_check.rc == 0
+    fail_msg: >-
+      Install dig in WSL with:
+      sudo apt update && sudo apt install -y dnsutils
+    quiet: true
+
+- name: Query the required OpenShift DNS records
+  ansible.builtin.command:
+    argv:
+      - dig
+      - "@{{ dns_validation_server }}"
+      - +short
+      - "{{ item.lookup_name }}"
+      - A
+  loop: "{{ sno_required_dns_records }}"
+  register: sno_dns_queries
+  changed_when: false
+  failed_when: false
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Initialize DNS readiness
+  ansible.builtin.set_fact:
+    sno_dns_ready: true
+
+- name: Detect missing or incorrect DNS records
+  ansible.builtin.set_fact:
+    sno_dns_ready: false
+  loop: "{{ sno_dns_queries.results }}"
+  when:
+    - item.rc != 0 or item.item.value not in item.stdout_lines
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Report DNS query results
+  ansible.builtin.debug:
+    msg:
+      - "Required record: {{ item.item.name }}"
+      - "Expected address: {{ item.item.value }}"
+      - "Returned addresses: {{ item.stdout_lines | default([]) }}"
+  loop: "{{ sno_dns_queries.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Report overall DNS readiness
+  ansible.builtin.debug:
+    msg:
+      - "DNS provider: {{ dns_provider }}"
+      - "DNS server: {{ dns_validation_server }}"
+      - "DNS ready: {{ sno_dns_ready }}"
+      - DNS validation completed after any provider configuration.
+
+- name: Require working DNS before apply
+  ansible.builtin.assert:
+    that:
+      - sno_dns_ready | bool
+    fail_msg: >-
+      The required OpenShift DNS records are missing or incorrect.
+      Target boot was blocked safely.
+    quiet: true
+  when:
+    - automation_mode == 'apply'
+    - dns_enforce_before_boot | bool

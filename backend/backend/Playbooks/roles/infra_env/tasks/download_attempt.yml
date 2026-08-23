@@ -1,0 +1,64 @@
+---
+- name: Request a fresh discovery image URL
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs/{{ sno_infra_env_id }}/downloads/image-url
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: discovery_image_attempt
+  until:
+    - discovery_image_attempt.json.url is defined
+    - discovery_image_attempt.json.url | length > 0
+  retries: 30
+  delay: 10
+  no_log: true
+
+- name: Download or resume the discovery ISO partial file
+  ansible.builtin.command:
+    argv:
+      - curl
+      - --fail
+      - --location
+      - --connect-timeout
+      - "30"
+      - --retry
+      - "2"
+      - --retry-delay
+      - "10"
+      - --retry-all-errors
+      - --continue-at
+      - "-"
+      - --output
+      - "{{ discovery_iso_path }}.part"
+      - --config
+      - "-"
+    stdin: >-
+      url = "{{ discovery_image_attempt.json.url }}"
+  register: discovery_iso_curl_attempt
+  changed_when: discovery_iso_curl_attempt.rc == 0
+  failed_when: false
+  no_log: true
+
+- name: Inspect the partial discovery ISO
+  ansible.builtin.stat:
+    path: "{{ discovery_iso_path }}.part"
+  register: discovery_iso_partial_file
+
+- name: Store the discovery ISO attempt result
+  ansible.builtin.set_fact:
+    discovery_iso_download_valid: >-
+      {{
+        discovery_iso_curl_attempt.rc == 0
+        and discovery_iso_partial_file.stat.exists
+        and (discovery_iso_partial_file.stat.size | default(0) | int) > 100000000
+      }}
+
+- name: Pause before refreshing an expired or failed image URL
+  ansible.builtin.pause:
+    seconds: 15
+  when:
+    - not (discovery_iso_download_valid | bool)
+    - discovery_iso_attempt | int < 4

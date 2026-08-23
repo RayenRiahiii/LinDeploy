@@ -1,0 +1,119 @@
+---
+- name: Build expected Kubernetes node list
+  set_fact:
+    kubeadm_multi_expected_nodes: >-
+      {{
+        groups.get('selected_hosts', [])
+        | map('extract', hostvars, 'lindeploy_node_name')
+        | list
+        | sort
+      }}
+
+- name: Apply Kubernetes worker role labels
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_multi_validate_kubeconfig }}"
+      - label
+      - node
+      - "{{ hostvars[item].lindeploy_node_name }}"
+      - node-role.kubernetes.io/worker=
+      - --overwrite
+  loop: "{{ groups.get('workers', []) }}"
+  register: kubeadm_multi_worker_labels
+  changed_when: "' not labeled' not in kubeadm_multi_worker_labels.stdout"
+
+- name: Validate Kubernetes multi-node cluster health
+  block:
+    - name: Wait for every Kubernetes node to become Ready
+      command: >-
+        kubectl --kubeconfig={{ kubeadm_multi_validate_kubeconfig }}
+        wait --for=condition=Ready nodes --all
+        --timeout={{ kubeadm_multi_validate_timeout }}
+      changed_when: false
+
+    - name: Wait for Calico daemonset rollout
+      command: >-
+        kubectl --kubeconfig={{ kubeadm_multi_validate_kubeconfig }}
+        rollout status daemonset/calico-node -n kube-system
+        --timeout={{ kubeadm_multi_validate_timeout }}
+      changed_when: false
+
+    - name: Wait for CoreDNS rollout
+      command: >-
+        kubectl --kubeconfig={{ kubeadm_multi_validate_kubeconfig }}
+        rollout status deployment/coredns -n kube-system
+        --timeout={{ kubeadm_multi_validate_timeout }}
+      changed_when: false
+
+    - name: Check Kubernetes API readiness
+      command: >-
+        kubectl --kubeconfig={{ kubeadm_multi_validate_kubeconfig }}
+        --request-timeout={{ kubeadm_multi_validate_request_timeout }}
+        get --raw=/readyz
+      register: kubeadm_multi_readyz
+      changed_when: false
+      failed_when: kubeadm_multi_readyz.stdout | trim != 'ok'
+
+    - name: Read installed Kubernetes nodes
+      command: >-
+        kubectl --kubeconfig={{ kubeadm_multi_validate_kubeconfig }}
+        --request-timeout={{ kubeadm_multi_validate_request_timeout }}
+        get nodes -o json
+      register: kubeadm_multi_nodes_json
+      changed_when: false
+
+    - name: Verify every selected host joined the cluster
+      vars:
+        kubeadm_multi_actual_nodes: >-
+          {{
+            (kubeadm_multi_nodes_json.stdout | from_json)['items']
+            | map(attribute='metadata.name')
+            | list
+            | sort
+          }}
+      assert:
+        that:
+          - kubeadm_multi_expected_nodes | difference(kubeadm_multi_actual_nodes) | length == 0
+          - kubeadm_multi_actual_nodes | difference(kubeadm_multi_expected_nodes) | length == 0
+        fail_msg: >-
+          Cluster membership differs from the selected inventory. Expected:
+          {{ kubeadm_multi_expected_nodes | join(', ') }}. Actual:
+          {{ kubeadm_multi_actual_nodes | join(', ') }}.
+
+  rescue:
+    - name: Capture Kubernetes node diagnostics
+      command: >-
+        kubectl --kubeconfig={{ kubeadm_multi_validate_kubeconfig }}
+        --request-timeout={{ kubeadm_multi_validate_request_timeout }}
+        get nodes -o wide
+      register: kubeadm_multi_node_diagnostics
+      changed_when: false
+      failed_when: false
+
+    - name: Capture Kubernetes pod diagnostics
+      command: >-
+        kubectl --kubeconfig={{ kubeadm_multi_validate_kubeconfig }}
+        --request-timeout={{ kubeadm_multi_validate_request_timeout }}
+        get pods -A -o wide
+      register: kubeadm_multi_pod_diagnostics
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with multi-node cluster diagnostics
+      fail:
+        msg: |-
+          Kubernetes multi-node validation failed.
+          Cause:
+          {{ ansible_failed_result.msg | default('The failed validation task did not return an error message.') }}
+          Nodes:
+          {{ kubeadm_multi_node_diagnostics.stdout | default('unavailable') }}
+          Pods:
+          {{ kubeadm_multi_pod_diagnostics.stdout | default('unavailable') }}
+
+- name: Report validated Kubernetes multi-node cluster
+  debug:
+    msg: >-
+      Kubernetes cluster {{ cluster_name | default('cluster') }} is healthy with
+      {{ groups.get('control_plane', []) | length }} control-plane node(s) and
+      {{ groups.get('workers', []) | length }} worker node(s).

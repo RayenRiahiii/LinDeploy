@@ -1,0 +1,26 @@
+---
+- name: Validate the DNS provider
+  ansible.builtin.assert:
+    that:
+      - dns_provider in ['existing', 'dnsmasq', 'manual']
+      - dns_enforce_before_boot is defined
+    fail_msg: dns_provider must be existing, dnsmasq, or manual.
+    quiet: true
+
+- name: Build the required OpenShift DNS records
+  ansible.builtin.set_fact:
+    sno_required_dns_records:
+      - name: "api.{{ cluster_name }}.{{ base_dns_domain }}"
+        lookup_name: "api.{{ cluster_name }}.{{ base_dns_domain }}"
+        value: "{{ sno_ip_address }}"
+      - name: "api-int.{{ cluster_name }}.{{ base_dns_domain }}"
+        lookup_name: "api-int.{{ cluster_name }}.{{ base_dns_domain }}"
+        value: "{{ sno_ip_address }}"
+      - name: "*.apps.{{ cluster_name }}.{{ base_dns_domain }}"
+        lookup_name: >-
+          console-openshift-console.apps.{{ cluster_name }}.{{ base_dns_domain }}
+        value: "{{ sno_ip_address }}"
+
+- name: Load the selected DNS provider
+  ansible.builtin.include_tasks:
+    file: "providers/{{ dns_provider }}.yml"

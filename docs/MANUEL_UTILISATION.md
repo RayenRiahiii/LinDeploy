@@ -1,10 +1,12 @@
 # Manuel d'utilisation LinDeploy
 
-Ce manuel decrit le parcours operateur pour installer et supprimer Kubernetes ou K3s sur une ou plusieurs machines.
+Ce manuel decrit le parcours operateur pour installer et supprimer Kubernetes,
+K3s ou OpenShift SNO sur des machines gerees par LinDeploy.
 
 ## 1. Comprendre le mode multi-cibles
 
-Chaque cible selectionnee devient un cluster single-node independant :
+En topologie single-node, chaque cible selectionnee devient un cluster
+independant :
 
 ```text
 Cible A -> cluster single-node A
@@ -12,7 +14,10 @@ Cible B -> cluster single-node B
 Cible C -> cluster single-node C
 ```
 
-LinDeploy ne cree pas encore un cluster unique compose de plusieurs control planes et workers.
+En topologie Kubernetes multi-node, LinDeploy cree un cluster partage avec un
+bootstrap control plane, les autres control planes selectionnes et les workers.
+K3s reste actuellement en mode single-node par cible. OpenShift cree une seule
+VM SNO sur un hote KVM/libvirt selectionne.
 
 Lorsqu'une cible echoue, l'execution continue sur les autres cibles eligibles. Le resultat final peut etre :
 
@@ -189,3 +194,24 @@ Apres une annulation :
 - Utiliser `Reset Cluster` pour une reinstallation Kubernetes rapide.
 - Utiliser `Full Uninstall` pour restituer une machine sans Kubernetes.
 - Consulter les diagnostics de la cible en premier; les sorties brutes sont reservees au depannage.
+
+## 13. Installer OpenShift SNO deconnecte
+
+1. Enregistrer un hote RHEL 8/9 x86_64 disposant de KVM/libvirt et des
+   ressources requises.
+2. Creer les enregistrements DNS stables du registre et du cluster.
+3. Ouvrir **Installers -> OpenShift SNO**, choisir **Disconnected Agent-Based**
+   et saisir une version exacte `4.x.y`.
+4. Configurer la VM, ses reseaux, le pull secret Red Hat, la cle SSH publique,
+   le FQDN Quay et l'archive officielle `mirror-registry.tar.gz`.
+5. Lancer **Prepare mirror content** et attendre le statut `success`. Cette
+   premiere synchronisation peut etre longue et volumineuse.
+6. Ressaisir les secrets a usage unique si necessaire, confirmer le disque de
+   la VM avec `ERASE /dev/...`, puis lancer **Start SNO installation**.
+7. Verifier le node, la ClusterVersion et tous les ClusterOperators avec les
+   commandes de [OPENSHIFT_SNO.md](OPENSHIFT_SNO.md).
+
+Le bouton **Cleanup SNO** supprime uniquement la VM, son volume et les assets du
+cluster dont le marqueur de propriete LinDeploy correspond. Le registre Quay,
+son stockage et le workspace `oc-mirror` sont conserves pour les installations
+suivantes.

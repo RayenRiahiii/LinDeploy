@@ -1,0 +1,48 @@
+---
+- name: Wait for Assisted Installer validation readiness
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ assisted_wait_script_path }}"
+      - --api-url
+      - "{{ assisted_api_url }}"
+      - --sso-token-url
+      - "{{ redhat_sso_token_url }}"
+      - --cluster-id
+      - "{{ sno_cluster_id }}"
+      - --expected
+      - ready
+      - --failure
+      - error
+      - --failure
+      - cancelled
+      - --timeout-seconds
+      - >-
+        {{
+          cluster_ready_retries | int
+          * cluster_ready_delay | int
+        }}
+      - --poll-seconds
+      - "{{ cluster_ready_delay }}"
+  environment:
+    REDHAT_OFFLINE_TOKEN: "{{ redhat_offline_token }}"
+  register: validation_readiness_wait
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Require successful validation readiness
+  ansible.builtin.assert:
+    that:
+      - validation_readiness_wait.rc == 0
+    fail_msg: >-
+      Assisted Installer validations did not become ready:
+      {{
+        validation_readiness_wait.stderr
+        | default('no details reported')
+      }}
+    quiet: true
+
+- name: Store successful validation waiting
+  ansible.builtin.set_fact:
+    validation_wait_performed: true

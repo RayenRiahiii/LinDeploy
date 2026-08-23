@@ -1,0 +1,72 @@
+---
+- name: Wait for Agent bootstrap completion
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/openshift-install"
+      - agent
+      - wait-for
+      - bootstrap-complete
+      - --dir
+      - "{{ openshift_agent_assets_directory }}"
+      - --log-level
+      - info
+  async: "{{ openshift_agent_install_timeout_seconds }}"
+  poll: 15
+  register: openshift_agent_bootstrap
+  changed_when: false
+
+- name: Wait for Agent installation completion
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/openshift-install"
+      - agent
+      - wait-for
+      - install-complete
+      - --dir
+      - "{{ openshift_agent_assets_directory }}"
+      - --log-level
+      - info
+  async: "{{ openshift_agent_install_timeout_seconds }}"
+  poll: 15
+  register: openshift_agent_complete
+  changed_when: false
+
+- name: Require generated administrator credentials
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ kubeconfig_path }}"
+    - "{{ kubeadmin_password_path }}"
+  register: openshift_agent_credentials
+  no_log: true
+
+- name: Stop when administrator credentials are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_credentials.results | map(attribute='stat.exists') | select('equalto', true) | list | length == 2
+    fail_msg: Installation completed without generating both administrator credentials.
+    quiet: true
+  no_log: true
+
+- name: Apply generated disconnected mirror resources
+  ansible.builtin.command:
+    argv:
+      - "{{ oc_binary_path }}"
+      - apply
+      - --recursive
+      - -f
+      - "{{ openshift_agent_cluster_resources_directory }}"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: openshift_agent_mirror_resources_apply
+  changed_when: >-
+    ' created' in openshift_agent_mirror_resources_apply.stdout or
+    ' configured' in openshift_agent_mirror_resources_apply.stdout
+  retries: 6
+  delay: 10
+  until: openshift_agent_mirror_resources_apply.rc == 0
+
+- name: Mark Agent installation complete
+  ansible.builtin.set_fact:
+    sno_credentials_available: true
+    sno_installation_completed: true

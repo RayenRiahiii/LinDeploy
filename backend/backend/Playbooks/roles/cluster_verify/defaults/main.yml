@@ -1,0 +1,18 @@
+---
+require_workshop_readiness: false
+validate_console_and_oauth: true
+openshift_route_validate_certs: false
+openshift_route_retries: 60
+openshift_route_delay: 15
+critical_cluster_operators:
+  - authentication
+  - console
+  - dns
+  - etcd
+  - ingress
+  - kube-apiserver
+  - kube-controller-manager
+  - kube-scheduler
+  - network
+  - openshift-apiserver
+  - service-ca

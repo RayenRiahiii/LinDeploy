@@ -1,0 +1,7 @@
+---
+openshift_client_base_url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ openshift_version }}"
+openshift_client_checksum_url: "{{ openshift_client_base_url }}/sha256sum.txt"
+openshift_mirror_imageset_path: "{{ openshift_mirror_state_directory }}/imageset-config.yaml"
+openshift_mirror_release_workspace: "{{ openshift_mirror_workspace }}/{{ openshift_version }}-{{ cpu_architecture }}"
+openshift_mirror_ready_file: "{{ openshift_mirror_state_directory }}/{{ openshift_version }}-{{ cpu_architecture }}.json"
+

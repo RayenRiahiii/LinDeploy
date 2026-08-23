@@ -3,6 +3,7 @@ celery==5.5.3
 Django==6.0.6
 django-cors-headers==4.9.0
 djangorestframework==3.17.1
+cryptography==46.0.5
 psycopg2-binary==2.9.12
 python-dotenv==1.2.2
 redis==6.4.0

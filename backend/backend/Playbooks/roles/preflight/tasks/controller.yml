@@ -1,0 +1,73 @@
+---
+- name: Require ephemeral OpenShift credentials
+  ansible.builtin.assert:
+    that:
+      - redhat_offline_token | default('') | length > 0
+      - pull_secret | default('') | length > 0
+      - ssh_public_key | default('') | length > 0
+      - oc_binary_path is defined
+    fail_msg: >-
+      The Red Hat token, pull secret, SSH public key, or oc path is missing.
+      LinDeploy must provide secrets through its ephemeral secret bundle.
+    quiet: true
+  no_log: true
+
+- name: Check the oc executable on the provisioning host
+  ansible.builtin.stat:
+    path: "{{ oc_binary_path }}"
+  register: oc_binary_file
+
+- name: Require the oc executable
+  ansible.builtin.assert:
+    that:
+      - oc_binary_file.stat.exists
+      - oc_binary_file.stat.isreg
+      - oc_binary_file.stat.executable
+    fail_msg: Install the OpenShift oc client on the KVM provisioning host.
+    quiet: true
+
+- name: Validate the pull secret JSON
+  ansible.builtin.set_fact:
+    validated_pull_secret: "{{ pull_secret | from_json }}"
+  no_log: true
+
+- name: Require the pull secret auths object
+  ansible.builtin.assert:
+    that:
+      - validated_pull_secret.auths is defined
+      - validated_pull_secret.auths is mapping
+    fail_msg: The Red Hat pull secret must contain an auths object.
+    quiet: true
+  no_log: true
+
+- name: Store the validated SSH public key
+  ansible.builtin.set_fact:
+    validated_ssh_public_key: "{{ ssh_public_key | trim }}"
+    validated_additional_trust_bundle: "{{ additional_trust_bundle | default('') | trim }}"
+  no_log: true
+
+- name: Validate the SSH public key format
+  ansible.builtin.assert:
+    that:
+      - >-
+        validated_ssh_public_key is
+        match('^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh.com)\\s+')
+    fail_msg: The SSH public key format is not recognized. Never submit a private key.
+    quiet: true
+  no_log: true
+
+- name: Check virsh on the KVM provisioning host
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", version]
+  register: libvirt_version
+  changed_when: false
+  when: target_provider == 'libvirt'
+
+- name: Report provisioning-host readiness
+  ansible.builtin.debug:
+    msg:
+      - Pull secret JSON is valid and was not printed.
+      - SSH public key is valid and was not printed.
+      - "oc executable: {{ oc_binary_path }}"
+      - "libvirt connection: {{ 'ready' if target_provider == 'libvirt' else 'not required' }}"
+      - No secret content was persisted in Ansible output.

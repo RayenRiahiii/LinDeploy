@@ -1,0 +1,58 @@
+---
+- name: Require libvirt boot settings
+  ansible.builtin.assert:
+    that:
+      - libvirt_vm_name | length > 0
+      - libvirt_iso_target | default('sda') | length > 0
+      - libvirt_iso_runtime_path | length > 0
+    fail_msg: The libvirt boot settings are incomplete.
+    quiet: true
+
+- name: Read the libvirt VM state
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", domstate, "{{ libvirt_vm_name }}"]
+  environment:
+    LC_ALL: C
+  register: target_libvirt_vm_state_result
+  changed_when: false
+
+- name: Store the normalized libvirt VM state
+  ansible.builtin.set_fact:
+    target_libvirt_vm_state: "{{ target_libvirt_vm_state_result.stdout | trim }}"
+
+- name: Require a safe libvirt VM state
+  ansible.builtin.assert:
+    that:
+      - target_libvirt_vm_state in ['shut off', 'running']
+    fail_msg: >-
+      VM {{ libvirt_vm_name }} is in unsupported state
+      {{ target_libvirt_vm_state }}.
+    quiet: true
+
+- name: Read libvirt VM block devices
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", domblklist, "{{ libvirt_vm_name }}", --details]
+  environment:
+    LC_ALL: C
+  register: target_libvirt_block_devices
+  changed_when: false
+
+- name: Report the libvirt boot plan
+  ansible.builtin.debug:
+    msg:
+      - "Provider: libvirt"
+      - "URI: {{ libvirt_uri }}"
+      - "VM: {{ libvirt_vm_name }}"
+      - "VM state: {{ target_libvirt_vm_state }}"
+      - "Network: {{ libvirt_network_name }}"
+      - "MAC address: {{ sno_mac_address }}"
+      - "Installation disk: {{ libvirt_volume_path }}"
+      - "Discovery ISO: {{ discovery_iso_path }}"
+      - "Runtime ISO: {{ libvirt_iso_runtime_path }}"
+      - "Automation mode: {{ automation_mode }}"
+      - The installation disk has not yet been selected or erased.
+
+- name: Apply the libvirt boot operation
+  ansible.builtin.include_tasks:
+    file: providers/libvirt_apply.yml
+  when: automation_mode == 'apply'

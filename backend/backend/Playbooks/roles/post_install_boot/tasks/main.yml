@@ -1,0 +1,25 @@
+---
+- name: Initialize the post-install boot state
+  ansible.builtin.set_fact:
+    sno_post_install_vm_state: unknown
+    sno_post_install_boot_source: unknown
+    sno_discovery_iso_attached: false
+    sno_post_install_action: inspect
+
+- name: Inspect the VirtualBox post-install state
+  ansible.builtin.include_tasks:
+    file: providers/virtualbox.yml
+  when: target_provider == 'virtualbox'
+
+- name: Inspect the libvirt post-install state
+  ansible.builtin.include_tasks:
+    file: providers/libvirt.yml
+  when: target_provider == 'libvirt'
+
+- name: Report pending post-install provider implementation
+  ansible.builtin.debug:
+    msg:
+      - "Target provider: {{ target_provider }}"
+      - Post-install boot inspection is not implemented for this provider yet.
+      - No target was modified.
+  when: target_provider not in ['virtualbox', 'libvirt']

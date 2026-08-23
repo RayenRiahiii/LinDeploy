@@ -7,6 +7,11 @@ kubernetes_repo_baseurl: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_versio
 kubernetes_repo_gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/rpm/repodata/repomd.xml.key"
 kubernetes_apt_repo_url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/deb/"
 kubernetes_apt_repo_key_url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/deb/Release.key"
+kubernetes_repo_upstream_baseurl: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/rpm/"
+kubernetes_repo_upstream_gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/rpm/repodata/repomd.xml.key"
+kubernetes_apt_upstream_repo_url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/deb/"
+kubernetes_apt_upstream_key_url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version_minor }}/deb/Release.key"
+kubernetes_repo_probe_timeout: 5
 kubernetes_apt_keyring_dir: /etc/apt/keyrings
 kubernetes_apt_keyring_path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 kubernetes_apt_repo_key_refresh_max_age_seconds: 604800

@@ -1,0 +1,35 @@
+---
+- name: Create the cluster state directory
+  ansible.builtin.file:
+    path: "{{ workshop_artifacts_root }}/{{ workshop_id }}/{{ cluster_name }}"
+    state: directory
+    mode: "0700"
+  when: automation_mode == 'apply'
+
+- name: Persist the non-secret workflow state atomically
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'schema_version': 1,
+          'workshop_id': workshop_id,
+          'cluster_name': cluster_name,
+          'target_id': target_id,
+          'provider': target_provider,
+          'vm_name': libvirt_vm_name | default(''),
+          'ip_address': sno_ip_address,
+          'mac_address': sno_mac_address,
+          'cluster_id': sno_cluster_id | default(''),
+          'infra_env_id': sno_infra_env_id | default(''),
+          'host_id': sno_host_id | default(''),
+          'assisted_status': sno_cluster_status | default('unknown'),
+          'workflow_action': sno_workflow_action | default('unknown'),
+          'installation_started': sno_installation_started | default(false) | bool,
+          'installation_completed': sno_installation_completed | default(false) | bool,
+          'workshop_ready': sno_automation_completed | default(false) | bool
+        }
+        | to_nice_json
+      }}
+    dest: "{{ workshop_artifacts_root }}/{{ workshop_id }}/{{ cluster_name }}/state.json"
+    mode: "0600"
+  when: automation_mode == 'apply'

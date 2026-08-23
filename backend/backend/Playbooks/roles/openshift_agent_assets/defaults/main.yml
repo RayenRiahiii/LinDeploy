@@ -1,0 +1,11 @@
+---
+openshift_mirror_tools_directory: /usr/local/libexec/lindeploy-openshift
+openshift_mirror_workspace: /var/lib/lindeploy/oc-mirror
+openshift_mirror_state_directory: /var/lib/lindeploy/openshift-mirror-state
+openshift_mirror_quay_root: /opt/quay
+openshift_agent_assets_root: "{{ ansible_env.HOME }}/.local/share/lindeploy/openshift-agent"
+openshift_agent_assets_directory: "{{ openshift_agent_assets_root }}/{{ cluster_name }}"
+openshift_agent_install_config: "{{ openshift_agent_assets_directory }}/install-config.yaml"
+openshift_agent_config: "{{ openshift_agent_assets_directory }}/agent-config.yaml"
+openshift_agent_iso_path: "{{ openshift_agent_assets_directory }}/agent.{{ cpu_architecture }}.iso"
+openshift_agent_ready_file: "{{ openshift_mirror_state_directory }}/{{ openshift_version }}-{{ cpu_architecture }}.json"

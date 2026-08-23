@@ -1,0 +1,241 @@
+---
+- name: Provision and install Single Node OpenShift on KVM
+  hosts: selected_hosts
+  gather_facts: true
+  any_errors_fatal: true
+
+  vars_files:
+    - ../vars/openshift_sno_defaults.yml
+
+  vars:
+    sno_request: "{{ cluster_config }}"
+    sno_host_request: "{{ selected_hosts_config | first }}"
+    target_schema_version: 1
+    target_id: "lindeploy-{{ inventory_hostname | lower | regex_replace('[^a-z0-9-]', '-') }}"
+    target_provider: libvirt
+    automation_mode: apply
+    target_modification_approved: "{{ sno_request.target_modification_approved | default(false) }}"
+    cluster_name: "{{ sno_request.cluster_name }}"
+    base_dns_domain: "{{ sno_request.base_domain }}"
+    openshift_version: "{{ openshift_default_version if sno_request.openshift_version | default('stable') == 'stable' else sno_request.openshift_version }}"
+    cpu_architecture: "{{ 'x86_64' if sno_request.architecture | default('amd64') == 'amd64' else sno_request.architecture }}"
+    network_type: OVNKubernetes
+    openshift_fips_enabled: "{{ sno_request.fips | default(false) }}"
+    cluster_network_cidr: "{{ sno_request.cluster_network_cidr }}"
+    cluster_network_host_prefix: "{{ sno_request.host_prefix }}"
+    service_network_cidr: "{{ sno_request.service_network_cidr }}"
+    sno_ip_address: "{{ sno_host_request.node_ip }}"
+    sno_prefix_length: "{{ sno_host_request.prefix_length }}"
+    sno_gateway: "{{ sno_host_request.gateway }}"
+    sno_dns_servers: "{{ sno_request.dns_servers }}"
+    sno_interface_name: "{{ sno_host_request.interface_name }}"
+    sno_static_network_enabled: "{{ sno_host_request.network_mode | default('dhcp_reservation') == 'static' }}"
+    installation_disk_path: "{{ sno_host_request.installation_disk }}"
+    minimum_installation_disk_bytes: 120000000000
+    install_confirmation: "{{ sno_request.install_confirmation | default('') }}"
+    infra_env_name: "{{ cluster_name }}-infra-env"
+    discovery_image_type: full-iso
+    libvirt_uri: qemu:///system
+    libvirt_vm_name: "{{ sno_host_request.vm_name }}"
+    libvirt_network_name: "{{ sno_host_request.libvirt_network }}"
+    libvirt_pool_name: "{{ sno_host_request.storage_pool }}"
+    libvirt_vm_vcpus: "{{ sno_host_request.vcpu }}"
+    libvirt_vm_memory_mb: "{{ sno_host_request.memory_gib | int * 1024 }}"
+    libvirt_vm_disk_gb: "{{ sno_host_request.disk_gib }}"
+    libvirt_firmware: "{{ 'efi' if sno_request.boot_mode | default('uefi') == 'uefi' else 'bios' }}"
+    libvirt_vm_autostart: "{{ sno_request.vm_autostart | default(false) }}"
+    cluster_count: 1
+    workshop_id: "lindeploy-{{ cluster_name }}"
+    workshop_base_domain: "{{ base_dns_domain }}"
+    libvirt_network_cidr: "{{ sno_request.machine_network_cidr }}"
+    libvirt_gateway: "{{ sno_host_request.gateway }}"
+    libvirt_netmask: 255.255.255.0
+    libvirt_network_prefix: "{{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}"
+    libvirt_dhcp_start: "{{ libvirt_network_prefix }}.2"
+    libvirt_dhcp_end: "{{ libvirt_network_prefix }}.254"
+    libvirt_bridge_name: "virbr-sno{{ sno_host_request.host_id }}"
+    sno_mac_address: "{{ sno_host_request.mac_address if sno_host_request.mac_address | default('') | length > 0 else '52:54:00:01:%02x:%02x' | format(sno_host_request.host_id | int % 256, sno_host_request.node_ip.split('.')[-1] | int) }}"
+    workshop_clusters:
+      - name: "{{ cluster_name }}"
+        target_id: "{{ target_id }}"
+        vm_name: "{{ libvirt_vm_name }}"
+        ip_address: "{{ sno_ip_address }}"
+        mac_address: "{{ sno_mac_address }}"
+        fqdn: "{{ cluster_name }}.{{ base_dns_domain }}"
+    dns_provider: existing
+    dns_validation_server: >-
+      {{ sno_gateway
+         if sno_request.dns_management | default('managed') == 'managed'
+         else (sno_dns_servers | first) }}
+    dns_enforce_before_boot: true
+    wait_for_cluster_convergence: true
+    require_cluster_convergence: true
+    require_workshop_readiness: true
+    failed_cluster_recovery_approved: true
+    oc_binary_path: "{{ ansible_env.HOME }}/.local/bin/oc"
+    remote_artifacts_root: "{{ ansible_env.HOME }}/.local/share/lindeploy/openshift/{{ cluster_name }}"
+    discovery_iso_path: "{{ remote_artifacts_root }}/discovery.iso"
+    credentials_directory: "{{ remote_artifacts_root }}/credentials"
+    assisted_wait_remote_path: "/tmp/lindeploy-assisted-wait-{{ cluster_name }}.py"
+    libvirt_ownership_marker_path: "{{ ansible_env.HOME }}/.local/share/lindeploy/ownership/{{ cluster_name }}.json"
+
+  pre_tasks:
+    - name: Pin the effective LinDeploy OpenShift request
+      ansible.builtin.set_fact:
+        network_type: OVNKubernetes
+        cluster_network_cidr: "{{ sno_request.cluster_network_cidr }}"
+        cluster_network_host_prefix: "{{ sno_request.host_prefix }}"
+        service_network_cidr: "{{ sno_request.service_network_cidr }}"
+        infra_env_name: "{{ sno_request.cluster_name }}-infra-env"
+        discovery_image_type: full-iso
+        libvirt_uri: qemu:///system
+        libvirt_network_name: "{{ sno_host_request.libvirt_network }}"
+        libvirt_pool_name: "{{ sno_host_request.storage_pool }}"
+        libvirt_vm_vcpus: "{{ sno_host_request.vcpu }}"
+        libvirt_vm_memory_mb: "{{ sno_host_request.memory_gib | int * 1024 }}"
+        libvirt_vm_disk_gb: "{{ sno_host_request.disk_gib }}"
+        libvirt_firmware: "{{ 'efi' if sno_request.boot_mode | default('uefi') == 'uefi' else 'bios' }}"
+        cluster_count: 1
+        workshop_id: "lindeploy-{{ sno_request.cluster_name }}"
+        workshop_base_domain: "{{ sno_request.base_domain }}"
+        libvirt_network_cidr: "{{ sno_request.machine_network_cidr }}"
+        libvirt_gateway: "{{ sno_host_request.gateway }}"
+        libvirt_netmask: 255.255.255.0
+        libvirt_network_prefix: "{{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}"
+        libvirt_dhcp_start: "{{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}.2"
+        libvirt_dhcp_end: "{{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}.254"
+        libvirt_bridge_name: "virbr-sno{{ sno_host_request.host_id }}"
+        oc_binary_path: "{{ ansible_env.HOME }}/.local/bin/oc"
+
+    - name: Verify the effective LinDeploy OpenShift request
+      ansible.builtin.assert:
+        that:
+          - libvirt_network_name == sno_host_request.libvirt_network
+          - libvirt_pool_name == sno_host_request.storage_pool
+          - libvirt_network_cidr == sno_request.machine_network_cidr
+          - libvirt_gateway == sno_host_request.gateway
+          - libvirt_vm_vcpus | int == sno_host_request.vcpu | int
+          - libvirt_vm_memory_mb | int == sno_host_request.memory_gib | int * 1024
+          - libvirt_vm_disk_gb | int == sno_host_request.disk_gib | int
+          - workshop_base_domain == sno_request.base_domain
+        fail_msg: The effective KVM request differs from the values submitted by LinDeploy.
+        quiet: true
+
+    - name: Report the effective LinDeploy KVM request
+      ansible.builtin.debug:
+        msg:
+          - "Network: {{ libvirt_network_name }} ({{ libvirt_network_cidr }})"
+          - "Gateway/DNS: {{ libvirt_gateway }}"
+          - "Storage pool: {{ libvirt_pool_name }}"
+          - "VM resources: {{ libvirt_vm_vcpus }} vCPU / {{ libvirt_vm_memory_mb }} MiB / {{ libvirt_vm_disk_gb }} GiB"
+          - "Cluster: {{ cluster_name }}.{{ workshop_base_domain }}"
+
+    - name: Require explicit target and disk-erasure approval
+      ansible.builtin.assert:
+        that:
+          - target_modification_approved | bool
+          - install_confirmation == ('ERASE ' ~ installation_disk_path)
+        fail_msg: >-
+          Installation is blocked. Confirm the disposable target and enter
+          exactly ERASE {{ installation_disk_path }}.
+        quiet: true
+
+    - name: Require the supported KVM IPv4 /24 profile
+      ansible.builtin.assert:
+        that:
+          - sno_request.machine_network_cidr is match('^([0-9]{1,3}\.){3}0/24$')
+          - sno_host_request.node_ip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+          - sno_host_request.prefix_length | int == 24
+        fail_msg: LinDeploy SNO KVM v1 currently requires an IPv4 /24 machine network.
+        quiet: true
+
+    - name: Read the requested storage pool definition
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", pool-dumpxml, "{{ libvirt_pool_name }}"]
+      register: openshift_pool_xml
+      changed_when: false
+      failed_when: false
+
+    - name: Select the storage pool path
+      ansible.builtin.set_fact:
+        libvirt_pool_path: >-
+          {{ (openshift_pool_xml.stdout
+              | regex_findall('<path>([^<]+)</path>')
+              | first)
+             if openshift_pool_xml.rc == 0
+             else '/var/lib/libvirt/images/' ~ libvirt_pool_name }}
+
+    - name: Build runtime volume and ISO paths
+      ansible.builtin.set_fact:
+        libvirt_volume_name: "{{ libvirt_vm_name }}.qcow2"
+        libvirt_volume_path: "{{ libvirt_pool_path }}/{{ libvirt_vm_name }}.qcow2"
+        libvirt_iso_runtime_path: "{{ libvirt_pool_path }}/{{ libvirt_vm_name }}-discovery.iso"
+        libvirt_iso_target: sda
+
+    - name: Install the Assisted Installer wait helper on the KVM host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/assisted_wait.py"
+        dest: "{{ assisted_wait_remote_path }}"
+        mode: "0700"
+
+    - name: Select the remote Assisted Installer wait helper
+      ansible.builtin.set_fact:
+        assisted_wait_script_path: "{{ assisted_wait_remote_path }}"
+
+  roles:
+    - role: libvirt_preflight
+    - role: libvirt_network
+    - role: libvirt_storage
+    - role: libvirt_vm
+    - role: preflight
+    - role: dns_preflight
+    - role: redhat_auth
+    - role: cluster_state
+    - role: workflow_plan
+    - role: cluster_definition
+      when: sno_workflow_action == 'create'
+    - role: infra_env
+      when: sno_workflow_action in ['create', 'discover']
+    - role: target_boot
+      when:
+        - sno_workflow_action in ['create', 'discover']
+        - not (automation_mode == 'plan' and sno_workflow_action == 'create')
+    - role: host_discovery
+      when:
+        - sno_workflow_action in ['create', 'discover']
+        - not (automation_mode == 'plan' and sno_workflow_action == 'create')
+    - role: validation_report
+      when:
+        - sno_workflow_action in ['create', 'discover']
+        - not (automation_mode == 'plan' and sno_workflow_action == 'create')
+    - role: disk_selection
+      when:
+        - sno_workflow_action in ['create', 'discover']
+        - not (automation_mode == 'plan' and sno_workflow_action == 'create')
+    - role: installation_start
+      when:
+        - sno_workflow_action in ['create', 'discover']
+        - not (automation_mode == 'plan' and sno_workflow_action == 'create')
+    - role: installation_monitor
+      when: sno_workflow_action == 'monitor' or (sno_installation_started | default(false) | bool)
+    - role: post_install_boot
+      when: sno_workflow_action in ['verify', 'recover'] or (sno_installation_completed | default(false) | bool)
+    - role: credential_download
+      when: sno_workflow_action in ['verify', 'recover'] or (sno_installation_completed | default(false) | bool)
+    - role: cluster_verify
+      when: sno_workflow_action in ['verify', 'recover'] or (sno_installation_completed | default(false) | bool)
+    - role: workflow_state
+    - role: workflow_summary
+
+  post_tasks:
+    - name: Enable VM autostart when requested
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", autostart, "{{ libvirt_vm_name }}"]
+      when:
+        - libvirt_vm_autostart | bool
+        - sno_automation_completed | default(false) | bool
+
+    - name: Remove the temporary Assisted Installer helper
+      ansible.builtin.file:
+        path: "{{ assisted_wait_script_path }}"
+        state: absent

@@ -7,6 +7,9 @@ k3s_cleanup_connection_recovery_connect_timeout: 5
 k3s_cleanup_connection_recovery_sleep: 3
 k3s_cleanup_uninstall_timeout: 180
 k3s_cleanup_uninstall_poll_interval: 5
+# Keep the signed SELinux policy across cleanup -> reinstall cycles. The official
+# uninstall helper removes it, forcing an expensive local policy rebuild later.
+k3s_cleanup_preserve_selinux_policy: true
 k3s_cleanup_binary_path: /usr/local/bin/k3s
 k3s_cleanup_kubectl_wrapper_path: /usr/local/bin/kubectl
 k3s_cleanup_uninstall_script_path: /usr/local/bin/k3s-uninstall.sh

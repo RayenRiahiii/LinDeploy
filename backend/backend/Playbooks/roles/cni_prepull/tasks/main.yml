@@ -24,10 +24,24 @@
   when: calico_prepull_images | bool
 
 - name: Pre-pull missing Calico images
-  command: "ctr -n k8s.io images pull {{ item }}"
+  command:
+    argv: >-
+      {{
+        ['ctr', '-n', 'k8s.io', 'images', 'pull']
+        + (
+          (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled | default(false)) | bool)
+          | ternary(
+              ['--hosts-dir', containerd_registry_config_dir | default('/etc/containerd/certs.d')],
+              []
+            )
+        )
+        + [item]
+      }}
   loop: "{{ calico_images_to_pull | default([]) }}"
   register: calico_image_pull_results
   changed_when: true
+  async: "{{ calico_image_pull_timeout }}"
+  poll: "{{ calico_image_pull_poll_interval }}"
   retries: "{{ calico_image_pull_retries }}"
   delay: "{{ calico_image_pull_retry_delay }}"
   until: calico_image_pull_results.rc == 0

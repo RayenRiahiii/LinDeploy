@@ -1,0 +1,129 @@
+---
+- name: Require the common installation variables
+  ansible.builtin.assert:
+    that:
+      - target_provider is defined
+      - cluster_name is defined
+      - base_dns_domain is defined
+      - openshift_version is defined
+      - sno_mac_address is defined
+      - sno_ip_address is defined
+      - sno_prefix_length is defined
+      - sno_gateway is defined
+      - sno_dns_servers is defined
+      - installation_disk_path is defined
+      - target_schema_version is defined
+      - target_id is defined
+      - cpu_architecture is defined
+    fail_msg: One or more required installation variables are missing.
+    quiet: true
+
+- name: Validate the target provider
+  ansible.builtin.assert:
+    that:
+      - target_provider in ['virtualbox', 'libvirt', 'manual_iso', 'redfish']
+    fail_msg: target_provider must be virtualbox, libvirt, manual_iso, or redfish.
+    quiet: true
+
+- name: Validate the cluster settings
+  ansible.builtin.assert:
+    that:
+      - cluster_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - cluster_name | length <= 54
+      - base_dns_domain is match('^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+      - "'.' in base_dns_domain"
+      - openshift_version is match('^4\\.[0-9]+(\\.[0-9]+)?$')
+    fail_msg: Check the cluster name, DNS domain, and OpenShift version.
+    quiet: true
+
+- name: Validate the network settings
+  ansible.builtin.assert:
+    that:
+      - sno_mac_address is match('^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$')
+      - sno_ip_address is match('^([0-9]{1,3}\\.){3}[0-9]{1,3}$')
+      - sno_gateway is match('^([0-9]{1,3}\\.){3}[0-9]{1,3}$')
+      - sno_prefix_length | int >= 1
+      - sno_prefix_length | int <= 32
+      - sno_dns_servers is sequence
+      - sno_dns_servers | length > 0
+    fail_msg: Check the static network configuration.
+    quiet: true
+
+- name: Validate the installation disk
+  ansible.builtin.assert:
+    that:
+      - installation_disk_path is match('^/dev/[A-Za-z0-9._/-]+$')
+    fail_msg: The installation disk must be an explicit /dev path.
+    quiet: true
+
+- name: Validate VirtualBox settings
+  ansible.builtin.assert:
+    that:
+      - virtualbox_vm_name is defined
+      - virtualbox_vm_name | length > 0
+      - virtualbox_iso_path_windows is defined
+      - virtualbox_iso_path_windows | length > 0
+    fail_msg: The VirtualBox target settings are missing.
+    quiet: true
+  when: target_provider == 'virtualbox'
+
+- name: Validate libvirt settings
+  ansible.builtin.assert:
+    that:
+      - libvirt_vm_name is defined
+      - libvirt_vm_name | length > 0
+      - libvirt_network_name is defined
+      - libvirt_network_name | length > 0
+      - libvirt_volume_path is defined
+      - libvirt_volume_path | length > 0
+      - discovery_iso_path is defined
+      - discovery_iso_path | length > 0
+    fail_msg: The libvirt target settings are missing.
+    quiet: true
+  when: target_provider == 'libvirt'
+
+- name: Validate the automation mode
+  ansible.builtin.assert:
+    that:
+      - automation_mode is defined
+      - automation_mode in ['plan', 'apply']
+    fail_msg: automation_mode must be plan or apply.
+    quiet: true
+
+- name: Require explicit approval before target modification
+  ansible.builtin.assert:
+    that:
+      - target_modification_approved | default(false) | bool
+    fail_msg: >-
+      Apply mode was blocked. Set target_modification_approved=true
+      only after verifying that this is the correct disposable target.
+    quiet: true
+  when: automation_mode == 'apply'
+
+- name: Report the validated request
+  ansible.builtin.debug:
+    msg:
+      - "Provider: {{ target_provider }}"
+      - "Cluster: {{ cluster_name }}.{{ base_dns_domain }}"
+      - "OpenShift version: {{ openshift_version }}"
+      - "Target: {{ sno_ip_address }}/{{ sno_prefix_length }}"
+      - "Installation disk: {{ installation_disk_path }}"
+      - "Target ID: {{ target_id }}"
+      - "CPU architecture: {{ cpu_architecture }}"
+      - >-
+        Target modification approved:
+        {{ target_modification_approved | default(false) }}
+      - No target or disk was modified.
+
+- name: Validate controller credentials and tools
+  ansible.builtin.import_tasks: controller.yml
+- name: Validate the target contract
+  ansible.builtin.assert:
+    that:
+      - target_schema_version | int == 1
+      - target_id is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - target_id | length <= 63
+      - cpu_architecture in ['x86_64', 'arm64', 'ppc64le', 's390x']
+    fail_msg: >-
+      Check target_schema_version, target_id, and cpu_architecture.
+    quiet: true

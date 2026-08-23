@@ -1,0 +1,180 @@
+---
+- name: Probe the existing mirror registry
+  ansible.builtin.uri:
+    url: "https://{{ openshift_mirror_registry }}/v2/"
+    method: GET
+    user: "{{ mirror_username }}"
+    password: "{{ mirror_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: [200, 401]
+  register: openshift_mirror_existing
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Validate mirror-registry archive source
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_mirror_registry_archive_path | length > 0 or
+        (
+          openshift_mirror_registry_archive_url | length > 0 and
+          openshift_mirror_registry_archive_checksum is match('^sha256:[0-9a-fA-F]{64}$')
+        )
+    fail_msg: >-
+      The registry is not running. Provide either a mirror-registry archive
+      already present on the RHEL host, or an HTTPS archive URL with its
+      sha256 checksum.
+    quiet: true
+  when: openshift_mirror_existing.status | default(0) not in [200, 401]
+
+- name: Download the verified mirror-registry archive
+  ansible.builtin.get_url:
+    url: "{{ openshift_mirror_registry_archive_url }}"
+    dest: "{{ openshift_mirror_archive_download_path }}"
+    checksum: "{{ openshift_mirror_registry_archive_checksum }}"
+    mode: "0600"
+    timeout: 900
+  when:
+    - openshift_mirror_existing.status | default(0) not in [200, 401]
+    - openshift_mirror_registry_archive_url | length > 0
+
+- name: Select mirror-registry archive
+  ansible.builtin.set_fact:
+    openshift_mirror_effective_archive: >-
+      {{ openshift_mirror_registry_archive_path
+         if openshift_mirror_registry_archive_path | length > 0
+         else openshift_mirror_archive_download_path }}
+  when: openshift_mirror_existing.status | default(0) not in [200, 401]
+
+- name: Create mirror-registry extraction directory
+  ansible.builtin.file:
+    path: "{{ openshift_mirror_extract_directory }}"
+    state: directory
+    mode: "0700"
+  when: openshift_mirror_existing.status | default(0) not in [200, 401]
+
+- name: Extract mirror-registry
+  ansible.builtin.unarchive:
+    src: "{{ openshift_mirror_effective_archive }}"
+    dest: "{{ openshift_mirror_extract_directory }}"
+    remote_src: true
+  when: openshift_mirror_existing.status | default(0) not in [200, 401]
+
+- name: Locate mirror-registry executable
+  ansible.builtin.find:
+    paths: "{{ openshift_mirror_extract_directory }}"
+    patterns: mirror-registry
+    file_type: file
+    recurse: true
+  register: openshift_mirror_registry_binary_search
+  when: openshift_mirror_existing.status | default(0) not in [200, 401]
+
+- name: Require mirror-registry executable
+  ansible.builtin.assert:
+    that:
+      - openshift_mirror_registry_binary_search.matched | int == 1
+    fail_msg: The supplied archive does not contain exactly one mirror-registry executable.
+    quiet: true
+  when: openshift_mirror_existing.status | default(0) not in [200, 401]
+
+- name: Install the local Quay mirror registry
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_registry_binary_search.files[0].path }}"
+      - install
+      - --quayHostname
+      - "{{ openshift_mirror_registry }}"
+      - --quayRoot
+      - "{{ openshift_mirror_quay_root }}"
+      - --quayStorage
+      - "{{ openshift_mirror_storage_path }}"
+      - --initUser
+      - "{{ mirror_username }}"
+      - --initPassword
+      - "{{ mirror_password }}"
+      - --autoApprove
+      - --no-color
+  register: openshift_mirror_registry_install
+  changed_when: openshift_mirror_registry_install.rc == 0
+  no_log: true
+  when: openshift_mirror_existing.status | default(0) not in [200, 401]
+
+- name: Wait for the local Quay API
+  ansible.builtin.uri:
+    url: "https://{{ openshift_mirror_registry }}/v2/"
+    method: GET
+    user: "{{ mirror_username }}"
+    password: "{{ mirror_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: openshift_mirror_quay_ready
+  until: openshift_mirror_quay_ready.status | default(0) == 200
+  retries: 30
+  delay: 10
+  no_log: true
+
+- name: Locate the generated mirror CA
+  ansible.builtin.find:
+    paths: "{{ openshift_mirror_quay_root }}"
+    patterns: rootCA.pem
+    file_type: file
+    recurse: true
+  register: openshift_mirror_ca_search
+
+- name: Stop when the mirror CA is unavailable
+  ansible.builtin.assert:
+    that:
+      - openshift_mirror_ca_search.matched | int == 1
+    fail_msg: >-
+      Exactly one rootCA.pem was expected below {{ openshift_mirror_quay_root }},
+      but {{ openshift_mirror_ca_search.matched | default(0) }} were found.
+    quiet: true
+
+- name: Select the generated mirror CA
+  ansible.builtin.set_fact:
+    openshift_mirror_ca_path: "{{ openshift_mirror_ca_search.files[0].path }}"
+
+- name: Trust the mirror CA on the mirror host
+  ansible.builtin.copy:
+    src: "{{ openshift_mirror_ca_path }}"
+    dest: /etc/pki/ca-trust/source/anchors/lindeploy-openshift-mirror.crt
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  register: openshift_mirror_ca_installed
+
+- name: Update system CA trust
+  ansible.builtin.command:
+    argv: [update-ca-trust, extract]
+  when: openshift_mirror_ca_installed.changed
+
+- name: Build merged registry authentication
+  ansible.builtin.copy:
+    dest: "{{ openshift_mirror_auth_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: >-
+      {{
+        (pull_secret | from_json)
+        | combine(
+            {
+              'auths': (pull_secret | from_json).auths
+                | combine(
+                    {
+                      openshift_mirror_registry: {
+                        'auth': (mirror_username ~ ':' ~ mirror_password) | b64encode
+                      }
+                    },
+                    recursive=True
+                  )
+            },
+            recursive=True
+          )
+        | to_nice_json
+      }}
+  no_log: true

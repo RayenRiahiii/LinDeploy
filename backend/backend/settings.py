@@ -1,4 +1,6 @@
 import os
+import json
+from datetime import timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,6 +22,21 @@ def env_list(name, default):
         return default
 
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def env_json(name, default):
+    value = os.getenv(name)
+    if not value:
+        return default
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{name} must contain valid JSON: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{name} must contain a JSON object")
+    return parsed
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -174,6 +191,75 @@ ANSIBLE_SSH_ARGS = os.getenv(
     "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
 )
 
+# OpenShift secrets are encrypted before their short-lived database storage.
+# Production deployments should provide a dedicated Fernet key rather than
+# relying on the DJANGO_SECRET_KEY-derived fallback.
+OPENSHIFT_SECRET_ENCRYPTION_KEY = os.getenv("OPENSHIFT_SECRET_ENCRYPTION_KEY", "")
+OPENSHIFT_SECRET_TTL_SECONDS = int(os.getenv("OPENSHIFT_SECRET_TTL_SECONDS", "1800"))
+OPENSHIFT_RED_HAT_OFFLINE_TOKEN = os.getenv("OPENSHIFT_RED_HAT_OFFLINE_TOKEN", "")
+OPENSHIFT_DEFAULT_VERSION = os.getenv("OPENSHIFT_DEFAULT_VERSION", "4.20")
+
+# Release hosts held by an orphaned queued/SSH-check execution. Running
+# playbooks always have a runner PID and are never expired by this safeguard.
+INSTALLATION_PRE_EXECUTION_STALE_SECONDS = int(
+    os.getenv("INSTALLATION_PRE_EXECUTION_STALE_SECONDS", "900")
+)
+
+# Optional LAN pull-through mirror. When enabled, these values are injected into
+# every installer run; users do not need to configure mirrors per deployment.
+LINDEPLOY_MIRROR_ENABLED = env_bool("LINDEPLOY_MIRROR_ENABLED", False)
+LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP = env_bool(
+    "LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP", False
+)
+LINDEPLOY_REGISTRY_MIRRORS = env_json("LINDEPLOY_REGISTRY_MIRRORS_JSON", {})
+LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE = os.getenv(
+    "LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE", ""
+)
+LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED = env_bool(
+    "LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED", False
+)
+LINDEPLOY_PACKAGE_MIRROR_BASE_URL = os.getenv(
+    "LINDEPLOY_PACKAGE_MIRROR_BASE_URL", ""
+).rstrip("/")
+LINDEPLOY_K3S_INSTALL_SCRIPT_URL = os.getenv(
+    "LINDEPLOY_K3S_INSTALL_SCRIPT_URL", ""
+)
+LINDEPLOY_K3S_CHANNEL_URL = os.getenv("LINDEPLOY_K3S_CHANNEL_URL", "")
+LINDEPLOY_K3S_ARTIFACT_URL = os.getenv("LINDEPLOY_K3S_ARTIFACT_URL", "")
+LINDEPLOY_CALICO_MANIFEST_URL = os.getenv(
+    "LINDEPLOY_CALICO_MANIFEST_URL", ""
+)
+LINDEPLOY_CONTAINERD_RPM_BASEURL = os.getenv(
+    "LINDEPLOY_CONTAINERD_RPM_BASEURL", ""
+)
+LINDEPLOY_CONTAINERD_RPM_GPGKEY = os.getenv(
+    "LINDEPLOY_CONTAINERD_RPM_GPGKEY", ""
+)
+LINDEPLOY_CONTAINERD_APT_REPO_URL = os.getenv(
+    "LINDEPLOY_CONTAINERD_APT_REPO_URL", ""
+)
+LINDEPLOY_CONTAINERD_APT_KEY_URL = os.getenv(
+    "LINDEPLOY_CONTAINERD_APT_KEY_URL", ""
+)
+LINDEPLOY_KUBERNETES_RPM_BASEURL = os.getenv(
+    "LINDEPLOY_KUBERNETES_RPM_BASEURL", ""
+)
+LINDEPLOY_KUBERNETES_RPM_GPGKEY = os.getenv(
+    "LINDEPLOY_KUBERNETES_RPM_GPGKEY", ""
+)
+LINDEPLOY_KUBERNETES_APT_REPO_URL = os.getenv(
+    "LINDEPLOY_KUBERNETES_APT_REPO_URL", ""
+)
+LINDEPLOY_KUBERNETES_APT_KEY_URL = os.getenv(
+    "LINDEPLOY_KUBERNETES_APT_KEY_URL", ""
+)
+LINDEPLOY_MIRROR_PREWARM_INTERVAL_HOURS = int(
+    os.getenv("LINDEPLOY_MIRROR_PREWARM_INTERVAL_HOURS", "24")
+)
+LINDEPLOY_MIRROR_PREWARM_TIMEOUT_SECONDS = int(
+    os.getenv("LINDEPLOY_MIRROR_PREWARM_TIMEOUT_SECONDS", "10800")
+)
+
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -181,3 +267,10 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_DEFAULT_QUEUE = os.getenv("CELERY_TASK_DEFAULT_QUEUE", "lindeploy")
+CELERY_BEAT_SCHEDULE = {
+    "lindeploy-mirror-stable-prewarm": {
+        "task": "auto_K8S.tasks.run_mirror_prewarm_task",
+        "schedule": timedelta(hours=LINDEPLOY_MIRROR_PREWARM_INTERVAL_HOURS),
+    }
+}

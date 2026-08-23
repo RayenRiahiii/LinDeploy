@@ -1,0 +1,133 @@
+---
+- name: Read the post-install VirtualBox state
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - showvminfo
+      - "{{ virtualbox_vm_name }}"
+      - --machinereadable
+  register: post_install_virtualbox_info
+  changed_when: false
+
+- name: Store the VirtualBox VM state
+  ansible.builtin.set_fact:
+    sno_post_install_vm_state: >-
+      {{
+        post_install_virtualbox_info.stdout_lines
+        | select('match', '^VMState=')
+        | first
+        | default('VMState="unknown"')
+      }}
+
+- name: Store the VirtualBox DVD attachment
+  ansible.builtin.set_fact:
+    post_install_virtualbox_dvd_attachment: >-
+      {{
+        post_install_virtualbox_info.stdout_lines
+        | select(
+            'match',
+            '^"' ~ virtualbox_storage_controller
+            ~ '-' ~ (virtualbox_iso_port | string)
+            ~ '-' ~ (virtualbox_iso_device | string)
+            ~ '"='
+          )
+        | first
+        | default('')
+      }}
+
+- name: Determine whether the discovery ISO is attached
+  ansible.builtin.set_fact:
+    sno_discovery_iso_attached: >-
+      {{
+        post_install_virtualbox_dvd_attachment | length > 0
+        and
+        (
+          post_install_virtualbox_dvd_attachment
+          | regex_search('="none"$')
+        ) is none
+      }}
+
+- name: Probe the running operating system
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - "20"
+      - ssh
+      - -o
+      - BatchMode=yes
+      - -o
+      - ConnectTimeout=8
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - "{{ ssh_private_key_path }}"
+      - "core@{{ sno_ip_address }}"
+      - cat
+      - /proc/cmdline
+  register: post_install_boot_probe
+  changed_when: false
+  failed_when: false
+  when: sno_post_install_vm_state == 'VMState="running"'
+
+- name: Identify the current boot source
+  ansible.builtin.set_fact:
+    sno_post_install_boot_source: >-
+      {% if sno_post_install_vm_state == 'VMState="poweroff"' %}
+      stopped
+      {% elif
+        sno_post_install_vm_state == 'VMState="running"'
+        and (post_install_boot_probe.rc | default(1)) == 0
+        and 'coreos.liveiso=' in post_install_boot_probe.stdout
+      %}
+      discovery-iso
+      {% elif
+        sno_post_install_vm_state == 'VMState="running"'
+        and (post_install_boot_probe.rc | default(1)) == 0
+      %}
+      installed-disk
+      {% else %}
+      unknown
+      {% endif %}
+- name: Select the safe post-install action
+  ansible.builtin.set_fact:
+    sno_post_install_action: >-
+      {% if sno_post_install_vm_state == 'VMState="saved"' %}
+      blocked-saved-state
+      {% elif sno_post_install_boot_source | trim == 'discovery-iso' %}
+      shutdown-detach-and-boot-disk
+      {% elif
+        sno_post_install_vm_state == 'VMState="poweroff"'
+        and sno_discovery_iso_attached | bool
+      %}
+      detach-and-start-installed-disk
+      {% elif sno_post_install_vm_state == 'VMState="poweroff"' %}
+      start-installed-disk
+      {% elif sno_discovery_iso_attached | bool %}
+      detach-iso
+      {% elif sno_post_install_boot_source | trim == 'installed-disk' %}
+      none
+      {% else %}
+      inspect-required
+      {% endif %}
+
+- name: Report the VirtualBox post-install state
+  ansible.builtin.debug:
+    msg:
+      - "VM: {{ virtualbox_vm_name }}"
+      - "VM state: {{ sno_post_install_vm_state }}"
+      - >-
+        DVD attachment:
+        {{
+          post_install_virtualbox_dvd_attachment
+          | default('not detected', true)
+        }}
+      - "Discovery ISO attached: {{ sno_discovery_iso_attached }}"
+      - "Current boot source: {{ sno_post_install_boot_source | trim }}"
+      - "Required action: {{ sno_post_install_action | trim }}"
+      - This inspection did not modify or restart the VM.
+- name: Apply the VirtualBox post-install action
+  ansible.builtin.include_tasks:
+    file: virtualbox_apply.yml
+  when: automation_mode == 'apply'

@@ -1,0 +1,28 @@
+<network xmlns:dnsmasq='http://libvirt.org/schemas/network/dnsmasq/1.0'>
+  <name>{{ libvirt_network_name }}</name>
+  <forward mode='nat'/>
+  <bridge name='{{ libvirt_bridge_name }}' stp='on' delay='0'/>
+  <domain name='{{ workshop_base_domain }}' localOnly='yes'/>
+  <dns>
+{% for cluster in workshop_clusters %}
+    <host ip='{{ cluster.ip_address }}'>
+      <hostname>api.{{ cluster.name }}.{{ workshop_base_domain }}</hostname>
+      <hostname>api-int.{{ cluster.name }}.{{ workshop_base_domain }}</hostname>
+      <hostname>{{ cluster.name }}-node.{{ cluster.name }}.{{ workshop_base_domain }}</hostname>
+    </host>
+{% endfor %}
+  </dns>
+  <ip address='{{ libvirt_gateway }}' netmask='{{ libvirt_netmask }}'>
+    <dhcp>
+      <range start='{{ libvirt_dhcp_start }}' end='{{ libvirt_dhcp_end }}'/>
+{% for cluster in workshop_clusters %}
+      <host mac='{{ cluster.mac_address }}' name='{{ cluster.name }}-node' ip='{{ cluster.ip_address }}'/>
+{% endfor %}
+    </dhcp>
+  </ip>
+  <dnsmasq:options>
+{% for cluster in workshop_clusters %}
+    <dnsmasq:option value='address=/apps.{{ cluster.name }}.{{ workshop_base_domain }}/{{ cluster.ip_address }}'/>
+{% endfor %}
+  </dnsmasq:options>
+</network>

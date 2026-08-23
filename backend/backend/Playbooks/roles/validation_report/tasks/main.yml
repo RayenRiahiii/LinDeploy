@@ -1,0 +1,44 @@
+---
+- name: Initialize the installation readiness state
+  ansible.builtin.set_fact:
+    sno_installation_ready: false
+    validation_wait_performed: false
+
+- name: Report validation pending when no host is discovered
+  ansible.builtin.debug:
+    msg:
+      - No target host is registered in the InfraEnv yet.
+      - Assisted Installer hardware and network validations cannot run yet.
+      - Booting the discovery ISO on a blank target will start these validations.
+      - No installation disk was selected or modified.
+  when: not (sno_host_discovered | default(false) | bool)
+
+- name: Inspect the initial discovered-host validations
+  ansible.builtin.include_tasks:
+    file: inspect.yml
+  when: sno_host_discovered | default(false) | bool
+
+- name: Wait for validation readiness in apply mode
+  ansible.builtin.include_tasks:
+    file: wait_ready.yml
+  when:
+    - automation_mode == 'apply'
+    - sno_host_discovered | default(false) | bool
+    - not (sno_installation_ready | default(false) | bool)
+
+- name: Refresh validations after waiting
+  ansible.builtin.include_tasks:
+    file: inspect.yml
+  when: validation_wait_performed | default(false) | bool
+
+- name: Require installation readiness in apply mode
+  ansible.builtin.assert:
+    that:
+      - sno_installation_ready | bool
+    fail_msg: >-
+      The target registered successfully, but the cluster did not
+      become ready for disk selection.
+    quiet: true
+  when:
+    - automation_mode == 'apply'
+    - sno_host_discovered | default(false) | bool 

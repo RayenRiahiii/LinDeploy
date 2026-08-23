@@ -1,0 +1,27 @@
+---
+- name: Prepare a disconnected OpenShift mirror
+  hosts: selected_hosts
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+
+  vars_files:
+    - ../vars/openshift_sno_defaults.yml
+
+  vars:
+    mirror_request: "{{ cluster_config }}"
+    openshift_version: "{{ openshift_default_version if mirror_request.openshift_version | default('stable') == 'stable' else mirror_request.openshift_version }}"
+    cpu_architecture: "{{ 'x86_64' if mirror_request.architecture | default('amd64') == 'amd64' else mirror_request.architecture }}"
+    openshift_mirror_registry: "{{ mirror_request.mirror_registry }}"
+    openshift_mirror_storage_path: "{{ mirror_request.mirror_storage_path | default('/var/lib/lindeploy/openshift-mirror') }}"
+    openshift_mirror_registry_archive_path: "{{ mirror_request.mirror_registry_archive_path | default('') }}"
+    openshift_mirror_registry_archive_url: "{{ mirror_request.mirror_registry_archive_url | default('') }}"
+    openshift_mirror_registry_archive_checksum: "{{ mirror_request.mirror_registry_archive_checksum | default('') }}"
+    openshift_mirror_include_graph: "{{ mirror_request.mirror_include_graph | default(true) }}"
+
+  roles:
+    - role: openshift_mirror_preflight
+    - role: openshift_mirror_registry
+    - role: openshift_mirror_content
+    - role: openshift_mirror_verify
+
