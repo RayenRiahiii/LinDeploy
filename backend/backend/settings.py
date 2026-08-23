@@ -208,6 +208,13 @@ INSTALLATION_PRE_EXECUTION_STALE_SECONDS = int(
 # Optional LAN pull-through mirror. When enabled, these values are injected into
 # every installer run; users do not need to configure mirrors per deployment.
 LINDEPLOY_MIRROR_ENABLED = env_bool("LINDEPLOY_MIRROR_ENABLED", False)
+LINDEPLOY_MIRROR_CACHE_REQUIRED = env_bool("LINDEPLOY_MIRROR_CACHE_REQUIRED", False)
+LINDEPLOY_KUBERNETES_PROFILE_ID = os.getenv(
+    "LINDEPLOY_KUBERNETES_PROFILE_ID", "kubernetes-v1.36.3-amd64-all-supported"
+)
+LINDEPLOY_K3S_PROFILE_ID = os.getenv(
+    "LINDEPLOY_K3S_PROFILE_ID", "k3s-v1.36.3+k3s1-amd64-all-supported"
+)
 LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP = env_bool(
     "LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP", False
 )

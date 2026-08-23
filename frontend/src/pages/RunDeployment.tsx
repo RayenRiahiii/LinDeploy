@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Code,
   Container,
   Divider,
@@ -62,6 +63,7 @@ import { parseJsonResponse } from "../lib/api";
 
 type Host = {
   id: number;
+  stable_id: string;
   name: string;
   hostname?: string;
   ip_address: string;
@@ -149,6 +151,9 @@ type ClusterConfig = {
   disable_ingress: boolean;
   control_plane_count?: number;
   worker_count?: number;
+  target_modification_approved?: boolean;
+  cleanup_confirmation?: string;
+  cleanup_expected_confirmation?: string;
 };
 
 type HostOverrideForm = {
@@ -775,6 +780,8 @@ export default function RunDeployment({
   const [restartingOpenShift, setRestartingOpenShift] = useState(false);
   const [showSshSuccessModal, setShowSshSuccessModal] = useState(false);
   const [cleanupRequest, setCleanupRequest] = useState<CleanupRequest | null>(null);
+  const [cleanupApproved, setCleanupApproved] = useState(false);
+  const [cleanupConfirmation, setCleanupConfirmation] = useState("");
   const [resumeCandidate, setResumeCandidate] = useState<InstallationDetailResponse | null>(null);
   const [clearingHistory, setClearingHistory] = useState(false);
   const [deletingHistoryInstallationId, setDeletingHistoryInstallationId] = useState<number | null>(null);
@@ -1873,10 +1880,24 @@ export default function RunDeployment({
   }
 
   function openCleanupDialog(request: CleanupRequest) {
+    setCleanupApproved(false);
+    setCleanupConfirmation("");
     setCleanupRequest(request);
     setShowSuccessModal(false);
     setShowFailureModal(false);
     setShowPlatformConflictModal(false);
+  }
+
+  function buildCleanupConfirmation(request: CleanupRequest) {
+    const defaultClusterName =
+      request.systemType === "k3s" ? "k3s-cluster-01" : "kubernetes-cluster-01";
+    const clusterName = request.clusterConfig.cluster_name?.trim() || defaultClusterName;
+    const stableTargetIds = hosts
+      .filter((host) => request.hostIds.includes(host.id))
+      .map((host) => host.stable_id)
+      .sort()
+      .join(",");
+    return `CLEAN ${clusterName} ON ${stableTargetIds}`;
   }
 
   function handlePlatformConflictCleanupLaunch() {
@@ -1931,6 +1952,12 @@ export default function RunDeployment({
       return;
     }
 
+    const expectedConfirmation = buildCleanupConfirmation(request);
+    if (!cleanupApproved || cleanupConfirmation !== expectedConfirmation) {
+      setError("Approve the destructive action and enter the exact cluster- and target-bound confirmation.");
+      return;
+    }
+
     setCleanupRequest(null);
 
     await queueInstallation({
@@ -1939,7 +1966,12 @@ export default function RunDeployment({
       executionKind: "cleanup",
       systemType: request.systemType,
       hostIds: request.hostIds,
-      clusterConfigOverride: request.clusterConfig,
+      clusterConfigOverride: {
+        ...request.clusterConfig,
+        target_modification_approved: true,
+        cleanup_confirmation: cleanupConfirmation,
+        cleanup_expected_confirmation: expectedConfirmation,
+      },
       hostOverridesOverride: request.hostOverrides,
     });
 
@@ -3256,7 +3288,11 @@ export default function RunDeployment({
 
         <Modal
           opened={Boolean(cleanupRequest)}
-          onClose={() => setCleanupRequest(null)}
+          onClose={() => {
+            setCleanupRequest(null);
+            setCleanupApproved(false);
+            setCleanupConfirmation("");
+          }}
           title="Cleanup Options"
           size="md"
           centered
@@ -3269,6 +3305,30 @@ export default function RunDeployment({
                 Choose how much of the selected target system state should be removed.
               </Text>
             </div>
+
+            {cleanupRequest && (
+              <Alert color="red" variant="light" title="Cluster- and target-bound safety confirmation">
+                <Stack gap="sm">
+                  <Text size="sm">
+                    LinDeploy will modify only resources recorded in its ownership manifest.
+                    Confirm the cluster name and exact stable IDs of all selected targets.
+                  </Text>
+                  <Code block>{buildCleanupConfirmation(cleanupRequest)}</Code>
+                  <TextInput
+                    label="Exact confirmation"
+                    value={cleanupConfirmation}
+                    onChange={(event) => setCleanupConfirmation(event.currentTarget.value)}
+                    placeholder="CLEAN cluster-name ON target-uuid"
+                    autoComplete="off"
+                  />
+                  <Checkbox
+                    checked={cleanupApproved}
+                    onChange={(event) => setCleanupApproved(event.currentTarget.checked)}
+                    label="I approve cleanup on exactly the targets listed above."
+                  />
+                </Stack>
+              </Alert>
+            )}
 
             {cleanupRequestTemplates.reset && (
               <Card className="host-panel" padding="md">
@@ -3286,7 +3346,7 @@ export default function RunDeployment({
                     color="orange"
                     variant="light"
                     onClick={() => void (cleanupRequest ? launchCleanupRequest(cleanupRequest, "reset") : Promise.resolve())}
-                    disabled={loading}
+                    disabled={loading || !cleanupApproved}
                   >
                     Reset Cluster
                   </Button>
@@ -3310,7 +3370,7 @@ export default function RunDeployment({
                     color="red"
                     variant="light"
                     onClick={() => void (cleanupRequest ? launchCleanupRequest(cleanupRequest, "full_uninstall") : Promise.resolve())}
-                    disabled={loading}
+                    disabled={loading || !cleanupApproved}
                   >
                     Full Uninstall
                   </Button>

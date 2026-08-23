@@ -37,7 +37,7 @@ from .services import (
     run_connectivity_check,
     select_installation_template,
 )
-from .mirror import mark_mirror_prewarm_queued, mirror_status_payload
+from .mirror import mirror_status_payload, queue_mirror_prewarm, read_mirror_state
 from .tasks import run_installation_task, run_mirror_prewarm_task
 
 
@@ -116,6 +116,11 @@ def build_default_cluster_config(system_type):
         "cni_plugin": "calico",
         "disable_ingress": False,
     }
+
+
+def build_cleanup_confirmation(hosts, cluster_name):
+    stable_ids = sorted(str(host.stable_id) for host in hosts)
+    return f"CLEAN {cluster_name} ON " + ",".join(stable_ids)
 
 
 def normalize_cluster_config(cluster_config, system_type, host_overrides, topology=None):
@@ -430,13 +435,18 @@ def prewarm_mirror(request):
     if not isinstance(force, bool):
         return Response({"message": "force must be a boolean."}, status=400)
 
-    state = mark_mirror_prewarm_queued()
-    task = run_mirror_prewarm_task.delay(force=force)
+    job, created = queue_mirror_prewarm(force=force)
+    if created:
+        task = run_mirror_prewarm_task.delay(job_id=str(job.job_id), force=force)
+        job.celery_task_id = task.id
+        job.save(update_fields=["celery_task_id", "updated_at"])
     return Response(
         {
-            "message": "Mirror prewarm queued.",
-            "task_id": task.id,
-            "state": state,
+            "message": "Mirror prewarm queued." if created else "An equivalent mirror prewarm is already active.",
+            "task_id": job.celery_task_id,
+            "job_id": str(job.job_id),
+            "deduplicated": not created,
+            "state": read_mirror_state(),
         },
         status=202,
     )
@@ -840,6 +850,38 @@ def launch_installation(request):
         return Response({"message": str(exc)}, status=400)
 
     template = selection["template"]
+    if (
+        template.deployment_type == InstallationTemplate.DeploymentType.CLEANUP
+        and system_type
+        in {
+            InstallationTemplate.SystemType.KUBERNETES,
+            InstallationTemplate.SystemType.K3S,
+        }
+    ):
+        expected_confirmation = build_cleanup_confirmation(
+            hosts, normalized_cluster_config["cluster_name"]
+        )
+        if (
+            not normalized_cluster_config.get("target_modification_approved")
+            or normalized_cluster_config.get("cleanup_confirmation")
+            != expected_confirmation
+        ):
+            return Response(
+                {
+                    "message": (
+                        "Cleanup requires explicit cluster- and target-bound approval. "
+                        "Enter the confirmation exactly as displayed before retrying."
+                    ),
+                    "errors": {
+                        "cleanup_confirmation": (
+                            "The cleanup confirmation does not match the selected cluster and targets."
+                        ),
+                        "expected_confirmation": expected_confirmation,
+                    },
+                },
+                status=400,
+            )
+        normalized_cluster_config["cleanup_expected_confirmation"] = expected_confirmation
     normalized_host_overrides = annotate_host_overrides_with_detection(
         normalized_host_overrides,
         selection.get("detections", []),

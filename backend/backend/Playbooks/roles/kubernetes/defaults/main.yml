@@ -33,6 +33,8 @@ kubernetes_packages:
   - kubeadm
   - kubectl
   - cri-tools
+kubernetes_packages_redhat: "{{ kubernetes_packages }}"
+kubernetes_packages_debian: "{{ kubernetes_packages }}"
 
 kubernetes_kubelet_service_name: kubelet
 

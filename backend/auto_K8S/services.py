@@ -15,8 +15,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from backend.celery import app as celery_app
-from .models import Host, Installation, InstallationTarget, InstallationTemplate
-from .mirror import read_mirror_state
+from .models import Host, Installation, InstallationTarget, InstallationTemplate, MirrorProfile
 from .openshift_secrets import consume_secret_bundle, destroy_secret_bundle
 from .runners import get_runner
 
@@ -279,6 +278,7 @@ def _append_inventory_host(
 ):
     inventory_lines.append(f"{indent}{host.name}:")
     inventory_lines.append(f"{indent}  ansible_host: {host.ip_address}")
+    inventory_lines.append(f'{indent}  lindeploy_target_id: "{host.stable_id}"')
     inventory_lines.append(
         f"{indent}  ansible_port: {host_override.get('ssh_port', host.ssh_port)}"
     )
@@ -501,7 +501,29 @@ def build_extra_vars_file(
             "lindeploy_system_package_cache_enabled": (
                 settings.LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED
             ),
+            "lindeploy_mirror_cache_required": settings.LINDEPLOY_MIRROR_CACHE_REQUIRED,
         }
+
+        requested_profile_id = {
+            InstallationTemplate.SystemType.KUBERNETES: settings.LINDEPLOY_KUBERNETES_PROFILE_ID,
+            InstallationTemplate.SystemType.K3S: settings.LINDEPLOY_K3S_PROFILE_ID,
+        }.get(system_type, "")
+        if requested_profile_id:
+            mirror_payload["lindeploy_mirror_profile_id"] = requested_profile_id
+            profile = MirrorProfile.objects.filter(
+                profile_id=requested_profile_id,
+                verification_state=MirrorProfile.VerificationState.READY,
+            ).first()
+            if settings.LINDEPLOY_MIRROR_CACHE_REQUIRED and profile is None:
+                raise ValueError(
+                    f"Required immutable mirror profile {requested_profile_id} is not ready. "
+                    "Run and verify mirror prewarm before starting this installation."
+                )
+            if profile:
+                if system_type == InstallationTemplate.SystemType.KUBERNETES:
+                    mirror_payload["kubeadm_kubernetes_version"] = profile.exact_version
+                elif system_type == InstallationTemplate.SystemType.K3S:
+                    mirror_payload["k3s_version"] = profile.exact_version
         if settings.LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED:
             package_mirror_url = settings.LINDEPLOY_PACKAGE_MIRROR_BASE_URL
             if not package_mirror_url.startswith("https://"):
@@ -541,19 +563,6 @@ def build_extra_vars_file(
         )
         payload.update(mirror_payload)
 
-        # Use the exact control-plane image version already verified by the
-        # local mirror. Package repositories remain signed and may provide a
-        # newer patch-level client, while kubeadm pulls only known-hot images.
-        if system_type == InstallationTemplate.SystemType.KUBERNETES:
-            mirror_state = read_mirror_state()
-            kubernetes_state = mirror_state.get("components", {}).get("kubernetes", {})
-            active_version = str(kubernetes_state.get("active_version", "")).strip()
-            if (
-                kubernetes_state.get("status") == "ready"
-                and re.fullmatch(r"v\d+\.\d+\.\d+", active_version)
-                and kubernetes_state.get("manifest_sha256")
-            ):
-                payload["kubeadm_kubernetes_version"] = active_version
     bootstrap_host = None
 
     if topology == Installation.Topology.MULTI_NODE:
@@ -612,6 +621,9 @@ def build_extra_vars_file(
         "disable_ingress",
         "control_plane_count",
         "worker_count",
+        "target_modification_approved",
+        "cleanup_confirmation",
+        "cleanup_expected_confirmation",
     ):
         if cluster_config and key in cluster_config:
             payload[key] = cluster_config[key]

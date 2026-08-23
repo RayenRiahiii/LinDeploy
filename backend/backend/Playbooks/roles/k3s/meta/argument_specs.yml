@@ -1,0 +1,17 @@
+---
+argument_specs:
+  main:
+    short_description: Install and validate one exact K3s single-node release
+    options:
+      k3s_version:
+        type: str
+        required: true
+      k3s_install_script_checksum:
+        type: str
+        required: true
+      k3s_binary_sha256_amd64:
+        type: str
+        required: true
+      k3s_service_name:
+        type: str
+        default: k3s

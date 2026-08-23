@@ -1,0 +1,11 @@
+---
+argument_specs:
+  main:
+    short_description: Reset or uninstall only LinDeploy-owned Kubernetes resources
+    options:
+      kubernetes_cleanup_full_uninstall:
+        type: bool
+        default: false
+      kubernetes_cleanup_keep_containerd:
+        type: bool
+        default: true

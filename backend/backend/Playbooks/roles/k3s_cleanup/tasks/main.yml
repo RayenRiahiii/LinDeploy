@@ -235,6 +235,7 @@
 - name: Find residual CNI configuration entries
   find:
     paths: "{{ k3s_cleanup_cni_config_dir }}"
+    patterns: "{{ k3s_cleanup_cni_owned_patterns }}"
     file_type: any
     hidden: true
     recurse: false

@@ -22,6 +22,10 @@ k3s_cleanup_root_kube_dir: /root/.kube
 k3s_cleanup_root_kubeconfig_path: /root/.kube/config
 k3s_cleanup_remote_user_shell_rc_path: .bashrc
 k3s_cleanup_cni_config_dir: /etc/cni/net.d
+k3s_cleanup_cni_owned_patterns:
+  - "*flannel*"
+  - "*k3s*"
+  - "10-containerd-net.conflist"
 
 k3s_cleanup_state_paths:
   - /etc/rancher/k3s

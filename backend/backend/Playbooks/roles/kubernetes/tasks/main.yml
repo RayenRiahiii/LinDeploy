@@ -149,7 +149,7 @@
 # ==================================================
 - name: Install Kubernetes packages
   dnf:
-    name: "{{ kubernetes_packages }}"
+    name: "{{ kubernetes_packages_redhat }}"
     state: present
     update_cache: "{{ kubernetes_redhat_update_cache }}"
     disable_excludes: "{{ kubernetes_repo_name }}"
@@ -157,7 +157,7 @@
 
 - name: Install Kubernetes packages on Debian family
   apt:
-    name: "{{ kubernetes_packages }}"
+    name: "{{ kubernetes_packages_debian }}"
     state: present
     lock_timeout: "{{ kubernetes_apt_lock_timeout }}"
     update_cache: false

@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.db.models import Q
 
 
 class TimeStampedModel(models.Model):
@@ -39,6 +40,7 @@ class Host(TimeStampedModel):
         PREPARED = "prepared", "Prepared"
         INITIALIZED = "initialized", "Initialized"
 
+    stable_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     name = models.CharField(max_length=100, unique=True)
     hostname = models.CharField(max_length=255, blank=True)
     ip_address = models.GenericIPAddressField(protocol="IPv4", unique=True)
@@ -262,3 +264,85 @@ class InstallationTarget(TimeStampedModel):
 
     def __str__(self):
         return f"{self.installation} -> {self.host.name}"
+
+
+class MirrorProfile(TimeStampedModel):
+    class VerificationState(models.TextChoices):
+        PENDING = "pending", "Pending"
+        VERIFYING = "verifying", "Verifying"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
+        INVALIDATED = "invalidated", "Invalidated"
+
+    profile_id = models.CharField(max_length=255, unique=True, editable=False)
+    platform = models.CharField(max_length=30)
+    exact_version = models.CharField(max_length=100)
+    architecture = models.CharField(max_length=30)
+    os_family = models.CharField(max_length=50)
+    os_release = models.CharField(max_length=50)
+    package_set = models.JSONField(default=list)
+    oci_images = models.JSONField(default=list)
+    artifacts = models.JSONField(default=list)
+    provenance = models.JSONField(default=dict)
+    manifest_sha256 = models.CharField(max_length=64)
+    content_generation = models.CharField(max_length=64)
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    verification_state = models.CharField(
+        max_length=20,
+        choices=VerificationState.choices,
+        default=VerificationState.PENDING,
+    )
+    verification_error = models.TextField(blank=True)
+    pinned = models.BooleanField(default=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("platform", "-created_at")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("platform", "exact_version", "architecture", "os_family", "os_release"),
+                name="uniq_mirror_release_profile",
+            )
+        ]
+
+    def __str__(self):
+        return self.profile_id
+
+
+class MirrorPrewarmJob(TimeStampedModel):
+    class State(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        VERIFYING = "verifying", "Verifying"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    job_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    dedupe_key = models.CharField(max_length=255, db_index=True)
+    requested_components = models.JSONField(default=list)
+    requested_profiles = models.JSONField(default=list)
+    state = models.CharField(max_length=20, choices=State.choices, default=State.QUEUED)
+    celery_task_id = models.CharField(max_length=255, blank=True)
+    correlation_id = models.UUIDField(default=uuid.uuid4, editable=False)
+    owner_token = models.UUIDField(null=True, blank=True, editable=False)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    progress = models.PositiveSmallIntegerField(default=0)
+    result = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("dedupe_key",),
+                condition=Q(state__in=("queued", "running", "verifying")),
+                name="uniq_active_mirror_prewarm",
+            )
+        ]
+
+    def __str__(self):
+        return f"Mirror prewarm {self.job_id} ({self.state})"

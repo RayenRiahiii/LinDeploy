@@ -60,6 +60,7 @@
           }}
         dest: "{{ calico_manifest_path }}"
         mode: '0644'
+        checksum: "{{ calico_manifest_checksum if calico_manifest_checksum | length > 0 else omit }}"
         timeout: "{{ calico_download_timeout }}"
       register: cni_calico_download
       until: cni_calico_download is succeeded
@@ -71,6 +72,7 @@
         url: "{{ calico_manifest_upstream_url }}"
         dest: "{{ calico_manifest_path }}"
         mode: '0644'
+        checksum: "{{ calico_manifest_checksum if calico_manifest_checksum | length > 0 else omit }}"
         timeout: "{{ calico_download_timeout }}"
 
 # ==================================================

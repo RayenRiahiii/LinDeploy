@@ -1,6 +1,6 @@
 from celery import shared_task
 
-from .mirror import run_automatic_mirror_prewarm
+from .mirror import queue_mirror_prewarm, run_automatic_mirror_prewarm
 from .services import execute_installation
 
 
@@ -16,5 +16,8 @@ def debug_task():
 
 
 @shared_task(bind=True, name="auto_K8S.tasks.run_mirror_prewarm_task")
-def run_mirror_prewarm_task(self, force=False):
-    return run_automatic_mirror_prewarm(force=force)
+def run_mirror_prewarm_task(self, job_id=None, force=False):
+    if job_id is None:
+        job, _ = queue_mirror_prewarm(force=force)
+        job_id = job.job_id
+    return run_automatic_mirror_prewarm(job_id=job_id, force=force)

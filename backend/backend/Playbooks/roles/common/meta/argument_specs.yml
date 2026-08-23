@@ -1,0 +1,20 @@
+---
+argument_specs:
+  main:
+    short_description: Prepare a supported Linux host for Kubernetes-family runtimes
+    options:
+      common_selinux_mode:
+        type: str
+        choices: [enforcing, permissive]
+        default: enforcing
+      common_manage_firewalld:
+        type: bool
+        default: true
+      common_firewalld_ports:
+        type: list
+        elements: str
+        default: []
+      common_firewalld_trusted_sources:
+        type: list
+        elements: str
+        default: []

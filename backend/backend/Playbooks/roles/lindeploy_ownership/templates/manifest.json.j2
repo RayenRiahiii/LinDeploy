@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "owner": "LinDeploy",
+  "platform": {{ lindeploy_ownership_platform | to_json }},
+  "target_id": {{ lindeploy_target_id | string | to_json }},
+  "cluster_id": {{ lindeploy_ownership_cluster_id | string | to_json }},
+  "release_profile_id": {{ lindeploy_release_profile_id | string | to_json }},
+  "machine_id": {{ lindeploy_ownership_machine_id | to_json }},
+  "system_uuid": {{ lindeploy_ownership_system_uuid | to_json }},
+  "state": {{ lindeploy_ownership_target_state | to_json }},
+  "managed_resources": {{ lindeploy_ownership_managed_resources | unique | sort | list | to_nice_json }}
+}

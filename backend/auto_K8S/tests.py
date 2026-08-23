@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import json
 from pathlib import Path
 
-from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate
+from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate, MirrorProfile
 from .runners.linux_runner import LinuxRunner
 from .serializers import (
     CredentialSerializer,
@@ -116,17 +116,40 @@ class MirrorApiTests(TestCase):
 
     @override_settings(LINDEPLOY_MIRROR_ENABLED=True)
     @patch("auto_K8S.views.run_mirror_prewarm_task.delay")
-    @patch("auto_K8S.views.mark_mirror_prewarm_queued")
-    def test_mirror_prewarm_is_queued_asynchronously(self, mark_queued, delay):
-        mark_queued.return_value = {"updated_at": "", "components": {}}
+    @patch("auto_K8S.views.queue_mirror_prewarm")
+    def test_mirror_prewarm_is_queued_asynchronously(self, queue_prewarm, delay):
+        from .models import MirrorPrewarmJob
+
+        job = MirrorPrewarmJob.objects.create(
+            dedupe_key="test-profile", requested_components=["kubernetes", "k3s"]
+        )
+        queue_prewarm.return_value = (job, True)
         delay.return_value = Mock(id="prewarm-task-1")
 
         response = self.client.post("/api/mirror/prewarm/", {"force": True}, format="json")
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.data["task_id"], "prewarm-task-1")
-        mark_queued.assert_called_once_with()
-        delay.assert_called_once_with(force=True)
+        self.assertEqual(response.data["job_id"], str(job.job_id))
+        queue_prewarm.assert_called_once_with(force=True)
+        delay.assert_called_once_with(job_id=str(job.job_id), force=True)
+
+    @override_settings(LINDEPLOY_MIRROR_ENABLED=True)
+    @patch("auto_K8S.views.run_mirror_prewarm_task.delay")
+    def test_duplicate_mirror_prewarm_returns_existing_job(self, delay):
+        from .models import MirrorPrewarmJob
+
+        existing = MirrorPrewarmJob.objects.create(
+            dedupe_key="stable-kubernetes-k3s-amd64",
+            requested_components=["kubernetes", "k3s"],
+            celery_task_id="already-running",
+        )
+        response = self.client.post("/api/mirror/prewarm/", {"force": False}, format="json")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.data["deduplicated"])
+        self.assertEqual(response.data["job_id"], str(existing.job_id))
+        delay.assert_not_called()
 
     @patch("auto_K8S.mirror.MIRROR_STATE_PATH")
     def test_mirror_state_recovers_final_mapping_from_legacy_output_array(self, state_path):
@@ -313,21 +336,16 @@ class TopologyInventoryTests(TestCase):
         LINDEPLOY_KUBERNETES_RPM_GPGKEY="",
         LINDEPLOY_KUBERNETES_APT_REPO_URL="",
         LINDEPLOY_KUBERNETES_APT_KEY_URL="",
+        LINDEPLOY_KUBERNETES_PROFILE_ID="kubernetes-v1.36.4-amd64-all-supported",
     )
-    @patch("auto_K8S.services.read_mirror_state")
-    def test_kubernetes_uses_verified_prewarmed_control_plane_version(
-        self,
-        mirror_state,
-    ):
-        mirror_state.return_value = {
-            "components": {
-                "kubernetes": {
-                    "status": "ready",
-                    "active_version": "v1.36.4",
-                    "manifest_sha256": "a" * 64,
-                }
-            }
-        }
+    def test_kubernetes_uses_verified_prewarmed_control_plane_version(self):
+        MirrorProfile.objects.create(
+            profile_id="kubernetes-v1.36.4-amd64-all-supported",
+            platform="kubernetes", exact_version="v1.36.4", architecture="amd64",
+            os_family="supported", os_release="pinned-by-manifest",
+            manifest_sha256="a" * 64, content_generation="a" * 64,
+            verification_state=MirrorProfile.VerificationState.READY,
+        )
 
         extra_vars_path = build_extra_vars_file(
             system_type=InstallationTemplate.SystemType.KUBERNETES,
@@ -335,6 +353,31 @@ class TopologyInventoryTests(TestCase):
         payload = json.loads(extra_vars_path.read_text(encoding="utf-8"))
 
         self.assertEqual(payload["kubeadm_kubernetes_version"], "v1.36.4")
+
+    @override_settings(
+        LINDEPLOY_MIRROR_ENABLED=True,
+        LINDEPLOY_MIRROR_CACHE_REQUIRED=True,
+        LINDEPLOY_KUBERNETES_PROFILE_ID="kubernetes-v9.9.9-amd64-all-supported",
+        LINDEPLOY_REGISTRY_MIRRORS={"registry.k8s.io": "https://mirror.internal:5001"},
+        LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP=False,
+        LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE="",
+        LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED=False,
+        LINDEPLOY_K3S_INSTALL_SCRIPT_URL="",
+        LINDEPLOY_K3S_CHANNEL_URL="",
+        LINDEPLOY_K3S_ARTIFACT_URL="",
+        LINDEPLOY_CALICO_MANIFEST_URL="",
+        LINDEPLOY_CONTAINERD_RPM_BASEURL="",
+        LINDEPLOY_CONTAINERD_RPM_GPGKEY="",
+        LINDEPLOY_CONTAINERD_APT_REPO_URL="",
+        LINDEPLOY_CONTAINERD_APT_KEY_URL="",
+        LINDEPLOY_KUBERNETES_RPM_BASEURL="",
+        LINDEPLOY_KUBERNETES_RPM_GPGKEY="",
+        LINDEPLOY_KUBERNETES_APT_REPO_URL="",
+        LINDEPLOY_KUBERNETES_APT_KEY_URL="",
+    )
+    def test_cache_required_refuses_missing_exact_profile(self):
+        with self.assertRaisesMessage(ValueError, "is not ready"):
+            build_extra_vars_file(system_type=InstallationTemplate.SystemType.KUBERNETES)
 
     @override_settings(
         LINDEPLOY_MIRROR_ENABLED=True,
@@ -1312,6 +1355,13 @@ class LaunchInstallationAutoModeTests(TestCase):
                 "deployment_mode": "manual",
                 "template_id": cleanup_template.id,
                 "system_type": "kubernetes",
+                "cluster_config": {
+                    "target_modification_approved": True,
+                    "cleanup_confirmation": "CLEAN kubernetes-cluster-01 ON "
+                    + ",".join(
+                        sorted((str(self.host.stable_id), str(self.host_two.stable_id)))
+                    ),
+                },
             },
             format="json",
         )
@@ -1347,6 +1397,13 @@ class LaunchInstallationAutoModeTests(TestCase):
                 "deployment_mode": "manual",
                 "template_id": cleanup_template.id,
                 "system_type": "k3s",
+                "cluster_config": {
+                    "target_modification_approved": True,
+                    "cleanup_confirmation": "CLEAN k3s-cluster-01 ON "
+                    + ",".join(
+                        sorted((str(self.host.stable_id), str(self.host_two.stable_id)))
+                    ),
+                },
             },
             format="json",
         )
@@ -1358,6 +1415,40 @@ class LaunchInstallationAutoModeTests(TestCase):
             "playbooks/test_launch_k3s_cleanup.yml",
         )
         self.assertEqual(installation.targets.count(), 2)
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
+    def test_cleanup_refuses_wrong_target_confirmation(self, select_template_mock, run_task_mock):
+        cleanup_template = InstallationTemplate.objects.create(
+            name="k8s-cleanup-safety-template",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            playbook_path="playbooks/test_launch_k8s_cleanup_safety.yml",
+            deployment_type=InstallationTemplate.DeploymentType.CLEANUP,
+        )
+        select_template_mock.return_value = {
+            "template": cleanup_template,
+            "strategy": "manual",
+            "detections": [],
+        }
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "host_ids": [self.host.id],
+                "deployment_mode": "manual",
+                "template_id": cleanup_template.id,
+                "system_type": "kubernetes",
+                "cluster_config": {
+                    "target_modification_approved": True,
+                    "cleanup_confirmation": "CLEAN wrong-target",
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cluster- and target-bound", response.json()["message"])
+        self.assertFalse(run_task_mock.delay.called)
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")

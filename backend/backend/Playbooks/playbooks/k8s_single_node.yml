@@ -4,10 +4,18 @@
   become: yes
   gather_facts: false
   strategy: free
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
   vars:
-    common_selinux_mode: permissive
-    common_firewalld_enabled: false
-    common_firewalld_state: stopped
+    common_selinux_mode: enforcing
+    common_firewalld_enabled: true
+    common_firewalld_state: started
+    common_firewalld_ports:
+      - 6443/tcp
+      - 10250/tcp
+    common_firewalld_sources:
+      - "{{ kubeadm_pod_network_cidr }}"
+      - "{{ kubeadm_service_cidr }}"
 
   pre_tasks:
     - name: Probe conflicting K3s installation artifacts
@@ -59,9 +67,15 @@
           - ansible_swaptotal_mb
 
   roles:
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: prepare
     - common
     - containerd
     - cni_prepull
     - kubernetes
     - kubeadm_init
     - cni
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: activate

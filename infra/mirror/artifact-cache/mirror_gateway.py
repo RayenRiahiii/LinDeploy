@@ -11,9 +11,13 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from cache_store import CacheIndex, CapacityError, atomic_json, atomic_write, parse_single_range
+
 
 CACHE_DIR = Path(os.getenv("MIRROR_CACHE_DIR", "/var/cache/lindeploy"))
 MAX_BYTES = int(os.getenv("MIRROR_CACHE_MAX_BYTES", str(12 * 1024**3)))
+RESERVED_FREE_BYTES = int(os.getenv("MIRROR_CACHE_RESERVED_FREE_BYTES", str(2 * 1024**3)))
+MAX_OBJECT_BYTES = int(os.getenv("MIRROR_CACHE_MAX_OBJECT_BYTES", str(4 * 1024**3)))
 UPSTREAM_TIMEOUT = int(os.getenv("MIRROR_UPSTREAM_TIMEOUT", "180"))
 METADATA_TTL = int(os.getenv("MIRROR_METADATA_TTL", "3600"))
 PAYLOAD_REVALIDATE_TTL = int(os.getenv("MIRROR_PAYLOAD_REVALIDATE_TTL", "300"))
@@ -34,15 +38,21 @@ ROUTES = {
     "deb.debian.org": "https://deb.debian.org/",
     "security.debian.org": "https://security.debian.org/",
 }
-LOCKS = {}
-LOCKS_GUARD = threading.Lock()
+LOCK_STRIPES = tuple(threading.RLock() for _ in range(64))
 REPOSITORY_GENERATION_DIR = CACHE_DIR / "repository-generations"
+CACHE_INDEX = CacheIndex(CACHE_DIR, MAX_BYTES, RESERVED_FREE_BYTES, MAX_OBJECT_BYTES)
+MAX_WORKERS = int(os.getenv("MIRROR_MAX_WORKERS", "32"))
+WORKER_SLOTS = threading.BoundedSemaphore(MAX_WORKERS)
 
 
 def cache_paths(url):
     key = hashlib.sha256(url.encode("utf-8")).hexdigest()
     directory = CACHE_DIR / key[:2]
     return directory / f"{key}.data", directory / f"{key}.json"
+
+
+def cache_key(url):
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
 def repository_metadata_locations(repomd_path):
@@ -82,8 +92,18 @@ def prefetch_repository_metadata(repomd_url, repomd_path):
         data_path, metadata_path = cache_paths(reference_url)
         with lock_for(reference_url):
             if data_path.is_file() and metadata_path.is_file():
-                continue
-            download(reference_url, data_path, metadata_path)
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            else:
+                metadata = download(reference_url, data_path, metadata_path)
+            expected = Path(urllib.parse.urlsplit(location).path).name.split("-", 1)[0]
+            if re_full_sha256(expected) and metadata.get("sha256") != expected:
+                data_path.unlink(missing_ok=True)
+                metadata_path.unlink(missing_ok=True)
+                raise ValueError(f"repository metadata checksum mismatch for {reference_url}")
+
+
+def re_full_sha256(value):
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value.lower())
 
 
 def repository_root(url):
@@ -112,14 +132,20 @@ def record_repository_generation(url, metadata):
     if generation_path is None:
         return
     generation_path.parent.mkdir(parents=True, exist_ok=True)
-    generation_path.write_text(
-        json.dumps(
-            {
-                "repository": repository_root(url),
-                "refreshed_at": int(metadata.get("cached_at", time.time())),
-            }
-        ),
-        encoding="utf-8",
+    atomic_json(
+        generation_path,
+        {
+            "repository": repository_root(url),
+            "refreshed_at": int(metadata.get("cached_at", time.time())),
+            "generation_id": metadata.get("sha256", ""),
+        },
+    )
+    referenced_metadata = []
+    if path.endswith("/repodata/repomd.xml"):
+        referenced_metadata = repository_metadata_locations(cache_paths(url)[0])
+    CACHE_INDEX.activate_repository_generation(
+        repository_root(url), metadata.get("sha256", ""),
+        {"repomd_url": url, "metadata": referenced_metadata},
     )
 
 
@@ -143,23 +169,11 @@ def payload_revalidation_due(url, metadata):
 
 
 def lock_for(url):
-    with LOCKS_GUARD:
-        return LOCKS.setdefault(url, threading.Lock())
+    return LOCK_STRIPES[int(cache_key(url)[:8], 16) % len(LOCK_STRIPES)]
 
 
 def prune_cache():
-    files = sorted(
-        CACHE_DIR.glob("*/*.data"),
-        key=lambda item: item.stat().st_mtime,
-    )
-    total = sum(item.stat().st_size for item in files)
-    for item in files:
-        if total <= MAX_BYTES:
-            break
-        size = item.stat().st_size
-        item.unlink(missing_ok=True)
-        item.with_suffix(".json").unlink(missing_ok=True)
-        total -= size
+    CACHE_INDEX.prune()
 
 
 def download(url, data_path, metadata_path):
@@ -170,30 +184,41 @@ def download(url, data_path, metadata_path):
             "Accept": "*/*",
         },
     )
-    data_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = data_path.with_suffix(".part")
-    digest = hashlib.sha256()
     with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT) as response:
-        with temporary_path.open("wb") as output:
+        expected_size = int(response.headers.get("Content-Length", 0) or 0)
+        CACHE_INDEX.admit(expected_size)
+        digest = hashlib.sha256()
+
+        def stream_to(output):
             while chunk := response.read(1024 * 1024):
                 output.write(chunk)
                 digest.update(chunk)
+                if output.tell() > MAX_OBJECT_BYTES:
+                    raise CapacityError(f"object exceeded {MAX_OBJECT_BYTES} bytes")
+
+        atomic_write(data_path, stream_to)
         metadata = {
             "source_url": url,
             "resolved_url": response.geturl(),
             "content_type": response.headers.get("Content-Type", "application/octet-stream"),
-            "content_length": temporary_path.stat().st_size,
+            "content_length": data_path.stat().st_size,
             "etag": response.headers.get("ETag", ""),
             "last_modified": response.headers.get("Last-Modified", ""),
             "sha256": digest.hexdigest(),
+            "trusted_digest": "",
+            "verification_status": "computed-only",
+            "provenance": {"upstream": response.geturl(), "tls_verified": True},
             "cached_at": int(time.time()),
         }
     if urllib.parse.urlsplit(url).path.endswith("/repodata/repomd.xml"):
         # Never expose a new repository generation before all metadata files
         # referenced by repomd.xml are safely available from the local cache.
-        prefetch_repository_metadata(url, temporary_path)
-    temporary_path.replace(data_path)
-    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        prefetch_repository_metadata(url, data_path)
+    atomic_json(metadata_path, metadata)
+    CACHE_INDEX.register(
+        cache_key(url), url, data_path, metadata_path, metadata,
+        content_class="security-metadata" if is_repository_metadata(url) else "payload",
+    )
     prune_cache()
     return metadata
 
@@ -217,7 +242,8 @@ def revalidate_payload(url, data_path, metadata_path, metadata):
     )
     if unchanged:
         metadata["cached_at"] = int(time.time())
-        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        atomic_json(metadata_path, metadata)
+        CACHE_INDEX.register(cache_key(url), url, data_path, metadata_path, metadata)
         return metadata, "REVALIDATED"
     return download(url, data_path, metadata_path), "REFRESH"
 
@@ -260,6 +286,28 @@ class MirrorHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b"ok\n")
             return
 
+        if parsed.path == "/readyz":
+            payload = json.dumps(CACHE_INDEX.readiness()).encode("utf-8")
+            status = HTTPStatus.OK if json.loads(payload)["ready"] else HTTPStatus.SERVICE_UNAVAILABLE
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            if send_body:
+                self.wfile.write(payload)
+            return
+
+        if parsed.path == "/metrics":
+            metrics = CACHE_INDEX.metrics()
+            body = "".join(f"lindeploy_mirror_{key} {value}\n" for key, value in sorted(metrics.items())).encode()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if send_body:
+                self.wfile.write(body)
+            return
+
         if parsed.path.startswith("/cache/channel-version/"):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Cache-Control", "public, max-age=300")
@@ -277,6 +325,9 @@ class MirrorHandler(BaseHTTPRequestHandler):
 
         route = parts[1]
         suffix = parts[2] if len(parts) == 3 else ""
+        if len(parsed.query) > 512 or parsed.query.count("&") > 7:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Query exceeds mirror policy")
+            return
         # Repository paths such as ``core:/stable:/v1.36/rpm`` contain a
         # colon. urljoin treats that prefix as a URI scheme and drops the
         # configured upstream host, so join path components explicitly.
@@ -289,6 +340,11 @@ class MirrorHandler(BaseHTTPRequestHandler):
             with lock_for(upstream_url):
                 if data_path.is_file() and metadata_path.is_file():
                     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    if CACHE_INDEX.get(cache_key(upstream_url)) is None:
+                        CACHE_INDEX.register(
+                            cache_key(upstream_url), upstream_url, data_path, metadata_path, metadata,
+                            content_class="security-metadata" if is_repository_metadata(upstream_url) else "payload",
+                        )
                     if payload_revalidation_due(upstream_url, metadata):
                         try:
                             metadata, cache_status = revalidate_payload(
@@ -298,6 +354,8 @@ class MirrorHandler(BaseHTTPRequestHandler):
                                 metadata,
                             )
                         except Exception:
+                            if is_repository_metadata(upstream_url):
+                                raise
                             cache_status = "STALE"
                     elif cache_is_fresh(upstream_url, metadata):
                         record_repository_generation(upstream_url, metadata)
@@ -308,10 +366,11 @@ class MirrorHandler(BaseHTTPRequestHandler):
                             record_repository_generation(upstream_url, metadata)
                             cache_status = "REFRESH"
                         except Exception:
-                            # Keep installations operational during a temporary
-                            # upstream outage by serving the last verified copy.
+                            if is_repository_metadata(upstream_url):
+                                raise
+                            # Immutable payloads may use their last verified copy.
                             cache_status = "STALE"
-                    os.utime(data_path, None)
+                    CACHE_INDEX.touch(cache_key(upstream_url))
                 else:
                     metadata = download(upstream_url, data_path, metadata_path)
                     record_repository_generation(upstream_url, metadata)
@@ -320,6 +379,7 @@ class MirrorHandler(BaseHTTPRequestHandler):
                 self.serve_k3s_channel_redirect(metadata)
                 return
             self.serve_file(data_path, metadata, cache_status, send_body)
+            CACHE_INDEX.increment(cache_status.lower())
         except urllib.error.HTTPError as exc:
             self.send_error(exc.code, f"Upstream returned {exc.code}")
         except (BrokenPipeError, ConnectionResetError):
@@ -374,51 +434,97 @@ class MirrorHandler(BaseHTTPRequestHandler):
 
     def serve_file(self, path, metadata, cache_status, send_body):
         size = path.stat().st_size
-        start, end = 0, size - 1
+        start, end = 0, max(size - 1, 0)
         status = HTTPStatus.OK
+        etag = metadata.get("etag", "")
+        if etag and self.headers.get("If-None-Match") == etag:
+            self.send_response(HTTPStatus.NOT_MODIFIED)
+            self.send_header("ETag", etag)
+            self.send_header("X-LinDeploy-Cache", cache_status)
+            self.end_headers()
+            return
         range_header = self.headers.get("Range", "")
-        if range_header.startswith("bytes="):
-            requested = range_header[6:].split(",", 1)[0]
-            first, _, last = requested.partition("-")
-            start = int(first) if first else 0
-            end = int(last) if last else size - 1
-            end = min(end, size - 1)
-            if start > end:
-                self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
-                return
+        try:
+            parsed_range = parse_single_range(range_header, size)
+        except (ValueError, TypeError):
+            self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.end_headers()
+            return
+        if parsed_range:
+            start, end = parsed_range
             status = HTTPStatus.PARTIAL_CONTENT
 
-        length = end - start + 1
+        length = 0 if size == 0 else end - start + 1
         self.send_response(status)
         self.send_header("Content-Type", metadata.get("content_type", "application/octet-stream"))
         self.send_header("Content-Length", str(length))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("X-LinDeploy-Cache", cache_status)
         self.send_header("X-Content-SHA256", metadata.get("sha256", ""))
+        self.send_header("X-LinDeploy-Verification", metadata.get("verification_status", "computed-only"))
+        self.send_header("X-LinDeploy-Profile", metadata.get("profile_id", ""))
+        self.send_header("Age", str(max(0, int(time.time()) - int(metadata.get("cached_at", 0)))))
+        if cache_status == "STALE":
+            self.send_header("Warning", '110 - "Response is stale"')
+        if etag:
+            self.send_header("ETag", etag)
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
 
         if not send_body:
             return
-        with path.open("rb") as source:
-            source.seek(start)
-            remaining = length
-            while remaining:
-                chunk = source.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    break
-                try:
-                    self.wfile.write(chunk)
-                except (BrokenPipeError, ConnectionResetError):
-                    return
-                remaining -= len(chunk)
+        with CACHE_INDEX.serving(cache_key(metadata["source_url"])):
+            with path.open("rb") as source:
+                source.seek(start)
+                remaining = length
+                while remaining:
+                    chunk = source.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    try:
+                        self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                    remaining -= len(chunk)
 
     def log_message(self, message, *args):
         print(f"{self.client_address[0]} {message % args}", flush=True)
 
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def process_request(self, request, client_address):
+        if not WORKER_SLOTS.acquire(blocking=False):
+            CACHE_INDEX.increment("rejected_concurrency")
+            try:
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Content-Type: text/plain\r\n"
+                    b"Content-Length: 26\r\n"
+                    b"Retry-After: 2\r\n"
+                    b"Connection: close\r\n\r\n"
+                    b"mirror capacity exhausted\n"
+                )
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            WORKER_SLOTS.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            WORKER_SLOTS.release()
+
+
 if __name__ == "__main__":
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     prune_cache()
-    ThreadingHTTPServer(("0.0.0.0", 8080), MirrorHandler).serve_forever()
+    BoundedThreadingHTTPServer(("0.0.0.0", 8080), MirrorHandler).serve_forever()

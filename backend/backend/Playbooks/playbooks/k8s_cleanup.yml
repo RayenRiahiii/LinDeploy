@@ -4,6 +4,8 @@
   become: yes
   gather_facts: false
   strategy: free
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
 
   pre_tasks:
     - name: Gather minimal cleanup facts
@@ -18,4 +20,11 @@
           - ansible_default_ipv6
 
   roles:
-    - kubernetes_cleanup
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: validate_cleanup
+    - role: kubernetes_cleanup
+      when: lindeploy_cleanup_required | bool
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: finalize_cleanup

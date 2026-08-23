@@ -1,0 +1,16 @@
+---
+argument_specs:
+  main:
+    short_description: Install exact Kubernetes node packages
+    options:
+      kubernetes_version_minor:
+        type: str
+        required: true
+      kubernetes_packages_redhat:
+        type: list
+        elements: str
+        required: true
+      kubernetes_packages_debian:
+        type: list
+        elements: str
+        required: true

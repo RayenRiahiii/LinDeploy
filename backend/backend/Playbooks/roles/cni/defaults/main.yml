@@ -7,6 +7,7 @@ calico_version: v3.32.0
 calico_manifest_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
 calico_manifest_upstream_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
 calico_manifest_path: /root/calico.yaml
+calico_manifest_checksum: ""
 calico_download_timeout: 30
 calico_download_retries: 3
 calico_download_retry_delay: 3

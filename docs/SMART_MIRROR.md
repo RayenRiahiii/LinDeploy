@@ -1,5 +1,8 @@
 # LinDeploy Smart LAN Mirror
 
+> The LAN cache and the permanent OpenShift disconnected mirror have separate
+> storage and retention lifecycles. Never point them at the same volume.
+
 ## Goal
 
 The mirror reduces repeated Internet downloads without changing Kubernetes or
@@ -146,6 +149,99 @@ the same pinned versions. Success proves that the required objects are cached.
 Changing Kubernetes, K3s, Calico, or package versions introduces new objects
 that must be warmed before a disconnected workshop.
 
+## Immutable profiles and readiness
+
+The legacy `prewarm-state.json` remains a display/PowerShell compatibility
+file. Authoritative readiness is now stored in Django as immutable
+`MirrorProfile` records and durable `MirrorPrewarmJob` transitions. A profile
+contains the exact platform version, architecture, OS scope, packages, OCI
+objects, artifacts, hashes, provenance, total size and content-generation ID.
+
+Set the exact requested profiles in `backend/.env`:
+
+```dotenv
+LINDEPLOY_KUBERNETES_PROFILE_ID=kubernetes-v1.36.3-amd64-all-supported
+LINDEPLOY_K3S_PROFILE_ID=k3s-v1.36.3+k3s1-amd64-all-supported
+LINDEPLOY_MIRROR_CACHE_REQUIRED=True
+```
+
+With cache-required mode enabled, an installation is refused before Ansible is
+started unless the exact profile is `ready`. Online fallback remains available
+when this setting is false. A manifest filename alone never proves readiness:
+prewarm verifies downloaded objects and records their hashes and sizes; the
+backend then validates the manifest hash, identity, asset count, and each
+recorded digest/size before committing profile and job state transactionally.
+
+## Cache storage and concurrency
+
+Raw artifacts are indexed in `/var/cache/lindeploy/index.sqlite3` using SQLite
+WAL and full synchronous commits. Data and metadata are written to unique
+temporary files, flushed with `fsync`, and atomically renamed. Sixty-four
+striped locks bound memory use. SQLite coordinates eviction across processes;
+objects that are pinned, downloading, or actively served are not evicted.
+
+Capacity is admitted before a download when `Content-Length` is available and
+enforced while streaming. Configure:
+
+```dotenv
+MIRROR_CACHE_MAX_BYTES=12884901888
+MIRROR_CACHE_RESERVED_FREE_BYTES=2147483648
+MIRROR_CACHE_MAX_OBJECT_BYTES=4294967296
+MIRROR_MAX_WORKERS=32
+```
+
+Use this planning formula:
+
+```text
+required filesystem = pinned profiles + working generation + retention headroom
+                    + reserved free space + 20% operational margin
+```
+
+OpenShift requires a separately sized permanent registry, normally hundreds of
+GiB; it is not included in this disposable-cache formula.
+
+## HTTP and network policy
+
+The gateway supports normal, open-ended and suffix byte ranges; invalid or
+multi-ranges return `416`. Responses expose cache age/status, local verification
+status and profile ID. Security metadata is never served stale after a failed
+refresh. Immutable payloads may be served stale during a temporary upstream
+failure and carry HTTP `Warning: 110`.
+
+Nginx restricts access to RFC1918 and Tailscale target ranges, limits requests
+and connections, and bounds headers/timeouts. Adapt both `nginx.conf` and
+`configure-firewall.ps1` when using a different management CIDR. Containers
+use dropped capabilities, no-new-privileges, bounded PID/CPU/memory and rotated
+logs; writable paths are explicit volumes or tmpfs.
+
+## Migration from the legacy cache
+
+1. Back up `infra/mirror/runtime` and record active profile versions.
+2. Run Django migrations; this creates profile/job tables without deleting the
+   legacy JSON state.
+3. Rebuild the artifact-cache image so `cache_store.py` is included.
+4. Start the stack and call `/readyz`; existing cache files are indexed lazily
+   on first access.
+5. Run prewarm once per required exact profile. Only then enable
+   `LINDEPLOY_MIRROR_CACHE_REQUIRED=True`.
+
+## Operational runbook
+
+- **Prewarm:** trigger once, retain the returned job ID, and wait for `ready`.
+  Duplicate requests reuse the active job.
+- **Verify:** check `/healthz`, `/readyz`, `/metrics`, profile status, free space,
+  then install on a disposable target with Internet egress blocked.
+- **Eviction:** unpin an obsolete profile first; active generations and served
+  objects are protected.
+- **Backup:** back up profile manifests, certificates, configuration and Django
+  DB. Raw cache payloads are reconstructable.
+- **Recovery:** preserve the failed job/correlation ID and `prewarm.log`; remove
+  only quarantined temporary files, restart, then rerun the same profile.
+- **Certificate rotation:** issue the new certificate, distribute/trust its CA,
+  replace gateway files atomically, restart nginx, and test every target LAN.
+- **Cache reset:** stop the stack, replace only the disposable artifact volume,
+  restart, verify `/readyz`, invalidate affected profiles and prewarm again.
+
 ## Important limitation
 
 This is a pull-through cache, not a guaranteed fully air-gapped bundle. A fully
@@ -163,10 +259,10 @@ repositories used by supported target operating systems:
 - the versioned Kubernetes repository at `pkgs.k8s.io`.
 
 Package indexes use a configurable one-hour TTL. Immutable package payloads are
-retained until the cache size policy evicts the oldest content. A stale verified
-index may be served during a temporary upstream outage, but RPM GPG and APT
-Release signature verification remain the responsibility of DNF/APT and must
-never be disabled.
+retained until the cache size policy evicts the oldest content. Repository and
+signature metadata is never served stale after a failed refresh. RPM GPG and
+APT Release signature verification remain the responsibility of DNF/APT and
+must never be disabled.
 
 The cache is progressive for package payloads, but RPM metadata snapshots are
 atomic. A successful `/cache-ready/` response proves that the repository index
