@@ -1,0 +1,27 @@
+---
+argument_specs:
+  main:
+    short_description: Validate and persist LinDeploy target ownership
+    options:
+      lindeploy_ownership_action:
+        type: str
+        choices: [prepare, activate, validate_cleanup, finalize_cleanup]
+        required: true
+      lindeploy_ownership_platform:
+        type: str
+        choices: [kubernetes, k3s]
+        required: true
+      lindeploy_target_id:
+        type: str
+        required: true
+      lindeploy_ownership_cluster_id:
+        type: str
+        required: true
+      lindeploy_ownership_managed_resources:
+        type: list
+        elements: str
+        default: []
+      lindeploy_ownership_required_resources:
+        type: list
+        elements: str
+        default: []

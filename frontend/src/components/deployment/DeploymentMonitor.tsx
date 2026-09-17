@@ -1,0 +1,390 @@
+import {
+  Badge,
+  Button,
+  Card,
+  Group,
+  Modal,
+  Progress,
+  RingProgress,
+  ScrollArea,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+} from "@mantine/core";
+import {
+  IconActivity,
+  IconAlertTriangle,
+  IconCheck,
+  IconChevronDown,
+  IconChevronUp,
+  IconClockHour4,
+  IconPlayerStop,
+  IconTerminal2,
+} from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  type ExecutionStage,
+  formatDuration,
+  formatPhaseLabel,
+  getStatusColor,
+} from "../../features/executions/presentation";
+
+type LiveExecution = {
+  status?: string;
+  phase?: string;
+  title: string;
+  summaryMessage?: string;
+  currentPlay?: string;
+  currentRole?: string;
+  currentTask?: string;
+  seenTasks: number;
+  completedTasks: number;
+  totalTasks: number;
+  progress: number;
+  elapsedSeconds: number;
+  installationId?: number | null;
+  recentEvents?: Array<{
+    kind: "play_started" | "task_started" | "task_result";
+    play?: string;
+    role?: string;
+    task?: string;
+    host?: string;
+    status?: string;
+    line?: string;
+    timestamp?: string;
+  }>;
+  outputLines?: Array<{
+    channel: string;
+    line: string;
+    timestamp?: string;
+  }>;
+};
+
+type LastExecution = {
+  status?: string;
+  message?: string;
+  durationSeconds?: number | null;
+  installationId?: number | null;
+};
+
+type DeploymentMonitorProps = {
+  loading: boolean;
+  live: LiveExecution;
+  result?: LastExecution;
+  activeStage: ExecutionStage;
+  stages: ExecutionStage[];
+  pipelineStageIndex: number;
+  actions?: ReactNode;
+  onCancel?: () => void;
+};
+
+export default function DeploymentMonitor({
+  loading,
+  live,
+  result,
+  activeStage,
+  stages,
+  pipelineStageIndex,
+  actions,
+  onCancel,
+}: DeploymentMonitorProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const status = loading ? live.status : result?.status;
+  const statusColor = getStatusColor(status) === "gray" ? "teal" : getStatusColor(status);
+  const progress = loading ? live.progress : result ? 100 : 0;
+  const duration = loading ? live.elapsedSeconds : result?.durationSeconds;
+  const installationId = loading ? live.installationId : result?.installationId;
+  const recentEvents = useMemo(() => live.recentEvents || [], [live.recentEvents]);
+  const outputLines = useMemo(() => live.outputLines || [], [live.outputLines]);
+  const outputViewportRef = useRef<HTMLDivElement>(null);
+  const hostActivity = useMemo(() => {
+    const hosts = new Map<string, { status: string; results: number; task: string }>();
+
+    recentEvents.forEach((event) => {
+      if (!event.host) {
+        return;
+      }
+
+      const current = hosts.get(event.host) || { status: "running", results: 0, task: "" };
+      hosts.set(event.host, {
+        status: event.status || current.status,
+        results: current.results + (event.kind === "task_result" ? 1 : 0),
+        task: event.task || current.task,
+      });
+    });
+
+    return Array.from(hosts.entries());
+  }, [recentEvents]);
+
+  function eventColor(eventStatus?: string) {
+    if (eventStatus === "failed" || eventStatus === "unreachable") return "red";
+    if (eventStatus === "ok" || eventStatus === "changed") return "teal";
+    if (eventStatus === "skipping") return "gray";
+    return "blue";
+  }
+
+  useEffect(() => {
+    if (!loading) {
+      setDetailsOpen(false);
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    if (!detailsOpen || !outputViewportRef.current) {
+      return;
+    }
+
+    outputViewportRef.current.scrollTop = outputViewportRef.current.scrollHeight;
+  }, [detailsOpen, outputLines]);
+
+  return (
+    <Card className="console-panel" padding="lg">
+      <Stack gap="lg">
+        <Group justify="space-between" align="center">
+          <div>
+            <Title order={3}>Deployment Monitor</Title>
+            <Text size="sm" c="dimmed" mt={4}>
+              Live progress and pipeline status for the current installer run.
+            </Text>
+          </div>
+          <Group className="monitor-header-actions" gap="sm" justify="flex-end">
+            <Badge color={loading ? "red" : getStatusColor(result?.status)} variant="light">
+              {loading ? "running" : `last run ${result?.status ?? "idle"}`}
+            </Badge>
+            {loading && onCancel && (
+              <Button
+                color="red"
+                variant="light"
+                size="xs"
+                onClick={onCancel}
+                leftSection={<IconPlayerStop size={14} />}
+              >
+                Cancel Installation
+              </Button>
+            )}
+            {!loading && actions}
+          </Group>
+        </Group>
+
+        <div className="monitor-layout">
+          <div className="monitor-progress-panel">
+            <Group justify="space-between" align="flex-start">
+              <div className="progress-metric-shell">
+                <RingProgress
+                  size={132}
+                  thickness={10}
+                  roundCaps
+                  sections={[{ value: progress, color: statusColor }]}
+                  label={
+                    <Stack gap={0} align="center" justify="center">
+                      <Text size="xl" fw={800}>{progress}%</Text>
+                      <Text size="11px" c="dimmed">{formatDuration(duration)}</Text>
+                    </Stack>
+                  }
+                />
+              </div>
+
+              <div className="monitor-details">
+                <Title order={4}>{loading ? live.title : "Last Execution Result"}</Title>
+                <Text c="dimmed" size="sm" mt={4}>
+                  {loading ? activeStage.label : result?.message || "No execution yet."}
+                </Text>
+                <Text c="dimmed" size="sm">
+                  {loading
+                    ? activeStage.detail
+                    : result?.status === "success"
+                      ? "The installer completed and the target cluster is ready for validation."
+                      : result?.status === "failed"
+                        ? "The installer stopped before cluster validation completed."
+                        : "Launch a playbook to start tracking pipeline execution."}
+                </Text>
+
+                {loading && live.summaryMessage && <Text size="sm" mt={6}>{live.summaryMessage}</Text>}
+
+                {loading && (live.currentPlay || live.currentTask) && (
+                  <div className="monitor-current-task">
+                    <Group gap="sm" wrap="nowrap" align="flex-start">
+                      <ThemeIcon color="teal" variant="light" radius="xl" size={30}>
+                        <IconActivity size={16} />
+                      </ThemeIcon>
+                      <div>
+                        <Text size="xs" c="dimmed" fw={700}>CURRENT TASK</Text>
+                        <Text size="sm" fw={800}>{live.currentTask || live.currentPlay}</Text>
+                        {live.currentRole && <Text size="xs" c="dimmed">Role: {live.currentRole}</Text>}
+                      </div>
+                    </Group>
+                  </div>
+                )}
+
+                {loading && (live.seenTasks > 0 || live.completedTasks > 0) && (
+                  <Text size="sm" mt={6}>
+                    Completed tasks: {live.completedTasks}
+                    {live.totalTasks > 0 ? ` / ${live.totalTasks} planned` : ` | ${live.seenTasks} observed`}
+                  </Text>
+                )}
+
+                <Group gap="xs" mt={10}>
+                  {status && (
+                    <Badge color={getStatusColor(status)} variant="light">
+                      {loading ? `${status} | ${formatPhaseLabel(stages, live.phase)}` : status}
+                    </Badge>
+                  )}
+                  {installationId && (
+                    <Badge color="gray" variant="outline">installation #{installationId}</Badge>
+                  )}
+                  {loading && (
+                    <Button
+                      variant="subtle"
+                      size="compact-sm"
+                      onClick={() => setDetailsOpen((open) => !open)}
+                      leftSection={<IconTerminal2 size={14} />}
+                      rightSection={detailsOpen ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                    >
+                      {detailsOpen ? "Hide job output" : "View job output"}
+                    </Button>
+                  )}
+                </Group>
+              </div>
+
+              <Badge color="red" variant="filled">elapsed: {formatDuration(duration)}</Badge>
+            </Group>
+
+            <Progress
+              mt="md"
+              value={progress}
+              color={statusColor}
+              size="lg"
+              radius="xl"
+              animated={loading}
+            />
+
+            <Modal
+              opened={loading && detailsOpen}
+              onClose={() => setDetailsOpen(false)}
+              title="Live Playbook Job Output"
+              size="78rem"
+              centered
+              classNames={{ content: "job-output-modal-content", header: "terminal-modal-header" }}
+            >
+              <div className="monitor-detail-drawer monitor-detail-modal-body">
+                <Group justify="space-between" align="center" mb="md">
+                  <div>
+                    <Text fw={800}>Live job output</Text>
+                    <Text size="xs" c="dimmed">Ansible activity reported by the controller, similar to an AAP job stream.</Text>
+                  </div>
+                  <Badge color="gray" variant="outline">{recentEvents.length} recent events</Badge>
+                </Group>
+
+                <div className="monitor-detail-grid">
+                  <div>
+                    <Text size="xs" c="dimmed" fw={700}>PLAY</Text>
+                    <Text size="sm" fw={600}>{live.currentPlay || "Preparing execution"}</Text>
+                  </div>
+                  <div>
+                    <Text size="xs" c="dimmed" fw={700}>ROLE</Text>
+                    <Text size="sm" fw={600}>{live.currentRole || "Waiting for role context"}</Text>
+                  </div>
+                  <div>
+                    <Text size="xs" c="dimmed" fw={700}>TASKS</Text>
+                    <Text size="sm" fw={600}>
+                      {live.completedTasks} completed
+                      {live.totalTasks > 0 ? ` / ${live.totalTasks} planned` : ` / ${live.seenTasks} observed`}
+                    </Text>
+                  </div>
+                </div>
+
+                {hostActivity.length > 0 && (
+                  <div className="monitor-host-strip">
+                    {hostActivity.map(([host, activity]) => (
+                      <div className="monitor-host-status" key={host}>
+                        <ThemeIcon color={eventColor(activity.status)} variant="light" radius="xl" size={26}>
+                          {activity.status === "failed" || activity.status === "unreachable"
+                            ? <IconAlertTriangle size={14} />
+                            : <IconCheck size={14} />}
+                        </ThemeIcon>
+                        <div>
+                          <Text size="sm" fw={700}>{host}</Text>
+                          <Text size="xs" c="dimmed">{activity.status} · {activity.results} updates</Text>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="monitor-job-stream">
+                  <div className="monitor-job-stream-header">
+                    <span>ANSIBLE PLAYBOOK OUTPUT</span>
+                    <span className="monitor-job-stream-count">
+                      {outputLines.length} live lines
+                    </span>
+                  </div>
+                  <ScrollArea
+                    h={440}
+                    type="auto"
+                    offsetScrollbars
+                    viewportRef={outputViewportRef}
+                    className="monitor-terminal-scroll"
+                  >
+                    {outputLines.length > 0 ? (
+                      <pre className="monitor-terminal-output" aria-live="polite">
+                        {outputLines.map((entry, index) => (
+                          <span
+                            className={entry.channel === "stderr" ? "is-stderr" : undefined}
+                            key={`${entry.timestamp || "line"}-${index}`}
+                          >
+                            {entry.line}{"\n"}
+                          </span>
+                        ))}
+                      </pre>
+                    ) : (
+                      <div className="monitor-job-empty">
+                        <IconTerminal2 size={24} />
+                        <Text size="sm" c="dimmed">Waiting for Ansible to produce job output.</Text>
+                      </div>
+                    )}
+                  </ScrollArea>
+                </div>
+              </div>
+            </Modal>
+          </div>
+
+          <div className="monitor-pipeline-panel">
+            <Text fw={600} mb="sm">Pipeline</Text>
+            <Stack gap="sm">
+              {stages.map((stage, index) => {
+                const completed =
+                  pipelineStageIndex >= 0 &&
+                  ((!loading && result?.status === "success" && index <= pipelineStageIndex) ||
+                    (loading &&
+                      (index < pipelineStageIndex ||
+                        (live.progress >= 100 && index <= pipelineStageIndex))));
+                const current = loading && index === pipelineStageIndex;
+
+                return (
+                  <div
+                    key={stage.phase}
+                    className={`monitor-stage-row${completed ? " is-completed" : ""}${current ? " is-current" : ""}`}
+                  >
+                    <ThemeIcon
+                      size="sm"
+                      radius="xl"
+                      color={completed ? "teal" : current ? "red" : "gray"}
+                      variant={completed || current ? "filled" : "light"}
+                    >
+                      {completed ? <IconCheck size={12} /> : <IconClockHour4 size={12} />}
+                    </ThemeIcon>
+                    <div>
+                      <Text fw={current ? 700 : 600} size="sm">{stage.label}</Text>
+                      <Text size="xs" c="dimmed">{stage.detail}</Text>
+                    </div>
+                  </div>
+                );
+              })}
+            </Stack>
+          </div>
+        </div>
+      </Stack>
+    </Card>
+  );
+}

@@ -1,0 +1,13 @@
+---
+lindeploy_ownership_root: /var/lib/lindeploy/ownership
+lindeploy_ownership_platform: ""
+lindeploy_ownership_action: validate
+lindeploy_ownership_cluster_id: >-
+  {{ lindeploy_cluster_name | default(cluster_name | default(inventory_hostname)) }}
+lindeploy_ownership_manifest_path: >-
+  {{ lindeploy_ownership_root }}/{{ lindeploy_ownership_platform }}.json
+lindeploy_ownership_managed_resources: []
+lindeploy_ownership_required_resources: []
+lindeploy_release_profile_id: ""
+lindeploy_release_profile_mode: production
+lindeploy_emergency_force_enabled: false

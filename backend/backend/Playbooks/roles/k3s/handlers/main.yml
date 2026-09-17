@@ -1,0 +1,22 @@
+---
+- name: Reload systemd
+  command: systemctl daemon-reload
+  changed_when: false
+
+- name: Restart k3s
+  systemd_service:
+    name: "{{ k3s_service_name }}"
+    state: restarted
+    no_block: true
+  when: >-
+    (k3s_restart_required | default(false) | bool)
+    or (k3s_airgap_archive_download.changed | default(false) | bool)
+
+- name: Reload firewalld
+  command:
+    argv:
+      - timeout
+      - "{{ common_firewalld_command_timeout | default(20) | string }}"
+      - firewall-cmd
+      - --reload
+  changed_when: false

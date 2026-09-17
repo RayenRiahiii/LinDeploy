@@ -1,0 +1,15 @@
+---
+- name: Restart NetworkManager
+  systemd_service:
+    name: "{{ kubernetes_cleanup_networkmanager_service_name }}"
+    state: restarted
+    no_block: true
+  failed_when: false
+
+- name: Restart containerd
+  systemd_service:
+    name: "{{ kubernetes_cleanup_containerd_service_name }}"
+    state: restarted
+  failed_when: false
+  when:
+    - kubernetes_cleanup_keep_containerd | bool

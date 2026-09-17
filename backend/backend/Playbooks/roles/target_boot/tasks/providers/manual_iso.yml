@@ -1,0 +1,28 @@
+---
+- name: Store the manual boot state
+  ansible.builtin.set_fact:
+    sno_manual_action_required: >-
+      {{ not (manual_boot_confirmed | default(false) | bool) }}
+    target_boot_performed: false
+
+- name: Report the manual ISO instructions
+  ansible.builtin.debug:
+    msg:
+      - "Target provider: manual ISO"
+      - "Discovery ISO: {{ discovery_iso_path }}"
+      - Mount this ISO using physical media or the server console.
+      - Boot the target from the ISO.
+      - Keep the configured target disk as the normal first boot device.
+      - >-
+        After booting, rerun with:
+        -e manual_boot_confirmed=true
+      - The playbook did not start or modify the target machine.
+  when: sno_manual_action_required | bool
+
+- name: Accept the manual boot confirmation
+  ansible.builtin.debug:
+    msg:
+      - Manual discovery ISO boot was confirmed.
+      - The workflow can continue with Assisted Installer host discovery.
+      - No disk has been selected or erased yet.
+  when: not (sno_manual_action_required | bool)

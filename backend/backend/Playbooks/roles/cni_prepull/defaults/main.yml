@@ -1,0 +1,13 @@
+---
+calico_version: v3.32.0
+calico_image_registry: quay.io
+calico_prepull_images: true
+calico_prepull_mode: missing
+calico_image_pull_retries: 2
+calico_image_pull_retry_delay: 5
+calico_image_pull_timeout: 600
+calico_image_pull_poll_interval: 5
+calico_images:
+  - "{{ calico_image_registry }}/calico/cni:{{ calico_version }}"
+  - "{{ calico_image_registry }}/calico/node:{{ calico_version }}"
+  - "{{ calico_image_registry }}/calico/kube-controllers:{{ calico_version }}"

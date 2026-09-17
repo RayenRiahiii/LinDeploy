@@ -1,0 +1,11 @@
+---
+- name: Prepare Kubernetes Node Baseline
+  hosts: selected_hosts
+  become: yes
+  strategy: free
+
+  roles:
+    - common
+    - containerd
+    - kubernetes
+    - cni_prepull

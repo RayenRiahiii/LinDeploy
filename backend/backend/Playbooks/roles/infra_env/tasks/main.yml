@@ -1,0 +1,66 @@
+---
+- name: Require discovery environment variables
+  ansible.builtin.assert:
+    that:
+      - infra_env_name is defined
+      - infra_env_name | length > 0
+      - discovery_image_type is defined
+      - discovery_iso_path is defined
+      - discovery_iso_path | length > 0
+      - sno_static_network_enabled is defined
+      - sno_interface_name is defined
+      - sno_interface_name | length > 0
+    fail_msg: >-
+      The infrastructure environment and discovery ISO variables
+      must be defined.
+
+- name: Validate the discovery image type
+  ansible.builtin.assert:
+    that:
+      - discovery_image_type in ['full-iso', 'minimal-iso']
+    fail_msg: >-
+      discovery_image_type must be full-iso or minimal-iso.
+
+- name: Render the planned static network configuration
+  ansible.builtin.set_fact:
+    planned_static_network_yaml: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'sno-static-network.yml.j2'
+        )
+      }}
+  when: sno_static_network_enabled | bool
+  no_log: true
+
+- name: Validate the rendered static network configuration
+  ansible.builtin.assert:
+    that:
+      - planned_static_network_yaml | default('') | trim | length > 0
+    fail_msg: The static network template produced an empty configuration.
+  when: sno_static_network_enabled | bool
+
+- name: Require a cluster identifier before apply mode
+  ansible.builtin.assert:
+    that:
+      - sno_cluster_id | default('') | length > 0
+    fail_msg: >-
+      Apply mode requires an existing or newly created cluster identifier.
+  when: automation_mode == 'apply'
+
+- name: Create or reuse the InfraEnv in apply mode
+  ansible.builtin.include_tasks: apply.yml
+  when: automation_mode == 'apply'
+
+- name: Report the planned discovery environment
+  ansible.builtin.debug:
+    msg:
+      - "Infrastructure environment: {{ infra_env_name }}"
+      - "Discovery image type: {{ discovery_image_type }}"
+      - "Discovery ISO destination: {{ discovery_iso_path }}"
+      - "Static network enabled: {{ sno_static_network_enabled }}"
+      - "Target MAC address: {{ sno_mac_address }}"
+      - "Target IP address: {{ sno_ip_address }}/{{ sno_prefix_length }}"
+      - "Automation mode: {{ automation_mode }}"
+      - "No InfraEnv or discovery ISO was created during this plan run."
+  when: automation_mode == 'plan'

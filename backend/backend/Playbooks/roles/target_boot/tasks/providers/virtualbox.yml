@@ -1,0 +1,61 @@
+---
+- name: Require VirtualBox boot settings
+  ansible.builtin.assert:
+    that:
+      - virtualbox_vm_name is defined
+      - virtualbox_vm_name | length > 0
+      - virtualbox_iso_path_windows is defined
+      - virtualbox_iso_path_windows | length > 0
+      - virtualbox_storage_controller is defined
+      - virtualbox_iso_port is defined
+      - virtualbox_iso_device is defined
+    fail_msg: VirtualBox boot settings are incomplete.
+    quiet: true
+
+- name: Read the VirtualBox VM information
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - showvminfo
+      - "{{ virtualbox_vm_name }}"
+      - --machinereadable
+  register: target_virtualbox_vm_info
+  changed_when: false
+
+- name: Store the VirtualBox VM state
+  ansible.builtin.set_fact:
+    target_virtualbox_vm_state: >-
+      {{
+        target_virtualbox_vm_info.stdout_lines
+        | select('match', '^VMState=')
+        | first
+        | default('VMState="unknown"')
+      }}
+
+- name: Require a recognized VirtualBox VM state
+  ansible.builtin.assert:
+    that:
+      - >-
+        target_virtualbox_vm_state in
+        ['VMState="poweroff"', 'VMState="running"', 'VMState="saved"']
+    fail_msg: >-
+      The VM is in an unsafe or unsupported state:
+      {{ target_virtualbox_vm_state }}
+    quiet: true
+
+- name: Report the VirtualBox boot plan
+  ansible.builtin.debug:
+    msg:
+      - "Provider: VirtualBox"
+      - "VM: {{ virtualbox_vm_name }}"
+      - "VM state: {{ target_virtualbox_vm_state }}"
+      - "Discovery ISO: {{ virtualbox_iso_path_windows }}"
+      - "Storage controller: {{ virtualbox_storage_controller }}"
+      - "ISO port/device: {{ virtualbox_iso_port }}/{{ virtualbox_iso_device }}"
+      - "Automation mode: {{ automation_mode }}"
+      - The VM was not started, stopped, or modified.
+
+- name: Apply the VirtualBox boot operation
+  ansible.builtin.include_tasks:
+    file: providers/virtualbox_apply.yml
+  when: automation_mode == 'apply'

@@ -1,0 +1,93 @@
+---
+- name: Start with an unsupported workflow action
+  ansible.builtin.set_fact:
+    sno_workflow_action: unsupported
+
+- name: Identify a recoverable finalization timeout
+  ansible.builtin.set_fact:
+    sno_failed_cluster_recoverable: >-
+      {{
+        (sno_cluster_exists | bool)
+        and sno_cluster_status == 'error'
+        and
+        (
+          'timeout while finalizing'
+          in (sno_cluster_status_info | default('') | lower)
+        )
+      }}
+
+- name: Plan creation for an absent cluster
+  ansible.builtin.set_fact:
+    sno_workflow_action: create
+  when: not (sno_cluster_exists | bool)
+
+- name: Plan discovery continuation
+  ansible.builtin.set_fact:
+    sno_workflow_action: discover
+  when:
+    - sno_cluster_exists | bool
+    - sno_cluster_status in workflow_preinstallation_statuses
+
+- name: Plan installation monitoring
+  ansible.builtin.set_fact:
+    sno_workflow_action: monitor
+  when:
+    - sno_cluster_exists | bool
+    - sno_cluster_status in workflow_active_installation_statuses
+
+- name: Plan installed-cluster verification
+  ansible.builtin.set_fact:
+    sno_workflow_action: verify
+  when:
+    - sno_cluster_exists | bool
+    - sno_cluster_status == 'installed'
+
+- name: Block failed cluster reuse by default
+  ansible.builtin.set_fact:
+    sno_workflow_action: blocked
+  when:
+    - sno_cluster_exists | bool
+    - sno_cluster_status in workflow_failed_statuses
+
+- name: Plan explicitly approved finalization-timeout recovery
+  ansible.builtin.set_fact:
+    sno_workflow_action: recover
+  when:
+    - sno_failed_cluster_recoverable | bool
+    - failed_cluster_recovery_approved | bool
+
+- name: Reject unsupported cluster states
+  ansible.builtin.assert:
+    that:
+      - sno_workflow_action != 'unsupported'
+    fail_msg: >-
+      Assisted Installer returned unsupported status
+      {{ sno_cluster_status }}. Nothing was modified.
+    quiet: true
+
+- name: Report the selected workflow action
+  ansible.builtin.debug:
+    msg:
+      - "Cluster status: {{ sno_cluster_status }}"
+      - >-
+        Recoverable finalization timeout:
+        {{ sno_failed_cluster_recoverable }}
+      - >-
+        Recovery approved:
+        {{ failed_cluster_recovery_approved }}
+      - "Selected action: {{ sno_workflow_action }}"
+
+- name: Stop safely when the existing installation failed
+  ansible.builtin.fail:
+    msg: >-
+      Cluster {{ cluster_name }} is in status {{ sno_cluster_status }}:
+      {{ sno_cluster_status_info }}
+      {% if sno_failed_cluster_recoverable | bool %}
+      This is recognized as a recoverable finalization timeout.
+      Rerun with failed_cluster_recovery_approved=true only after
+      confirming that the installed node is Ready.
+      {% else %}
+      The automation will not reset, delete, or reuse this failed
+      installation.
+      {% endif %}
+  when: sno_workflow_action == 'blocked'

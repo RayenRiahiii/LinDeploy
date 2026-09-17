@@ -1,0 +1,56 @@
+---
+- name: Verify authenticated mirror registry API
+  ansible.builtin.uri:
+    url: "https://{{ openshift_mirror_registry }}/v2/"
+    user: "{{ mirror_username }}"
+    password: "{{ mirror_password }}"
+    force_basic_auth: true
+    validate_certs: true
+    status_code: 200
+  no_log: true
+
+- name: Inspect mirrored OpenShift release repository
+  ansible.builtin.uri:
+    url: "https://{{ openshift_mirror_registry }}/v2/openshift/release-images/tags/list"
+    user: "{{ mirror_username }}"
+    password: "{{ mirror_password }}"
+    force_basic_auth: true
+    validate_certs: true
+    return_content: true
+    status_code: 200
+  register: openshift_mirror_release_tags
+  no_log: true
+
+- name: Require exact mirrored release tag
+  ansible.builtin.assert:
+    that:
+      - openshift_version in (openshift_mirror_release_tags.json.tags | default([]))
+    fail_msg: "Release {{ openshift_version }} is not present in the local registry."
+    quiet: true
+
+- name: Publish verified release marker
+  ansible.builtin.copy:
+    dest: "{{ openshift_mirror_ready_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      {
+        "status": "ready",
+        "version": "{{ openshift_version }}",
+        "architecture": "{{ cpu_architecture }}",
+        "registry": "{{ openshift_mirror_registry }}",
+        "workspace": "{{ openshift_mirror_release_workspace }}",
+        "cluster_resources_directory": "{{ openshift_mirror_cluster_resources_directory }}",
+        "cluster_resources": {{ openshift_mirror_generated_resources | to_json }},
+        "prepared_at": "{{ ansible_date_time.iso8601 }}"
+      }
+
+- name: Report mirror readiness
+  ansible.builtin.debug:
+    msg:
+      - "Disconnected OpenShift mirror is ready."
+      - "Registry: {{ openshift_mirror_registry }}"
+      - "Release: {{ openshift_version }} ({{ cpu_architecture }})"
+      - "Ready marker: {{ openshift_mirror_ready_file }}"
+      - The registry must remain running while the cluster is running.

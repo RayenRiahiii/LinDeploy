@@ -1,0 +1,76 @@
+---
+- name: Require the installation disk to be configured
+  ansible.builtin.assert:
+    that:
+      - sno_installation_disk_configured | default(false) | bool
+    fail_msg: >-
+      Installation cannot start because the validated disk was not
+      assigned to the Assisted Installer host.
+    quiet: true
+
+- name: Report the destructive installation target
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }} ({{ sno_cluster_id }})"
+      - "Host: {{ sno_host_id }}"
+      - "Disk: {{ installation_disk_path }}"
+      - All existing data on this disk will be permanently erased.
+
+- name: Require exact disk-erasure confirmation
+  ansible.builtin.assert:
+    that:
+      - >-
+        install_confirmation | default('')
+        == ('ERASE ' ~ installation_disk_path)
+    fail_msg: >-
+      Installation was not started. Pass the exact confirmation:
+      -e '{"install_confirmation":"ERASE {{ installation_disk_path }}"}'
+    quiet: true
+
+- name: Wait for validations after disk assignment
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters/{{ sno_cluster_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: installation_ready_cluster
+  changed_when: false
+  failed_when: >-
+    installation_ready_cluster.json.status
+    in workflow_failed_statuses
+  until:
+    - installation_ready_cluster.json.status == 'ready'
+  retries: "{{ cluster_ready_retries }}"
+  delay: "{{ cluster_ready_delay }}"
+
+- name: Start the SNO cluster installation
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/clusters/{{ sno_cluster_id }}/actions/install
+    method: POST
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code:
+      - 200
+      - 201
+      - 202
+    return_content: true
+  register: started_sno_installation
+
+- name: Store the installation request state
+  ansible.builtin.set_fact:
+    sno_installation_started: true
+    sno_installation_status: >-
+      {{
+        started_sno_installation.json.status
+        | default('installation-requested')
+      }}
+
+- name: Report the installation request
+  ansible.builtin.debug:
+    msg:
+      - "Installation started for cluster {{ cluster_name }}."
+      - "Status: {{ sno_installation_status }}"
+      - Keep the DNS infrastructure and target machine running.

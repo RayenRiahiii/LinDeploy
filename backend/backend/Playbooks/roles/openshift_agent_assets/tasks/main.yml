@@ -1,0 +1,238 @@
+---
+- name: Initialize mirror CA from request
+  ansible.builtin.set_fact:
+    openshift_effective_mirror_ca_bundle: "{{ mirror_ca_bundle | default('') | trim }}"
+
+- name: Locate locally managed mirror CA when not supplied
+  ansible.builtin.find:
+    paths: "{{ openshift_mirror_quay_root }}"
+    patterns: rootCA.pem
+    file_type: file
+    recurse: true
+  register: openshift_agent_local_ca_search
+  when: openshift_effective_mirror_ca_bundle | length == 0
+
+- name: Require one locally managed mirror CA when not supplied
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_local_ca_search.matched | default(0) | int == 1
+    fail_msg: >-
+      No mirror CA was supplied and exactly one locally managed rootCA.pem
+      could not be found. Paste the external registry CA and retry.
+    quiet: true
+  when: openshift_effective_mirror_ca_bundle | length == 0
+
+- name: Read locally managed mirror CA
+  ansible.builtin.slurp:
+    src: "{{ openshift_agent_local_ca_search.files[0].path }}"
+  register: openshift_agent_local_ca
+  when: openshift_effective_mirror_ca_bundle | length == 0
+
+- name: Select locally managed mirror CA
+  ansible.builtin.set_fact:
+    openshift_effective_mirror_ca_bundle: "{{ openshift_agent_local_ca.content | b64decode }}"
+  when: openshift_effective_mirror_ca_bundle | length == 0
+
+- name: Validate disconnected Agent-Based request
+  ansible.builtin.assert:
+    that:
+      - openshift_version is match('^4\.[0-9]+\.[0-9]+$')
+      - cpu_architecture == 'x86_64'
+      - ansible_facts.architecture == 'x86_64'
+      - openshift_mirror_registry is match('^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
+      - mirror_username | default('') | length > 0
+      - mirror_password | default('') | length > 0
+      - openshift_effective_mirror_ca_bundle is search('BEGIN CERTIFICATE')
+      - pull_secret | default('') | length > 0
+      - ssh_public_key | default('') | length > 0
+    fail_msg: >-
+      Disconnected installation currently requires an x86_64 provisioning
+      host, an exact mirrored release, registry credentials, mirror CA, Red
+      Hat pull secret, and SSH public key.
+    quiet: true
+
+- name: Require verified mirror release marker
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_ready_file }}"
+  register: openshift_agent_mirror_marker
+
+- name: Stop when exact mirror content is not ready
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_mirror_marker.stat.isreg | default(false)
+    fail_msg: >-
+      Release {{ openshift_version }} ({{ cpu_architecture }}) is not marked
+      ready on this mirror host. Run Prepare mirror content first.
+    quiet: true
+
+- name: Read verified mirror release marker
+  ansible.builtin.slurp:
+    src: "{{ openshift_agent_ready_file }}"
+  register: openshift_agent_mirror_marker_content
+
+- name: Validate mirror release marker ownership
+  vars:
+    openshift_agent_marker_data: "{{ openshift_agent_mirror_marker_content.content | b64decode | from_json }}"
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_marker_data.status == 'ready'
+      - openshift_agent_marker_data.version == openshift_version
+      - openshift_agent_marker_data.architecture == cpu_architecture
+      - openshift_agent_marker_data.registry == openshift_mirror_registry
+      - openshift_agent_marker_data.cluster_resources_directory | default('') | length > 0
+    fail_msg: >-
+      The mirror readiness marker does not match the requested registry,
+      architecture, and OpenShift release. Prepare mirror content again.
+    quiet: true
+
+- name: Select generated post-install mirror resources
+  ansible.builtin.set_fact:
+    openshift_agent_cluster_resources_directory: >-
+      {{ (openshift_agent_mirror_marker_content.content | b64decode | from_json).cluster_resources_directory }}
+
+- name: Require generated post-install mirror resources
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_cluster_resources_directory }}"
+  register: openshift_agent_cluster_resources
+
+- name: Stop when generated mirror resources are unavailable
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_cluster_resources.stat.isdir | default(false)
+    fail_msg: >-
+      The verified mirror marker references a missing cluster-resources
+      directory. Run Prepare mirror content again.
+    quiet: true
+
+- name: Verify mirror TLS and authentication
+  block:
+    - name: Create temporary mirror CA file
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .crt
+      register: openshift_agent_temporary_ca
+
+    - name: Write mirror CA for strict TLS validation
+      ansible.builtin.copy:
+        dest: "{{ openshift_agent_temporary_ca.path }}"
+        content: "{{ openshift_effective_mirror_ca_bundle }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Authenticate to the trusted mirror API
+      ansible.builtin.uri:
+        url: "https://{{ openshift_mirror_registry }}/v2/"
+        user: "{{ mirror_username }}"
+        password: "{{ mirror_password }}"
+        force_basic_auth: true
+        validate_certs: true
+        ca_path: "{{ openshift_agent_temporary_ca.path }}"
+        status_code: 200
+      no_log: true
+  always:
+    - name: Remove temporary mirror CA file
+      ansible.builtin.file:
+        path: "{{ openshift_agent_temporary_ca.path | default('') }}"
+        state: absent
+      when: openshift_agent_temporary_ca.path | default('') | length > 0
+
+- name: Require exact Agent-Based installer binary
+  ansible.builtin.command:
+    argv: ["{{ openshift_mirror_tools_directory }}/openshift-install", version]
+  register: openshift_agent_installer_version
+  changed_when: false
+
+- name: Validate installer release
+  ansible.builtin.assert:
+    that:
+      - openshift_version in openshift_agent_installer_version.stdout
+    fail_msg: >-
+      Installed openshift-install does not match the mirrored release
+      {{ openshift_version }}.
+    quiet: true
+
+- name: Inspect existing Agent assets
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_iso_path }}"
+  register: openshift_agent_existing_iso
+
+- name: Create protected Agent assets directory
+  ansible.builtin.file:
+    path: "{{ openshift_agent_assets_directory }}"
+    state: directory
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_gid }}"
+    mode: "0700"
+
+- name: Render protected install-config
+  ansible.builtin.template:
+    src: install-config.yaml.j2
+    dest: "{{ openshift_agent_install_config }}"
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_gid }}"
+    mode: "0600"
+  no_log: true
+  when: not openshift_agent_existing_iso.stat.exists
+
+- name: Render Agent host configuration
+  ansible.builtin.template:
+    src: agent-config.yaml.j2
+    dest: "{{ openshift_agent_config }}"
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_gid }}"
+    mode: "0600"
+  no_log: true
+  when: not openshift_agent_existing_iso.stat.exists
+
+- name: Generate Agent cluster manifests
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/openshift-install"
+      - agent
+      - create
+      - cluster-manifests
+      - --dir
+      - "{{ openshift_agent_assets_directory }}"
+      - --log-level
+      - info
+  register: openshift_agent_manifests
+  changed_when: openshift_agent_manifests.rc == 0
+  no_log: true
+  when: not openshift_agent_existing_iso.stat.exists
+
+- name: Generate disconnected Agent ISO
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/openshift-install"
+      - agent
+      - create
+      - image
+      - --dir
+      - "{{ openshift_agent_assets_directory }}"
+      - --log-level
+      - info
+  register: openshift_agent_image
+  changed_when: openshift_agent_image.rc == 0
+  no_log: true
+  when: not openshift_agent_existing_iso.stat.exists
+
+- name: Require generated Agent ISO
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_iso_path }}"
+  register: openshift_agent_iso
+
+- name: Stop when Agent ISO is missing
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_iso.stat.isreg | default(false)
+      - openshift_agent_iso.stat.size | int > 1048576
+    fail_msg: Agent-Based Installer did not create a usable ISO.
+    quiet: true
+
+- name: Select Agent ISO and credentials
+  ansible.builtin.set_fact:
+    discovery_iso_path: "{{ openshift_agent_iso_path }}"
+    credentials_directory: "{{ openshift_agent_assets_directory }}/auth"
+    kubeconfig_path: "{{ openshift_agent_assets_directory }}/auth/kubeconfig"
+    kubeadmin_password_path: "{{ openshift_agent_assets_directory }}/auth/kubeadmin-password"

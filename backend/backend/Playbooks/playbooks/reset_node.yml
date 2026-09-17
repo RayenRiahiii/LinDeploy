@@ -1,0 +1,8 @@
+---
+- name: Reset Kubernetes Node State
+  hosts: selected_hosts
+  become: yes
+  strategy: free
+
+  roles:
+    - kubernetes_cleanup

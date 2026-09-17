@@ -1,0 +1,5 @@
+---
+- name: Restart containerd
+  systemd:
+    name: "{{ containerd_service_name }}"
+    state: restarted

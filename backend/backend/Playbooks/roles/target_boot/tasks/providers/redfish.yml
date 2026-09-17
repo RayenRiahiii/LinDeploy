@@ -1,0 +1,64 @@
+---
+- name: Require the Redfish target settings
+  ansible.builtin.assert:
+    that:
+      - redfish_base_url is defined
+      - redfish_base_url is match('^https?://[^/]+/?$')
+      - redfish_system_id is defined
+      - redfish_system_id | length > 0
+      - redfish_manager_id is defined
+      - redfish_manager_id | length > 0
+      - redfish_virtual_media_id is defined
+      - redfish_virtual_media_id | length > 0
+      - redfish_iso_url is defined
+      - redfish_iso_url is match('^https?://.+\\.iso([?].*)?$')
+    fail_msg: >-
+      Redfish configuration is incomplete. Provide the BMC URL,
+      system ID, manager ID, virtual-media ID, and an ISO URL that
+      the BMC can access.
+    quiet: true
+
+- name: Store the initial Redfish boot state
+  ansible.builtin.set_fact:
+    target_boot_performed: false
+
+- name: Report the Redfish boot plan
+  ansible.builtin.debug:
+    msg:
+      - "Provider: Redfish"
+      - "BMC: {{ redfish_base_url }}"
+      - "System ID: {{ redfish_system_id }}"
+      - "Manager ID: {{ redfish_manager_id }}"
+      - "Virtual-media ID: {{ redfish_virtual_media_id }}"
+      - "Discovery ISO URL: {{ redfish_iso_url }}"
+      - "Validate BMC certificate: {{ redfish_validate_certs }}"
+      - "Automation mode: {{ automation_mode }}"
+      - The server was not powered on, restarted, or modified.
+
+- name: Read Redfish credentials for apply mode
+  ansible.builtin.set_fact:
+    redfish_username_runtime: >-
+      {{ lookup('ansible.builtin.env', 'REDFISH_USERNAME') }}
+    redfish_password_runtime: >-
+      {{ lookup('ansible.builtin.env', 'REDFISH_PASSWORD') }}
+  no_log: true
+  when: automation_mode == 'apply'
+
+- name: Require Redfish credentials for apply mode
+  ansible.builtin.assert:
+    that:
+      - redfish_username_runtime | length > 0
+      - redfish_password_runtime | length > 0
+    fail_msg: >-
+      Export REDFISH_USERNAME and REDFISH_PASSWORD before running
+      the Redfish provider in apply mode.
+    quiet: true
+  no_log: true
+  when: automation_mode == 'apply'
+
+- name: Stop until the Redfish apply operations are implemented
+  ansible.builtin.fail:
+    msg: >-
+      The Redfish configuration is valid, but remote ISO mounting
+      and power control are not implemented yet. No server was modified.
+  when: automation_mode == 'apply'

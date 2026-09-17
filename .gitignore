@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Django / local config
+backend/.env
+backend/.venv/
+*.sqlite3
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+instruction.md
+instructions.md
+
+# Logs
+*.log
+backend/runtime/
+infra/mirror/runtime/
+infra/mirror/.env
+backend/celerybeat-schedule*
+
+# Ansible controller-local and generated files
+backend/backend/Playbooks/inventory
+backend/backend/Playbooks/inventory-*.yml
+backend/backend/Playbooks/host_vars/
+backend/backend/Playbooks/group_vars/private/
+backend/backend/Playbooks/**/*.retry
+backend/backend/Playbooks/**/*.swp
+backend/backend/Playbooks/-

@@ -1,0 +1,7 @@
+---
+openshift_mirror_minimum_free_gib: 400
+openshift_mirror_registry_port: 8443
+openshift_mirror_tools_directory: /usr/local/libexec/lindeploy-openshift
+openshift_mirror_workspace: /var/lib/lindeploy/oc-mirror
+openshift_mirror_state_directory: /var/lib/lindeploy/openshift-mirror-state
+

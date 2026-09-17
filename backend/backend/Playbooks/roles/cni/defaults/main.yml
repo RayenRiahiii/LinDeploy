@@ -1,0 +1,21 @@
+---
+kubernetes_node_name: "{{ lindeploy_node_name | default(ansible_facts['hostname'] | lower) }}"
+
+cni_kubeconfig_path: /etc/kubernetes/admin.conf
+
+calico_version: v3.32.0
+calico_manifest_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+calico_manifest_upstream_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+calico_manifest_path: /root/calico.yaml
+calico_manifest_checksum: ""
+calico_download_timeout: 30
+calico_download_retries: 3
+calico_download_retry_delay: 3
+
+cni_wait_timeout: 300s
+cni_kubectl_request_timeout: 30s
+cni_connection_recovery_timeout: 90
+cni_connection_recovery_connect_timeout: 5
+cni_connection_recovery_sleep: 3
+cni_remove_control_plane_taint: true
+cni_wait_for_coredns: true

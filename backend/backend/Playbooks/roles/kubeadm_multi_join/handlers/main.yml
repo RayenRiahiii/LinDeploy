@@ -1,0 +1,5 @@
+---
+- name: Restart kubelet after resolver change
+  service:
+    name: kubelet
+    state: restarted

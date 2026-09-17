@@ -1,0 +1,14 @@
+---
+argument_specs:
+  main:
+    short_description: Install and verify the pinned Kubernetes CNI
+    options:
+      calico_manifest_url:
+        type: str
+        required: true
+      calico_manifest_checksum:
+        type: str
+        required: true
+      calico_manifest_path:
+        type: path
+        default: /root/calico.yaml

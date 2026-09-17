@@ -1,0 +1,347 @@
+---
+# ==================================================
+# 1. Check whether this node is already initialized
+# ==================================================
+- name: Check admin.conf
+  stat:
+    path: "{{ kubeadm_admin_conf_path }}"
+  register: kubeadm_admin_conf_stat
+
+# ==================================================
+# 2. Detect stale cluster state after IP changes
+# ==================================================
+- name: Read existing admin.conf
+  slurp:
+    path: "{{ kubeadm_admin_conf_path }}"
+  register: kubeadm_admin_conf_raw
+  when: kubeadm_admin_conf_stat.stat.exists
+
+- name: Extract API server host from admin.conf
+  set_fact:
+    kubeadm_admin_conf_server_host: >-
+      {{
+        (
+          kubeadm_admin_conf_raw.content
+          | b64decode
+          | regex_findall('server: https://([^:]+):' ~ (kubeadm_api_bind_port | string))
+        ) | first | default('')
+      }}
+  when: kubeadm_admin_conf_stat.stat.exists
+
+- name: Fail if existing cluster state uses an old IP
+  fail:
+    msg: >-
+      Existing Kubernetes state on {{ inventory_hostname }} uses API server host
+      {{ kubeadm_admin_conf_server_host }}, but the current host IP is
+      {{ ansible_facts['default_ipv4']['address'] }}.
+      Reset this node before re-running:
+      sudo kubeadm reset -f
+      sudo rm -rf /etc/kubernetes /var/lib/etcd /etc/cni/net.d /var/lib/cni
+      sudo rm -rf /root/.kube /home/{{ ansible_user }}/.kube
+  when:
+    - kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_admin_conf_server_host | length > 0
+    - kubeadm_admin_conf_server_host is match('^[0-9.]+$')
+    - kubeadm_admin_conf_server_host != ansible_facts['default_ipv4']['address']
+
+- name: Read existing single-node cluster identity
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_admin_conf_path }}"
+      - get
+      - configmap
+      - kubeadm-config
+      - --namespace=kube-system
+      - '-o=jsonpath={.data.ClusterConfiguration}'
+  register: kubeadm_existing_cluster_configuration
+  changed_when: false
+  failed_when: false
+  retries: 3
+  delay: 2
+  until: kubeadm_existing_cluster_configuration.rc == 0
+  when:
+    - kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_cluster_name_explicit | bool
+
+- name: Resolve existing single-node cluster name
+  set_fact:
+    kubeadm_existing_cluster_name: >-
+      {{
+        kubeadm_existing_cluster_configuration.stdout
+        | regex_findall('(?m)^clusterName:\s*([a-zA-Z0-9.-]+)\s*$')
+        | first
+        | default('kubernetes')
+      }}
+  when:
+    - kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_cluster_name_explicit | bool
+
+- name: Verify existing single-node cluster name
+  assert:
+    that:
+      - kubeadm_existing_cluster_configuration.rc == 0
+      - kubeadm_existing_cluster_name == kubeadm_cluster_name
+    fail_msg: >-
+      Existing Kubernetes cluster identity does not match the requested
+      configuration. The cluster is named '{{ kubeadm_existing_cluster_name }}',
+      but LinDeploy requested '{{ kubeadm_cluster_name }}'. Kubernetes cluster and
+      node names cannot be renamed safely in place. Run Reset Cluster on this target,
+      then launch the installation with the new names.
+  when:
+    - kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_cluster_name_explicit | bool
+
+- name: Read existing single-node identity
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_admin_conf_path }}"
+      - get
+      - nodes
+      - '-o=jsonpath={range .items[*]}{.metadata.name}{"="}{range .status.addresses[?(@.type=="InternalIP")]}{.address}{end}{"\n"}{end}'
+  register: kubeadm_existing_node_identities
+  changed_when: false
+  failed_when: false
+  retries: 3
+  delay: 2
+  until: kubeadm_existing_node_identities.rc == 0
+  when: kubeadm_admin_conf_stat.stat.exists
+
+- name: Resolve existing single-node name by internal address
+  set_fact:
+    kubeadm_existing_node_identity_lines: >-
+      {{
+        kubeadm_existing_node_identities.stdout_lines
+        | default([])
+        | select('match', '^.+=' ~ (ansible_facts['default_ipv4']['address'] | regex_escape) ~ '$')
+        | list
+      }}
+  when: kubeadm_admin_conf_stat.stat.exists
+
+- name: Verify existing single-node name
+  assert:
+    that:
+      - kubeadm_existing_node_identities.rc == 0
+      - kubeadm_existing_node_identity_lines | length == 1
+      - >-
+        (kubeadm_existing_node_identity_lines | first).split('=', 1)[0]
+        == kubernetes_node_name
+    fail_msg: >-
+      Existing Kubernetes cluster identity does not match the requested
+      configuration. The node at {{ ansible_facts['default_ipv4']['address'] }} is
+      registered as '{{ ((kubeadm_existing_node_identity_lines | first | default('=' )).split('=', 1)[0]) }}',
+      but LinDeploy requested '{{ kubernetes_node_name }}'. Kubernetes node names
+      cannot be renamed safely in place. Run Reset Cluster on this target, then
+      launch the installation with the new names.
+  when: kubeadm_admin_conf_stat.stat.exists
+
+# ==================================================
+# 3. Create kubeadm init configuration
+# ==================================================
+- name: Ensure /etc/kubernetes exists
+  file:
+    path: /etc/kubernetes
+    state: directory
+    mode: '0755'
+  when: not kubeadm_admin_conf_stat.stat.exists
+
+- name: Create kubeadm config file
+  copy:
+    dest: "{{ kubeadm_init_config_path }}"
+    mode: '0644'
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: InitConfiguration
+      localAPIEndpoint:
+        advertiseAddress: "{{ ansible_facts['default_ipv4']['address'] }}"
+        bindPort: {{ kubeadm_api_bind_port }}
+      nodeRegistration:
+        criSocket: "{{ kubeadm_cri_socket }}"
+        name: "{{ kubernetes_node_name }}"
+      ---
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: ClusterConfiguration
+      clusterName: "{{ kubeadm_cluster_name }}"
+      {% if kubeadm_kubernetes_version | length > 0 %}
+      kubernetesVersion: "{{ kubeadm_kubernetes_version }}"
+      {% endif %}
+      {% if kubeadm_image_repository | length > 0 %}
+      imageRepository: "{{ kubeadm_image_repository }}"
+      {% endif %}
+      networking:
+        podSubnet: "{{ kubeadm_pod_network_cidr }}"
+        serviceSubnet: "{{ kubeadm_service_cidr }}"
+  when: not kubeadm_admin_conf_stat.stat.exists
+
+- name: List required Kubernetes control-plane images
+  command: "kubeadm config images list --config={{ kubeadm_init_config_path }}"
+  register: kubeadm_required_images
+  changed_when: false
+  when: not kubeadm_admin_conf_stat.stat.exists
+
+- name: Inspect cached containerd images before kubeadm image pre-pull
+  command: ctr -n k8s.io images ls -q
+  register: kubeadm_cached_images
+  changed_when: false
+  failed_when: false
+  when: not kubeadm_admin_conf_stat.stat.exists
+
+- name: Build Kubernetes control-plane image pull list
+  set_fact:
+    kubeadm_images_to_pull: >-
+      {{
+        kubeadm_required_images.stdout_lines
+        if kubeadm_images_pull_mode == 'always'
+        else (
+          kubeadm_required_images.stdout_lines
+          | reject('in', kubeadm_cached_images.stdout_lines | default([]))
+          | list
+        )
+      }}
+  when: not kubeadm_admin_conf_stat.stat.exists
+
+- name: Pre-pull missing Kubernetes control-plane images
+  command:
+    argv: >-
+      {{
+        ['ctr', '-n', 'k8s.io', 'images', 'pull']
+        + (
+          (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled | default(false)) | bool)
+          | ternary(
+              ['--hosts-dir', containerd_registry_config_dir | default('/etc/containerd/certs.d')],
+              []
+            )
+        )
+        + [item]
+      }}
+  loop: "{{ kubeadm_images_to_pull | default([]) }}"
+  register: kubeadm_image_pull_results
+  changed_when: true
+  async: "{{ kubeadm_image_pull_timeout }}"
+  poll: "{{ kubeadm_image_pull_poll_interval }}"
+  retries: "{{ kubeadm_images_pull_retries }}"
+  delay: "{{ kubeadm_images_pull_retry_delay }}"
+  until: kubeadm_image_pull_results.rc == 0
+  when:
+    - not kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_images_pull_mode != 'never'
+    - (kubeadm_images_to_pull | default([]) | length) > 0
+
+- name: Track when all Kubernetes control-plane images are already cached
+  debug:
+    msg: "All required Kubernetes control-plane images are already cached on {{ inventory_hostname }}."
+  changed_when: false
+  when:
+    - not kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_images_pull_mode != 'never'
+    - (kubeadm_images_to_pull | default([]) | length) == 0
+
+# ==================================================
+# 4. Initialize single-node Kubernetes cluster
+# ==================================================
+- name: Verify Kubernetes API bind port availability
+  block:
+    - name: Wait for Kubernetes API bind port to be free
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ kubeadm_api_bind_port }}"
+        state: stopped
+        timeout: "{{ kubeadm_api_bind_wait_timeout }}"
+  rescue:
+    - name: Inspect listener blocking Kubernetes API bind port
+      command: "ss -lntpH '( sport = :{{ kubeadm_api_bind_port }} )'"
+      register: kubeadm_api_bind_port_listener
+      changed_when: false
+      failed_when: false
+
+    - name: Fail when Kubernetes API bind port is already in use
+      fail:
+        msg: >-
+          Port {{ kubeadm_api_bind_port }} is still in use on {{ inventory_hostname }}
+          before kubeadm init. Another Kubernetes distribution or a previous
+          control-plane process is running. Remove the conflicting cluster before
+          retrying. Listener details:
+          {{ kubeadm_api_bind_port_listener.stdout | default('unknown') }}
+  when: not kubeadm_admin_conf_stat.stat.exists
+
+- name: Run kubeadm init
+  command: "kubeadm init --config={{ kubeadm_init_config_path }}"
+  async: "{{ kubeadm_init_timeout }}"
+  poll: "{{ kubeadm_init_poll_interval }}"
+  when: not kubeadm_admin_conf_stat.stat.exists
+
+# ==================================================
+# 5. Configure kubectl for root
+# ==================================================
+- name: Create /root/.kube directory
+  file:
+    path: "{{ kubeadm_root_kubeconfig_dir }}"
+    state: directory
+    mode: '0700'
+
+- name: Copy admin.conf to root kubeconfig
+  copy:
+    src: "{{ kubeadm_admin_conf_path }}"
+    dest: "{{ kubeadm_root_kubeconfig_path }}"
+    remote_src: true
+    mode: '0600'
+
+# ==================================================
+# 6. Configure kubectl for remote Ansible user
+# ==================================================
+- name: Get remote user's passwd entry
+  command: "getent passwd {{ ansible_user }}"
+  register: kubeadm_remote_user_passwd
+  changed_when: false
+  when:
+    - kubeadm_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+- name: Extract remote user's home directory
+  set_fact:
+    kubeadm_remote_user_home: "{{ kubeadm_remote_user_passwd.stdout.split(':')[5] }}"
+  when:
+    - kubeadm_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+- name: Create remote user .kube directory
+  file:
+    path: "{{ kubeadm_remote_user_home }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0700'
+  when:
+    - kubeadm_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+- name: Copy admin.conf to remote user kubeconfig
+  copy:
+    src: "{{ kubeadm_admin_conf_path }}"
+    dest: "{{ kubeadm_remote_user_home }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0600'
+  when:
+    - kubeadm_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != 'root'
+
+# ==================================================
+# 7. Install kubectl compatibility symlink
+# ==================================================
+- name: Check packaged kubectl binary
+  stat:
+    path: "{{ kubeadm_kubectl_binary_path }}"
+  register: kubeadm_kubectl_binary_stat
+
+- name: Ensure kubectl compatibility symlink exists
+  file:
+    src: "{{ kubeadm_kubectl_binary_path }}"
+    dest: "{{ kubeadm_kubectl_compat_symlink_path }}"
+    state: link
+    force: true
+  when:
+    - kubeadm_manage_kubectl_compat_symlink | bool
+    - kubeadm_kubectl_binary_stat.stat.exists

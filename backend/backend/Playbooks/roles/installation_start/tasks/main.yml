@@ -1,0 +1,40 @@
+---
+- name: Initialize installation-start state
+  ansible.builtin.set_fact:
+    sno_installation_started: false
+
+- name: Report that installation start is pending
+  ansible.builtin.debug:
+    msg:
+      - Installation cannot start because no valid disk is available yet.
+      - "Requested disk: {{ installation_disk_path }}"
+      - No installation request was sent.
+      - No disk was erased.
+  when: not (sno_installation_disk_valid | default(false) | bool)
+
+- name: Report the planned destructive boundary
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }} ({{ sno_cluster_id }})"
+      - "Host ID: {{ sno_host_id }}"
+      - "Installation disk: {{ sno_installation_disk.path }}"
+      - >-
+        Disk size:
+        {{
+          (sno_installation_disk.size_bytes | int / 1073741824)
+          | round(2)
+        }} GiB
+      - >-
+        Required apply confirmation:
+        ERASE {{ installation_disk_path }}
+      - Plan mode did not start installation or erase the disk.
+  when:
+    - sno_installation_disk_valid | default(false) | bool
+    - automation_mode == 'plan'
+
+- name: Start the explicitly confirmed installation
+  ansible.builtin.include_tasks:
+    file: apply.yml
+  when:
+    - sno_installation_disk_valid | default(false) | bool
+    - automation_mode == 'apply'

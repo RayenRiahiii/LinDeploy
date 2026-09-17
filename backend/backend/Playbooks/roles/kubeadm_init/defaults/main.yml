@@ -1,0 +1,31 @@
+---
+kubernetes_node_name: "{{ lindeploy_node_name | default(ansible_facts['hostname'] | lower) }}"
+kubeadm_cluster_name: "{{ lindeploy_cluster_name | default(cluster_name | default('kubernetes')) }}"
+kubeadm_cluster_name_explicit: "{{ lindeploy_cluster_name_explicit | default(cluster_name_explicit | default(false)) }}"
+
+kubeadm_init_config_path: /etc/kubernetes/kubeadm-init.yaml
+kubeadm_admin_conf_path: /etc/kubernetes/admin.conf
+
+kubeadm_root_kubeconfig_dir: /root/.kube
+kubeadm_root_kubeconfig_path: /root/.kube/config
+kubeadm_kubectl_binary_path: /usr/bin/kubectl
+kubeadm_kubectl_compat_symlink_path: /usr/local/bin/kubectl
+
+kubeadm_cri_socket: "unix:///run/containerd/containerd.sock"
+kubeadm_api_bind_port: 6443
+kubeadm_api_bind_wait_timeout: 20
+
+kubeadm_pod_network_cidr: 172.16.0.0/16
+kubeadm_service_cidr: 10.96.0.0/12
+
+kubeadm_image_repository: ""
+kubeadm_kubernetes_version: ""
+kubeadm_copy_kubeconfig_to_remote_user: true
+kubeadm_manage_kubectl_compat_symlink: true
+kubeadm_images_pull_mode: missing
+kubeadm_images_pull_retries: 2
+kubeadm_images_pull_retry_delay: 10
+kubeadm_image_pull_timeout: 600
+kubeadm_image_pull_poll_interval: 5
+kubeadm_init_timeout: 600
+kubeadm_init_poll_interval: 5

@@ -1,0 +1,103 @@
+---
+common_disable_swap: true
+common_manage_swap_fstab: true
+
+common_base_packages_redhat:
+  - container-selinux
+  - curl
+  - iproute-tc
+  - libselinux-utils
+  - selinux-policy
+  - tar
+  - firewalld
+  - policycoreutils
+
+common_base_packages_debian:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - iproute2
+  - tar
+
+common_kernel_modules:
+  - overlay
+  - br_netfilter
+
+common_modules_load_config_path: /etc/modules-load.d/k8s.conf
+common_modules_load_config_mode: "0644"
+
+common_sysctl_settings:
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+  net.ipv4.ip_forward: 1
+
+common_sysctl_config_path: /etc/sysctl.d/k8s.conf
+common_sysctl_config_mode: "0644"
+
+common_manage_selinux: "{{ ansible_facts['os_family'] == 'RedHat' }}"
+common_selinux_mode: enforcing
+
+common_manage_firewalld: "{{ ansible_facts['os_family'] == 'RedHat' }}"
+common_firewalld_enabled: true
+common_firewalld_state: started
+common_firewalld_zone: public
+common_firewalld_trusted_zone: trusted
+common_firewalld_ports: []
+common_firewalld_sources: []
+common_firewalld_command_timeout: 20
+common_firewalld_health_retries: 3
+common_firewalld_health_delay: 2
+
+common_redhat_rpm_gpg_key_candidates:
+  - /etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial
+  - /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+  - /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-beta
+
+common_redhat_update_cache: false
+common_redhat_lock_timeout: 120
+common_redhat_install_weak_deps: false
+common_redhat_base_package_disabled_repositories:
+  - docker-ce-*
+  - kubernetes
+
+common_debian_update_cache: true
+common_debian_cache_valid_time: 3600
+
+lindeploy_mirror_enabled: false
+lindeploy_mirror_ca_certificate: ""
+lindeploy_system_package_cache_enabled: false
+lindeploy_package_mirror_base_url: ""
+common_package_mirror_connect_timeout: 5
+common_package_mirror_operation_timeout: 120
+common_package_mirror_repo_ids:
+  - lindeploy-baseos
+  - lindeploy-appstream
+common_package_mirror_redhat_gpgkeys:
+  CentOS: /etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial
+  Rocky: /etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9
+  AlmaLinux: /etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
+common_package_mirror_apt_source_path: /etc/apt/sources.list.d/lindeploy-cache.sources
+common_package_mirror_apt_config_path: /etc/apt/apt.conf.d/99lindeploy-cache-only
+common_package_mirror_apt_metadata_state_dir: /var/cache/lindeploy
+common_package_mirror_apt_metadata_signature: >-
+  {{
+    [
+      lindeploy_package_mirror_base_url,
+      ansible_facts['distribution'],
+      ansible_facts['distribution_release'],
+      common_package_mirror_apt_identity.root,
+      common_package_mirror_apt_identity.security_root,
+      common_package_mirror_apt_identity.components
+    ] | join('|') | hash('sha256')
+  }}
+common_package_mirror_apt_metadata_stamp_path: >-
+  {{ common_package_mirror_apt_metadata_state_dir }}/apt-mirror-metadata-{{
+    common_package_mirror_apt_metadata_signature
+  }}.stamp
+common_package_mirror_apt_metadata_valid_time: "{{ common_debian_cache_valid_time }}"
+common_package_mirror_apt_keyrings:
+  Ubuntu: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+  Debian: /usr/share/keyrings/debian-archive-keyring.gpg
+common_mirror_ca_path_redhat: /etc/pki/ca-trust/source/anchors/lindeploy-mirror-ca.crt
+common_mirror_ca_path_debian: /usr/local/share/ca-certificates/lindeploy-mirror-ca.crt

@@ -1,0 +1,10 @@
+# Managed by LinDeploy. The local cache is tried first; containerd keeps the
+# official registry as the upstream fallback when the cache is unavailable.
+server = "{{ containerd_registry_upstream_servers.get(item.key, 'https://' ~ item.key) }}"
+
+[host."{{ item.value | regex_replace('/$', '') }}"]
+  capabilities = ["pull", "resolve"]
+  dial_timeout = "3s"
+{% if lindeploy_mirror_ca_certificate | length > 0 %}
+  ca = "{{ lindeploy_mirror_ca_path }}"
+{% endif %}

@@ -1,0 +1,106 @@
+---
+- name: Validate ownership role inputs
+  ansible.builtin.assert:
+    that:
+      - lindeploy_ownership_platform in ['kubernetes', 'k3s']
+      - lindeploy_ownership_action in ['prepare', 'activate', 'validate_cleanup', 'finalize_cleanup']
+      - lindeploy_target_id | string | length == 36
+      - lindeploy_ownership_cluster_id | string | length > 0
+      - lindeploy_release_profile_id | string | length > 0
+      - not (lindeploy_emergency_force_enabled | bool)
+    fail_msg: >-
+      LinDeploy ownership validation refused the operation on {{ inventory_hostname }}.
+      A platform, stable target ID, cluster ID, and supported safe action are required.
+      Emergency force mode is intentionally unavailable in normal workflows.
+
+- name: Read immutable machine identity
+  ansible.builtin.slurp:
+    src: /etc/machine-id
+  register: lindeploy_ownership_machine_id_result
+
+- name: Read immutable system UUID
+  ansible.builtin.slurp:
+    src: /sys/class/dmi/id/product_uuid
+  register: lindeploy_ownership_system_uuid_result
+
+- name: Normalize immutable machine identity
+  ansible.builtin.set_fact:
+    lindeploy_ownership_machine_id: >-
+      {{ lindeploy_ownership_machine_id_result.content | b64decode | trim }}
+    lindeploy_ownership_system_uuid: >-
+      {{ lindeploy_ownership_system_uuid_result.content | b64decode | trim | lower }}
+
+- name: Inspect existing ownership manifest
+  ansible.builtin.stat:
+    path: "{{ lindeploy_ownership_manifest_path }}"
+  register: lindeploy_ownership_manifest_stat
+
+- name: Read existing ownership manifest
+  ansible.builtin.slurp:
+    src: "{{ lindeploy_ownership_manifest_path }}"
+  register: lindeploy_ownership_manifest_content
+  when: lindeploy_ownership_manifest_stat.stat.exists
+
+- name: Enforce immutable production release inputs
+  ansible.builtin.assert:
+    that:
+      - lindeploy_release_profile_id | length > 10
+      - "'stable' not in lindeploy_release_profile_id"
+      - "'latest' not in lindeploy_release_profile_id"
+      - >-
+        lindeploy_ownership_platform != 'kubernetes'
+        or (
+          kubeadm_kubernetes_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+$')
+          and calico_manifest_checksum is match('^sha256:[a-f0-9]{64}$')
+        )
+      - >-
+        lindeploy_ownership_platform != 'k3s'
+        or (
+          k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
+          and k3s_install_script_checksum is match('^sha256:[a-f0-9]{64}$')
+          and k3s_binary_sha256_amd64 is match('^[a-f0-9]{64}$')
+        )
+    fail_msg: >-
+      Production release profile {{ lindeploy_release_profile_id }} is mutable or
+      incomplete. Exact versions and trusted SHA-256 values are mandatory.
+  when:
+    - lindeploy_release_profile_mode == 'production'
+    - lindeploy_ownership_action in ['prepare', 'activate']
+
+- name: Decode existing ownership manifest
+  ansible.builtin.set_fact:
+    lindeploy_ownership_existing: >-
+      {{ lindeploy_ownership_manifest_content.content | b64decode | from_json }}
+  when: lindeploy_ownership_manifest_stat.stat.exists
+
+- name: Validate existing ownership identity
+  ansible.builtin.assert:
+    that:
+      - lindeploy_ownership_existing.schema_version | int == 1
+      - lindeploy_ownership_existing.owner == 'LinDeploy'
+      - lindeploy_ownership_existing.platform == lindeploy_ownership_platform
+      - lindeploy_ownership_existing.target_id == (lindeploy_target_id | string)
+      - lindeploy_ownership_existing.cluster_id == (lindeploy_ownership_cluster_id | string)
+      - lindeploy_ownership_existing.machine_id == lindeploy_ownership_machine_id
+      - lindeploy_ownership_existing.system_uuid == lindeploy_ownership_system_uuid
+      - lindeploy_ownership_existing.managed_resources is sequence
+    fail_msg: >-
+      Ownership mismatch on {{ inventory_hostname }}. The manifest belongs to another
+      target, machine, cluster, or platform. LinDeploy will not modify this host.
+  when: lindeploy_ownership_manifest_stat.stat.exists
+
+- name: Run ownership preparation
+  ansible.builtin.include_tasks: prepare.yml
+  when: lindeploy_ownership_action == 'prepare'
+
+- name: Run ownership activation
+  ansible.builtin.include_tasks: activate.yml
+  when: lindeploy_ownership_action == 'activate'
+
+- name: Run destructive workflow validation
+  ansible.builtin.include_tasks: validate_cleanup.yml
+  when: lindeploy_ownership_action == 'validate_cleanup'
+
+- name: Run destructive workflow finalization
+  ansible.builtin.include_tasks: finalize_cleanup.yml
+  when: lindeploy_ownership_action == 'finalize_cleanup'

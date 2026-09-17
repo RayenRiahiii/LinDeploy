@@ -1,0 +1,142 @@
+---
+# ==================================================
+# 1. Configure NetworkManager for Calico
+# ==================================================
+- name: Configure NetworkManager to ignore Calico interfaces
+  copy:
+    dest: /etc/NetworkManager/conf.d/calico.conf
+    mode: '0644'
+    content: |
+      [keyfile]
+      unmanaged-devices=interface-name:cali*;interface-name:tunl*;interface-name:vxlan.calico;interface-name:vxlan-v6.calico;interface-name:wireguard.cali;interface-name:wg-v6.cali
+  register: cni_networkmanager_config
+
+# ==================================================
+# 2. Restart NetworkManager and wait for API server
+# ==================================================
+- name: Restart NetworkManager
+  systemd_service:
+    name: NetworkManager
+    state: restarted
+    no_block: true
+  when: cni_networkmanager_config.changed
+
+- name: Reset SSH connection after NetworkManager restart
+  include_tasks: reset_connection.yml
+  when: cni_networkmanager_config.changed
+
+- name: Recover SSH connection after NetworkManager restart
+  wait_for_connection:
+    connect_timeout: "{{ cni_connection_recovery_connect_timeout }}"
+    sleep: "{{ cni_connection_recovery_sleep }}"
+    timeout: "{{ cni_connection_recovery_timeout }}"
+  when: cni_networkmanager_config.changed
+
+- name: Ensure NetworkManager is active after connection recovery
+  systemd_service:
+    name: NetworkManager
+    state: started
+  when: cni_networkmanager_config.changed
+
+- name: Wait for Kubernetes API server to be reachable
+  wait_for:
+    host: "{{ ansible_facts['default_ipv4']['address'] }}"
+    port: 6443
+    timeout: 120
+    delay: 5
+
+# ==================================================
+# 3. Download Calico manifest
+# ==================================================
+- name: Download Calico manifest
+  block:
+    - name: Download Calico manifest from configured endpoint
+      get_url:
+        url: >-
+          {{
+            calico_manifest_url
+            if lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled | default(false)) | bool
+            else calico_manifest_upstream_url
+          }}
+        dest: "{{ calico_manifest_path }}"
+        mode: '0644'
+        checksum: "{{ calico_manifest_checksum if calico_manifest_checksum | length > 0 else omit }}"
+        timeout: "{{ calico_download_timeout }}"
+      register: cni_calico_download
+      until: cni_calico_download is succeeded
+      retries: "{{ calico_download_retries }}"
+      delay: "{{ calico_download_retry_delay }}"
+  rescue:
+    - name: Download Calico manifest from official endpoint
+      get_url:
+        url: "{{ calico_manifest_upstream_url }}"
+        dest: "{{ calico_manifest_path }}"
+        mode: '0644'
+        checksum: "{{ calico_manifest_checksum if calico_manifest_checksum | length > 0 else omit }}"
+        timeout: "{{ calico_download_timeout }}"
+
+# ==================================================
+# 4. Apply Calico manifest
+# ==================================================
+- name: Apply Calico manifest
+  command: >-
+    kubectl --kubeconfig={{ cni_kubeconfig_path }}
+    --request-timeout={{ cni_kubectl_request_timeout }}
+    apply -f {{ calico_manifest_path }}
+  register: calico_apply_result
+  changed_when: >
+    'created' in calico_apply_result.stdout or
+    'configured' in calico_apply_result.stdout or
+    'unchanged' not in calico_apply_result.stdout
+
+# ==================================================
+# 5. Wait for calico-node daemonset rollout
+# ==================================================
+- name: Wait for calico-node rollout
+  command: >-
+    kubectl --kubeconfig={{ cni_kubeconfig_path }}
+    rollout status daemonset/calico-node -n kube-system --timeout={{ cni_wait_timeout }}
+  changed_when: false
+
+# ==================================================
+# 6. Wait for this node to become Ready
+# ==================================================
+- name: Wait for node to become Ready
+  command: >-
+    kubectl --kubeconfig={{ cni_kubeconfig_path }}
+    wait --for=condition=Ready node/{{ kubernetes_node_name }} --timeout={{ cni_wait_timeout }}
+  changed_when: false
+
+# ==================================================
+# 7. Check whether control-plane taint exists
+# ==================================================
+- name: Check node taints
+  command: >-
+    kubectl --kubeconfig={{ cni_kubeconfig_path }}
+    --request-timeout={{ cni_kubectl_request_timeout }}
+    get node {{ kubernetes_node_name }} -o jsonpath={.spec.taints[*].key}
+  register: cni_node_taints
+  changed_when: false
+  when: cni_remove_control_plane_taint | bool
+
+# ==================================================
+# 8. Remove control-plane taint for single-node workloads
+# ==================================================
+- name: Remove control-plane taint
+  command: >-
+    kubectl --kubeconfig={{ cni_kubeconfig_path }}
+    --request-timeout={{ cni_kubectl_request_timeout }}
+    taint nodes {{ kubernetes_node_name }} node-role.kubernetes.io/control-plane-
+  when:
+    - cni_remove_control_plane_taint | bool
+    - "'node-role.kubernetes.io/control-plane' in cni_node_taints.stdout"
+
+# ==================================================
+# 9. Wait for CoreDNS deployment rollout
+# ==================================================
+- name: Wait for CoreDNS rollout
+  command: >-
+    kubectl --kubeconfig={{ cni_kubeconfig_path }}
+    rollout status deployment/coredns -n kube-system --timeout={{ cni_wait_timeout }}
+  changed_when: false
+  when: cni_wait_for_coredns | bool

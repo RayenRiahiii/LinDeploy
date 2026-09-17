@@ -1,0 +1,20 @@
+---
+- name: Store manual DNS readiness
+  ansible.builtin.set_fact:
+    sno_dns_ready: false
+
+- name: Report records requiring manual creation
+  ansible.builtin.debug:
+    msg: "{{ item.name }} -> {{ item.value }}"
+  loop: "{{ sno_required_dns_records }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Stop apply until manual DNS is ready
+  ansible.builtin.fail:
+    msg: >-
+      Create the displayed DNS records, then change dns_provider to
+      existing so the playbook can validate them.
+  when:
+    - automation_mode == 'apply'
+    - dns_enforce_before_boot | bool

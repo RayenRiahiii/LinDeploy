@@ -1,0 +1,51 @@
+---
+# ==================================================
+# 1. Pre-pull Calico images for faster later rollout
+# ==================================================
+- name: Inspect cached containerd images before Calico pre-pull
+  command: ctr -n k8s.io images ls -q
+  register: calico_cached_images
+  changed_when: false
+  failed_when: false
+  when: calico_prepull_images | bool
+
+- name: Build Calico image pull list
+  set_fact:
+    calico_images_to_pull: >-
+      {{
+        calico_images
+        if calico_prepull_mode == 'always'
+        else (
+          calico_images
+          | reject('in', calico_cached_images.stdout_lines | default([]))
+          | list
+        )
+      }}
+  when: calico_prepull_images | bool
+
+- name: Pre-pull missing Calico images
+  command:
+    argv: >-
+      {{
+        ['ctr', '-n', 'k8s.io', 'images', 'pull']
+        + (
+          (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled | default(false)) | bool)
+          | ternary(
+              ['--hosts-dir', containerd_registry_config_dir | default('/etc/containerd/certs.d')],
+              []
+            )
+        )
+        + [item]
+      }}
+  loop: "{{ calico_images_to_pull | default([]) }}"
+  register: calico_image_pull_results
+  changed_when: true
+  async: "{{ calico_image_pull_timeout }}"
+  poll: "{{ calico_image_pull_poll_interval }}"
+  retries: "{{ calico_image_pull_retries }}"
+  delay: "{{ calico_image_pull_retry_delay }}"
+  until: calico_image_pull_results.rc == 0
+  when:
+    - calico_prepull_images | bool
+    - calico_prepull_mode != 'never'
+    - (calico_images_to_pull | default([]) | length) > 0

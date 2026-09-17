@@ -1,0 +1,21 @@
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--body-bg, #0d1016);
+  color: var(--body-text, #f2f4f8);
+  font-family: "Bahnschrift", "Segoe UI", Arial, sans-serif;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(255, 63, 63, 0.35);
+}
