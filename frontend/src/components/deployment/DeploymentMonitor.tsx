@@ -540,21 +540,6 @@ export default function DeploymentMonitor({
                           checked={errorsOnly}
                           onChange={(e) => setErrorsOnly(e.currentTarget.checked)}
                         />
-                        <Badge
-                          color={autoScroll ? "teal" : "orange"}
-                          variant="light"
-                          size="xs"
-                          style={{ cursor: "pointer" }}
-                          onClick={() => {
-                            if (!autoScroll) {
-                              scrollToBottom();
-                            } else {
-                              setAutoScroll(false);
-                            }
-                          }}
-                        >
-                          {autoScroll ? "Scroll: Locked" : "Scroll: Free"}
-                        </Badge>
                       </Group>
                     </Group>
                   </div>
