@@ -2,6 +2,8 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
+  CloseButton,
   Group,
   Modal,
   Progress,
@@ -9,6 +11,7 @@ import {
   ScrollArea,
   Stack,
   Text,
+  TextInput,
   ThemeIcon,
   Title,
 } from "@mantine/core";
@@ -20,6 +23,7 @@ import {
   IconChevronUp,
   IconClockHour4,
   IconPlayerStop,
+  IconSearch,
   IconTerminal2,
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -86,6 +90,18 @@ type DeploymentMonitorProps = {
   onCancel?: () => void;
 };
 
+function getLineClass(line: string, channel: string): string | undefined {
+  if (channel === "stderr") return "is-stderr";
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith("TASK [") || trimmed.startsWith("TASK:")) return "line-task";
+  if (trimmed.startsWith("PLAY [") || trimmed.startsWith("PLAY RECAP")) return "line-play";
+  if (trimmed.startsWith("fatal:") || trimmed.includes("FAILED!")) return "line-fatal";
+  if (trimmed.startsWith("ok:") || trimmed.startsWith("ok: [")) return "line-ok";
+  if (trimmed.startsWith("changed:") || trimmed.startsWith("changed: [")) return "line-changed";
+  if (trimmed.startsWith("skipping:") || trimmed.startsWith("skipping: [")) return "line-skipping";
+  return undefined;
+}
+
 export default function DeploymentMonitor({
   loading,
   live,
@@ -105,6 +121,106 @@ export default function DeploymentMonitor({
   const recentEvents = useMemo(() => live.recentEvents || [], [live.recentEvents]);
   const outputLines = useMemo(() => live.outputLines || [], [live.outputLines]);
   const outputViewportRef = useRef<HTMLDivElement>(null);
+
+  // Live per-task timer
+  const [taskStartTime, setTaskStartTime] = useState<number>(Date.now());
+  const [taskElapsedSeconds, setTaskElapsedSeconds] = useState<number>(0);
+  const prevTaskRef = useRef<string | undefined>(live.currentTask);
+
+  // Heartbeat tracking
+  const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
+  const [secondsSinceActivity, setSecondsSinceActivity] = useState<number>(0);
+  const prevOutputCountRef = useRef<number>(outputLines.length);
+  const prevCompletedTasksRef = useRef<number>(live.completedTasks);
+
+  // Log filters
+  const [hideSkipping, setHideSkipping] = useState<boolean>(true);
+  const [errorsOnly, setErrorsOnly] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Smart scroll pinning
+  const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const prevFilteredCountRef = useRef<number>(0);
+
+  // Reset task timer whenever currentTask changes
+  useEffect(() => {
+    if (live.currentTask && live.currentTask !== prevTaskRef.current) {
+      prevTaskRef.current = live.currentTask;
+      setTaskStartTime(Date.now());
+      setTaskElapsedSeconds(0);
+    }
+  }, [live.currentTask]);
+
+  // Record heartbeat whenever new lines or completed tasks arrive
+  useEffect(() => {
+    if (
+      outputLines.length !== prevOutputCountRef.current ||
+      live.completedTasks !== prevCompletedTasksRef.current
+    ) {
+      prevOutputCountRef.current = outputLines.length;
+      prevCompletedTasksRef.current = live.completedTasks;
+      setLastActivityTime(Date.now());
+      setSecondsSinceActivity(0);
+    }
+  }, [outputLines.length, live.completedTasks]);
+
+  // 1-second interval to tick the live stopwatch and heartbeat
+  useEffect(() => {
+    if (!loading) return;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTaskElapsedSeconds(Math.max(0, Math.floor((now - taskStartTime) / 1000)));
+      setSecondsSinceActivity(Math.max(0, Math.floor((now - lastActivityTime) / 1000)));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [loading, taskStartTime, lastActivityTime]);
+
+  const heartbeatStatus = useMemo(() => {
+    if (!loading) return null;
+    if (secondsSinceActivity < 15) {
+      return {
+        color: "teal",
+        label: `Active (heartbeat ${secondsSinceActivity}s ago)`,
+      };
+    }
+    if (secondsSinceActivity < 60) {
+      return {
+        color: "blue",
+        label: `Working (${secondsSinceActivity}s ago)`,
+      };
+    }
+    return {
+      color: "yellow",
+      label: `In progress (${formatDuration(secondsSinceActivity)} since last event)`,
+    };
+  }, [loading, secondsSinceActivity]);
+
+  const filteredLines = useMemo(() => {
+    let resultLines = outputLines;
+    if (hideSkipping) {
+      resultLines = resultLines.filter(
+        (item) => !item.line.includes("skipping: [") && !item.line.startsWith("skipping:")
+      );
+    }
+    if (errorsOnly) {
+      resultLines = resultLines.filter(
+        (item) =>
+          item.channel === "stderr" ||
+          item.line.toLowerCase().includes("fatal:") ||
+          item.line.toLowerCase().includes("failed") ||
+          item.line.toLowerCase().includes("error")
+      );
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      resultLines = resultLines.filter((item) => item.line.toLowerCase().includes(q));
+    }
+    return resultLines;
+  }, [outputLines, hideSkipping, errorsOnly, searchQuery]);
+
   const hostActivity = useMemo(() => {
     const hosts = new Map<string, { status: string; results: number; task: string }>();
 
@@ -131,6 +247,29 @@ export default function DeploymentMonitor({
     return "blue";
   }
 
+  const handleScrollPositionChange = ({ y }: { x: number; y: number }) => {
+    if (!outputViewportRef.current) return;
+    const { scrollHeight, clientHeight } = outputViewportRef.current;
+    const isNearBottom = scrollHeight - y - clientHeight < 50;
+    if (isNearBottom) {
+      setAutoScroll(true);
+      setUnreadCount(0);
+    } else {
+      setAutoScroll(false);
+    }
+  };
+
+  const scrollToBottom = () => {
+    if (outputViewportRef.current) {
+      outputViewportRef.current.scrollTo({
+        top: outputViewportRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+      setAutoScroll(true);
+      setUnreadCount(0);
+    }
+  };
+
   useEffect(() => {
     if (!loading) {
       setDetailsOpen(false);
@@ -142,8 +281,16 @@ export default function DeploymentMonitor({
       return;
     }
 
-    outputViewportRef.current.scrollTop = outputViewportRef.current.scrollHeight;
-  }, [detailsOpen, outputLines]);
+    if (autoScroll) {
+      outputViewportRef.current.scrollTop = outputViewportRef.current.scrollHeight;
+    } else {
+      const added = filteredLines.length - prevFilteredCountRef.current;
+      if (added > 0) {
+        setUnreadCount((c) => c + added);
+      }
+    }
+    prevFilteredCountRef.current = filteredLines.length;
+  }, [detailsOpen, filteredLines.length, autoScroll]);
 
   return (
     <Card className="console-panel" padding="lg">
@@ -215,8 +362,20 @@ export default function DeploymentMonitor({
                       <ThemeIcon color="teal" variant="light" radius="xl" size={30}>
                         <IconActivity size={16} />
                       </ThemeIcon>
-                      <div>
-                        <Text size="xs" c="dimmed" fw={700}>CURRENT TASK</Text>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                          <Text size="xs" c="dimmed" fw={700}>CURRENT TASK</Text>
+                          <Group gap="xs">
+                            {heartbeatStatus && (
+                              <Badge color={heartbeatStatus.color} variant="dot" size="xs">
+                                {heartbeatStatus.label}
+                              </Badge>
+                            )}
+                            <Badge color="blue" variant="light" size="xs">
+                              Task time: {formatDuration(taskElapsedSeconds)}
+                            </Badge>
+                          </Group>
+                        </Group>
                         <Text size="sm" fw={800}>{live.currentTask || live.currentPlay}</Text>
                         {live.currentRole && <Text size="xs" c="dimmed">Role: {live.currentRole}</Text>}
                       </div>
@@ -300,7 +459,14 @@ export default function DeploymentMonitor({
                     <Text fw={800}>Live job output</Text>
                     <Text size="xs" c="dimmed">Ansible activity reported by the controller, similar to an AAP job stream.</Text>
                   </div>
-                  <Badge color="gray" variant="outline">{recentEvents.length} recent events</Badge>
+                  <Group gap="xs">
+                    {heartbeatStatus && (
+                      <Badge color={heartbeatStatus.color} variant="dot" size="xs">
+                        {heartbeatStatus.label}
+                      </Badge>
+                    )}
+                    <Badge color="gray" variant="outline">{recentEvents.length} recent events</Badge>
+                  </Group>
                 </Group>
 
                 <div className="monitor-detail-grid">
@@ -341,36 +507,102 @@ export default function DeploymentMonitor({
 
                 <div className="monitor-job-stream">
                   <div className="monitor-job-stream-header">
-                    <span>ANSIBLE PLAYBOOK OUTPUT</span>
-                    <span className="monitor-job-stream-count">
-                      {outputLines.length} live lines
-                    </span>
+                    <Group gap="sm" wrap="wrap" justify="space-between" style={{ width: "100%" }}>
+                      <Group gap="xs">
+                        <span>ANSIBLE PLAYBOOK OUTPUT</span>
+                        <Badge color="gray" variant="light" size="xs">
+                          {filteredLines.length} / {outputLines.length} lines
+                        </Badge>
+                      </Group>
+                      <Group gap="xs">
+                        <TextInput
+                          placeholder="Filter logs..."
+                          size="xs"
+                          leftSection={<IconSearch size={12} />}
+                          rightSection={
+                            searchQuery ? (
+                              <CloseButton size="xs" onClick={() => setSearchQuery("")} />
+                            ) : null
+                          }
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.currentTarget.value)}
+                          styles={{ input: { height: 26, minHeight: 26, fontSize: "0.75rem", width: 140 } }}
+                        />
+                        <Checkbox
+                          size="xs"
+                          label="Hide skipped"
+                          checked={hideSkipping}
+                          onChange={(e) => setHideSkipping(e.currentTarget.checked)}
+                        />
+                        <Checkbox
+                          size="xs"
+                          label="Errors only"
+                          checked={errorsOnly}
+                          onChange={(e) => setErrorsOnly(e.currentTarget.checked)}
+                        />
+                        <Badge
+                          color={autoScroll ? "teal" : "orange"}
+                          variant="light"
+                          size="xs"
+                          style={{ cursor: "pointer" }}
+                          onClick={() => {
+                            if (!autoScroll) {
+                              scrollToBottom();
+                            } else {
+                              setAutoScroll(false);
+                            }
+                          }}
+                        >
+                          {autoScroll ? "Scroll: Locked" : "Scroll: Free"}
+                        </Badge>
+                      </Group>
+                    </Group>
                   </div>
                   <ScrollArea
                     h={440}
                     type="auto"
                     offsetScrollbars
                     viewportRef={outputViewportRef}
+                    onScrollPositionChange={handleScrollPositionChange}
                     className="monitor-terminal-scroll"
                   >
-                    {outputLines.length > 0 ? (
+                    {filteredLines.length > 0 ? (
                       <pre className="monitor-terminal-output" aria-live="polite">
-                        {outputLines.map((entry, index) => (
-                          <span
-                            className={entry.channel === "stderr" ? "is-stderr" : undefined}
-                            key={`${entry.timestamp || "line"}-${index}`}
-                          >
-                            {entry.line}{"\n"}
-                          </span>
-                        ))}
+                        {filteredLines.map((entry, index) => {
+                          const lineCls = getLineClass(entry.line, entry.channel);
+                          return (
+                            <span
+                              className={lineCls}
+                              key={`${entry.timestamp || "line"}-${index}`}
+                            >
+                              {entry.line}{"\n"}
+                            </span>
+                          );
+                        })}
                       </pre>
                     ) : (
                       <div className="monitor-job-empty">
                         <IconTerminal2 size={24} />
-                        <Text size="sm" c="dimmed">Waiting for Ansible to produce job output.</Text>
+                        <Text size="sm" c="dimmed">
+                          {outputLines.length > 0
+                            ? "No log lines match current filters."
+                            : "Waiting for Ansible to produce job output."}
+                        </Text>
                       </div>
                     )}
                   </ScrollArea>
+                  {!autoScroll && (
+                    <Button
+                      className="terminal-jump-bottom-btn"
+                      size="xs"
+                      variant="filled"
+                      color="blue"
+                      leftSection={<IconChevronDown size={14} />}
+                      onClick={scrollToBottom}
+                    >
+                      {unreadCount > 0 ? `${unreadCount} new lines · Jump to latest` : "Jump to latest"}
+                    </Button>
+                  )}
                 </div>
               </div>
             </Modal>
