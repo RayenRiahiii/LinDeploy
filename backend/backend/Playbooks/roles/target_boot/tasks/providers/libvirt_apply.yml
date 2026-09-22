@@ -1,4 +1,20 @@
----
+- name: Forcibly stop running VM when force_reinstall is approved
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", destroy, "{{ libvirt_vm_name }}"]
+  when:
+    - target_libvirt_vm_state == 'running'
+    - target_modification_approved | default(false) | bool
+    - force_reinstall | default(false) | bool
+  failed_when: false
+
+- name: Update VM state after force stop
+  ansible.builtin.set_fact:
+    target_libvirt_vm_state: 'shut off'
+  when:
+    - target_libvirt_vm_state == 'running'
+    - target_modification_approved | default(false) | bool
+    - force_reinstall | default(false) | bool
+
 - name: Prepare the discovery ISO for qemu access
   ansible.builtin.copy:
     src: "{{ discovery_iso_path }}"

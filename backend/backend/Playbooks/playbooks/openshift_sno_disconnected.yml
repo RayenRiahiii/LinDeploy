@@ -282,16 +282,81 @@
         libvirt_iso_runtime_path: "{{ ((openshift_pool_xml.stdout | regex_findall('<path>([^<]+)</path>') | first) if openshift_pool_xml.rc == 0 else '/var/lib/libvirt/images/' ~ libvirt_pool_name) }}/{{ libvirt_vm_name }}-agent.iso"
         libvirt_iso_target: sda
 
+    - name: Inspect existing VM domain state
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", domstate, "{{ libvirt_vm_name }}"]
+      register: openshift_sno_existing_vm_state
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect existing cluster admin kubeconfig
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: openshift_sno_existing_kubeconfig
+
+    - name: Probe existing cluster readiness
+      ansible.builtin.command:
+        argv:
+          - "{{ oc_binary_path }}"
+          - --kubeconfig
+          - "{{ kubeconfig_path }}"
+          - get
+          - nodes
+          - --request-timeout=8s
+          - -o
+          - json
+      register: openshift_sno_existing_nodes_probe
+      changed_when: false
+      failed_when: false
+      when:
+        - openshift_sno_existing_vm_state.rc | default(1) == 0
+        - "'running' in (openshift_sno_existing_vm_state.stdout | default(''))"
+        - openshift_sno_existing_kubeconfig.stat.exists | default(false)
+        - not (sno_request.force_reinstall | default(false) | bool)
+
+    - name: Evaluate existing cluster health
+      ansible.builtin.set_fact:
+        sno_already_converged: >-
+          {{
+            openshift_sno_existing_nodes_probe.rc | default(1) == 0
+            and (openshift_sno_existing_nodes_probe.stdout | default('{}') | from_json).get('items', []) | length > 0
+            and ((openshift_sno_existing_nodes_probe.stdout | default('{}') | from_json)['items'][0]['status']['conditions']
+                 | selectattr('type', 'equalto', 'Ready')
+                 | map(attribute='status')
+                 | first | default('False')) == 'True'
+          }}
+
+    - name: Activate verification facts for already converged cluster
+      ansible.builtin.set_fact:
+        sno_credentials_available: true
+        sno_installation_completed: true
+      when: sno_already_converged | default(false) | bool
+
+    - name: Report already converged cluster status
+      ansible.builtin.debug:
+        msg:
+          - "================================================================="
+          - "Cluster '{{ cluster_name }}' is already running, healthy and converged."
+          - "Skipping Agent ISO generation, VM re-provisioning, and installation wait."
+          - "Refreshing cluster verification and user CLI access."
+          - "================================================================="
+      when: sno_already_converged | default(false) | bool
+
   roles:
     - role: libvirt_preflight
     - role: libvirt_network
     - role: libvirt_storage
     - role: dns_preflight
     - role: openshift_agent_assets
+      when: not (sno_already_converged | default(false) | bool)
     - role: libvirt_vm
+      when: not (sno_already_converged | default(false) | bool)
     - role: target_boot
+      when: not (sno_already_converged | default(false) | bool)
     - role: openshift_agent_install
+      when: not (sno_already_converged | default(false) | bool)
     - role: post_install_boot
+      when: not (sno_already_converged | default(false) | bool)
     - role: cluster_verify
     - role: openshift_cli_access
 
