@@ -156,6 +156,9 @@ export function getFailureStage(message?: string): string {
   if (normalized.includes("ssh") || normalized.includes("unreachable")) return "SSH connectivity";
   if (normalized.includes("cleanup")) return "Cleanup launch";
   if (normalized.includes("inventory")) return "Inventory generation";
+  if (normalized.includes("bootstrap") || normalized.includes("rendezvous") || normalized.includes("agent_install")) return "OpenShift Agent bootstrap";
+  if (normalized.includes("target_boot") || normalized.includes("discovery iso") || normalized.includes("running vm")) return "Target VM Boot";
+  if (normalized.includes("mirror") || normalized.includes("dns") || normalized.includes("preflight")) return "Preflight verification";
   return "Playbook launch or execution";
 }
 
@@ -198,6 +201,10 @@ export function getConnectivityOperatorAction(item: ConnectivityStatus): string 
 export function getTargetOperatorAction(target: InstallationTarget): string {
   if (target.status === "success") {
     return "Run the validation checks on this host and confirm cluster health.";
+  }
+
+  if (target.operator_issue?.recommended_action) {
+    return target.operator_issue.recommended_action;
   }
 
   if (target.status === "failed" || target.status === "unreachable") {
@@ -371,6 +378,34 @@ export function normalizeNodeName(value: string, fallback = "node"): string {
 }
 
 export function buildDefaultHostOverride(host: Host, installer: InstallerId): HostOverrideForm {
+  if (installer === "openshift_sno") {
+    return {
+      host_id: host.id,
+      host_name: host.name,
+      ip_address: host.ip_address,
+      ssh_port: host.ssh_port,
+      ansible_user: host.credential_username || "",
+      vm_name: "single",
+      node_name: "single-node",
+      node_ip: "192.168.130.10",
+      prefix_length: 24,
+      gateway: "192.168.130.1",
+      interface_name: "enp1s0",
+      installation_disk: "/dev/vda",
+      libvirt_network: "sno-workshop",
+      storage_pool: "sno-pool",
+      vcpu: 8,
+      memory_gib: 24,
+      disk_gib: 150,
+      network_mode: "dhcp_reservation",
+      cluster_name: "single",
+      node_role: "master",
+      advertise_address: host.ip_address,
+      labels: "",
+      taints: "",
+    };
+  }
+
   const defaultRole = installer === "k3s" ? "server" : "control_plane";
 
   return {
@@ -407,6 +442,29 @@ export function buildDefaultClusterConfig(installer: InstallerId): ClusterConfig
       control_plane_endpoint: "",
       cni_plugin: "flannel",
       disable_ingress: false,
+    };
+  }
+
+  if (installer === "openshift_sno") {
+    return {
+      cluster_name: "single",
+      base_domain: "lab.test",
+      version: "4.20.3",
+      topology_mode: "single_node",
+      pod_cidr: "10.128.0.0/14",
+      service_cidr: "172.30.0.0/16",
+      cluster_domain: "cluster.local",
+      control_plane_endpoint: "",
+      cni_plugin: "OVNKubernetes",
+      disable_ingress: false,
+      machine_network_cidr: "192.168.130.0/24",
+      rendezvous_ip: "192.168.130.10",
+      cluster_network_cidr: "10.128.0.0/14",
+      service_network_cidr: "172.30.0.0/16",
+      host_prefix: 23,
+      dns_servers: ["192.168.130.1"],
+      target_modification_approved: true,
+      disconnected: true,
     };
   }
 

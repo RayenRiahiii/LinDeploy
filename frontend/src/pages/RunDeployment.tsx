@@ -1018,7 +1018,10 @@ export default function RunDeployment({
         (target) =>
           target.operator_issue?.code === "k3s_conflict" ||
           target.operator_issue?.code === "kubernetes_conflict" ||
-          target.operator_issue?.code === "kubernetes_identity_conflict"
+          target.operator_issue?.code === "kubernetes_identity_conflict" ||
+          target.operator_issue?.code === "openshift_running_vm" ||
+          target.operator_issue?.code === "openshift_storage_conflict" ||
+          target.operator_issue?.code === "openshift_bootstrap_timeout"
       ),
     [result?.targets]
   );
@@ -1905,7 +1908,11 @@ export default function RunDeployment({
 
   function buildCleanupConfirmation(request: CleanupRequest) {
     const defaultClusterName =
-      request.systemType === "k3s" ? "k3s-cluster-01" : "kubernetes-cluster-01";
+      request.systemType === "k3s"
+        ? "k3s-cluster-01"
+        : request.systemType === "openshift_sno"
+        ? "single"
+        : "kubernetes-cluster-01";
     const clusterName = request.clusterConfig.cluster_name?.trim() || defaultClusterName;
     const stableTargetIds = hosts
       .filter((host) => request.hostIds.includes(host.id))

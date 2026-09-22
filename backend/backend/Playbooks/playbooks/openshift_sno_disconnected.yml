@@ -307,14 +307,14 @@
     - name: Probe existing cluster readiness
       ansible.builtin.command:
         argv:
-          - "{{ (openshift_sno_which_oc.stdout | trim) if (openshift_sno_which_oc.rc | default(1) == 0) else oc_binary_path }}"
+          - "{{ (openshift_sno_which_oc.stdout | trim) if (openshift_sno_which_oc.rc | default(1) == 0 and (openshift_sno_which_oc.stdout | default('') | trim | length > 0)) else oc_binary_path }}"
           - --kubeconfig
           - "{{ kubeconfig_path }}"
           - get
           - nodes
           - --request-timeout=8s
           - -o
-          - json
+          - "jsonpath={range .items[*]}{.status.conditions[?(@.type=='Ready')].status}{end}"
       register: openshift_sno_existing_nodes_probe
       changed_when: false
       failed_when: false
@@ -324,19 +324,15 @@
           ('running' in (openshift_sno_existing_vm_state.stdout | default('') | lower))
           or ('cours' in (openshift_sno_existing_vm_state.stdout | default('') | lower))
         - openshift_sno_existing_kubeconfig.stat.exists | default(false)
+        - not (sno_request.force_reinstall | default(false) | bool)
         - not (force_reinstall | default(false) | bool)
 
     - name: Evaluate existing cluster health
       ansible.builtin.set_fact:
         sno_already_converged: >-
           {{
-            openshift_sno_existing_nodes_probe.rc | default(1) == 0
-            and (openshift_sno_existing_nodes_probe.stdout | default('') | length > 0)
-            and (openshift_sno_existing_nodes_probe.stdout | default('{}') | from_json).get('items', []) | length > 0
-            and (((openshift_sno_existing_nodes_probe.stdout | default('{}') | from_json)['items'][0]['status']['conditions']
-                  | selectattr('type', 'equalto', 'Ready')
-                  | map(attribute='status')
-                  | first | default('False')) == 'True')
+            (openshift_sno_existing_nodes_probe.rc | default(1) == 0)
+            and ('True' in (openshift_sno_existing_nodes_probe.stdout | default('')))
           }}
 
     - name: Activate verification facts for already converged cluster

@@ -6,10 +6,9 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import Credential, Host, Installation, InstallationTemplate, OpenShiftSecretBundle
 from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate, OpenShiftSecretBundle
 from .openshift_secrets import OpenShiftSecretError, consume_secret_bundle, create_secret_bundle
-from .services import normalize_host_overrides
+from .serializers import classify_installation_target_issue
 from .services import build_extra_vars_file, normalize_host_overrides
 
 
@@ -488,4 +487,38 @@ class OpenShiftLaunchTests(TestCase):
         _, secrets = consume_secret_bundle(ref)
         self.assertEqual(secrets["mirror_username"], "custom-init")
         self.assertEqual(secrets["mirror_password"], "custom-pass-123")
+
+    def test_classify_openshift_running_vm_issue(self):
+        inst = Installation.objects.create(
+            template=self.disconnected_template,
+            status="failed",
+        )
+        target = InstallationTarget.objects.create(
+            installation=inst,
+            host=self.host,
+            status=InstallationTarget.Status.FAILED,
+            output="fatal: [centos]: FAILED! => {'assertion': 'libvirt_iso_runtime_path in target_libvirt_block_devices.stdout', 'msg': 'VM single is running without the requested discovery ISO. The automation will not forcibly stop a running VM.'}",
+        )
+        issue = classify_installation_target_issue(target)
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue["code"], "openshift_running_vm")
+        self.assertEqual(issue["cleanup_system"], InstallationTemplate.SystemType.OPENSHIFT_SNO)
+        self.assertIn("Cleanup", issue["recommended_action"])
+
+    def test_classify_openshift_storage_conflict_issue(self):
+        inst = Installation.objects.create(
+            template=self.disconnected_template,
+            status="failed",
+        )
+        target = InstallationTarget.objects.create(
+            installation=inst,
+            host=self.host,
+            status=InstallationTarget.Status.FAILED,
+            output="fatal: [centos]: FAILED! => {'msg': 'Existing domain has no matching managed volume.'}",
+        )
+        issue = classify_installation_target_issue(target)
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue["code"], "openshift_storage_conflict")
+        self.assertEqual(issue["cleanup_system"], InstallationTemplate.SystemType.OPENSHIFT_SNO)
+
 

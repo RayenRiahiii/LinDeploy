@@ -89,6 +89,14 @@ export type ClusterConfig = {
   control_plane_endpoint: string;
   cni_plugin: string;
   disable_ingress: boolean;
+  base_domain?: string;
+  machine_network_cidr?: string;
+  cluster_network_cidr?: string;
+  service_network_cidr?: string;
+  rendezvous_ip?: string;
+  host_prefix?: number;
+  dns_servers?: string[];
+  disconnected?: boolean;
   control_plane_count?: number;
   worker_count?: number;
   target_modification_approved?: boolean;
@@ -110,6 +118,18 @@ export type HostOverrideForm = {
   advertise_address: string;
   labels: string;
   taints: string;
+  vm_name?: string;
+  node_ip?: string;
+  prefix_length?: number;
+  gateway?: string;
+  interface_name?: string;
+  installation_disk?: string;
+  libvirt_network?: string;
+  storage_pool?: string;
+  vcpu?: number;
+  memory_gib?: number;
+  disk_gib?: number;
+  network_mode?: string;
 };
 
 export type HostOverridePayload = Omit<HostOverrideForm, "labels" | "taints"> & {

@@ -81,6 +81,11 @@ def extract_host_failure_context(target: InstallationTarget) -> str:
         end = min(end_candidates) if end_candidates else len(source)
         contexts.append(source[start:end])
 
+    if not contexts:
+        for source in (target.stderr, target.output, target.stdout):
+            if source:
+                contexts.append(source)
+
     return "\n".join(contexts)
 
 
@@ -137,6 +142,61 @@ def classify_installation_target_issue(target: InstallationTarget):
                 "the installation with the new names."
             ),
             "cleanup_system": InstallationTemplate.SystemType.KUBERNETES,
+        }
+    elif (
+        "is running without the requested discovery ISO" in failure_context
+        or "The automation will not forcibly stop a running VM" in failure_context
+        or "LinDeploy will not forcibly destroy a running VM" in failure_context
+    ):
+        issue_definition = {
+            "code": "openshift_running_vm",
+            "title": "OpenShift VM is running from installed disk",
+            "detail": (
+                "The target VM already exists and is running from its installed disk, "
+                "but the OpenShift API did not report Ready. LinDeploy will not forcibly destroy "
+                "or re-image a running VM without operator instruction."
+            ),
+            "recommended_action": (
+                "Run the OpenShift SNO Cleanup workflow to reset the VM, or enable 'Force Reinstall' "
+                "if you wish to wipe and re-deploy."
+            ),
+            "cleanup_system": InstallationTemplate.SystemType.OPENSHIFT_SNO,
+        }
+    elif (
+        "Existing domain has no matching managed volume" in failure_context
+        or "without a matching LinDeploy ownership marker" in failure_context
+        or "does not match this workshop" in failure_context
+        or "Refuse a domain without its expected volume" in failure_context
+    ):
+        issue_definition = {
+            "code": "openshift_storage_conflict",
+            "title": "Conflicting OpenShift VM or volume",
+            "detail": (
+                "A virtual machine or disk volume already exists with the same name on the KVM host, "
+                "but lacks valid LinDeploy ownership markers."
+            ),
+            "recommended_action": (
+                "Run OpenShift SNO Cleanup to safely remove orphaned resources, or inspect existing "
+                "domains on the KVM host."
+            ),
+            "cleanup_system": InstallationTemplate.SystemType.OPENSHIFT_SNO,
+        }
+    elif (
+        "Wait for Agent bootstrap completion timed out" in failure_context
+        or "Wait for node registration timed out" in failure_context
+    ):
+        issue_definition = {
+            "code": "openshift_bootstrap_timeout",
+            "title": "OpenShift Agent bootstrap timed out",
+            "detail": (
+                "The Agent installer did not reach rendezvous completion within the expected timeout. "
+                "This typically happens if the VM cannot pull from the mirror registry or ran out of RAM."
+            ),
+            "recommended_action": (
+                "Inspect the VM console via 'virsh console <vm>' on the KVM host, then run OpenShift SNO Cleanup "
+                "before retrying."
+            ),
+            "cleanup_system": InstallationTemplate.SystemType.OPENSHIFT_SNO,
         }
 
     if issue_definition is None:

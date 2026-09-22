@@ -55,8 +55,10 @@
     that:
       - libvirt_iso_runtime_path in target_libvirt_block_devices.stdout
     fail_msg: >-
-      VM {{ libvirt_vm_name }} is running without the requested discovery ISO.
-      The automation will not forcibly stop a running VM.
+      VM {{ libvirt_vm_name }} is running from its installed disk without the requested discovery ISO.
+      The OpenShift cluster is either not responsive or not yet converged.
+      LinDeploy will not forcibly destroy a running VM during a standard deployment.
+      To reinstall or reset, run the OpenShift SNO Cleanup workflow or enable 'Force Reinstall'.
     quiet: true
   when: target_libvirt_vm_state == 'running'
 
