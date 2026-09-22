@@ -1,24 +1,74 @@
 ---
 - name: Remove a LinDeploy managed Single Node OpenShift VM
   hosts: selected_hosts
+  become: true
   gather_facts: true
   serial: 1
   any_errors_fatal: false
 
   vars:
-    sno_request: "{{ cluster_config }}"
-    sno_host_request: "{{ selected_hosts_config | first }}"
+    sno_request: "{{ cluster_config | default({}) }}"
+    sno_host_request: "{{ (selected_hosts_config | default([]) | first) | default({}) }}"
     libvirt_uri: qemu:///system
     libvirt_vm_name: "{{ sno_host_request.vm_name }}"
     libvirt_pool_name: "{{ sno_host_request.storage_pool }}"
     libvirt_volume_name: "{{ libvirt_vm_name }}.qcow2"
     workshop_id: "lindeploy-{{ sno_request.cluster_name }}"
-    openshift_ownership_marker_path: "{{ ansible_env.HOME }}/.local/share/lindeploy/ownership/{{ sno_request.cluster_name }}.json"
+    openshift_cleanup_accepted_legacy_workshop_ids:
+      - sno-workshop
+    openshift_ownership_marker_path: "/var/lib/lindeploy/ownership/{{ sno_request.cluster_name }}.json"
     openshift_cluster_asset_directories:
-      - "{{ ansible_env.HOME }}/.local/share/lindeploy/openshift-agent/{{ sno_request.cluster_name }}"
-      - "{{ ansible_env.HOME }}/.local/share/lindeploy/openshift/{{ sno_request.cluster_name }}"
+      - "/var/lib/lindeploy/openshift-agent/{{ sno_request.cluster_name }}"
+      - "/var/lib/lindeploy/openshift/{{ sno_request.cluster_name }}"
+    openshift_dns_hosts_marker: "LINDEPLOY OPENSHIFT {{ sno_request.cluster_name }}.{{ sno_request.base_domain }}"
+    openshift_cli_access_user: "{{ ansible_user | default(ansible_user_id) }}"
+    openshift_cli_kubeconfig_name: "lindeploy-{{ sno_request.cluster_name }}.config"
+    openshift_cli_bashrc_marker: "# {mark} LINDEPLOY OPENSHIFT CLI {{ sno_request.cluster_name }}"
 
   tasks:
+    - name: Require exactly one managed SNO cleanup target
+      ansible.builtin.assert:
+        that:
+          - cluster_config is defined
+          - cluster_config is mapping
+          - selected_hosts_config is defined
+          - selected_hosts_config | length == 1
+        fail_msg: >-
+          SNO cleanup requires one cluster configuration and exactly one target
+          VM definition. No host resource was changed.
+        quiet: true
+
+    - name: Inspect the LinDeploy ownership marker
+      ansible.builtin.stat:
+        path: "{{ openshift_ownership_marker_path }}"
+      register: openshift_cleanup_ownership_marker
+
+    - name: Read the LinDeploy ownership marker
+      ansible.builtin.slurp:
+        src: "{{ openshift_ownership_marker_path }}"
+      register: openshift_cleanup_ownership_marker_content
+      when: openshift_cleanup_ownership_marker.stat.isreg | default(false)
+
+    - name: Decode the LinDeploy ownership marker
+      ansible.builtin.set_fact:
+        openshift_cleanup_ownership_data: >-
+          {{ openshift_cleanup_ownership_marker_content.content | b64decode | from_json }}
+      when: openshift_cleanup_ownership_marker.stat.isreg | default(false)
+
+    - name: Validate the protected LinDeploy ownership marker
+      ansible.builtin.set_fact:
+        openshift_cleanup_ownership_workshop_id: >-
+          {{ (openshift_cleanup_ownership_data | default({})).get('workshop_id', '') }}
+        openshift_cleanup_ownership_marker_matches: >-
+          {{
+            openshift_cleanup_ownership_marker.stat.isreg | default(false)
+            and (openshift_cleanup_ownership_data | default({})).get('vm_name', '') == libvirt_vm_name
+            and (openshift_cleanup_ownership_data | default({})).get('pool_name', '') == libvirt_pool_name
+            and (openshift_cleanup_ownership_data | default({})).get('volume_name', '') == libvirt_volume_name
+            and (openshift_cleanup_ownership_data | default({})).get('workshop_id', '')
+                in ([workshop_id] + openshift_cleanup_accepted_legacy_workshop_ids)
+          }}
+
     - name: Read managed SNO domain
       ansible.builtin.command:
         argv: [virsh, --connect, "{{ libvirt_uri }}", dumpxml, "{{ libvirt_vm_name }}"]
@@ -29,9 +79,30 @@
     - name: Refuse to remove an unmanaged domain
       ansible.builtin.assert:
         that:
-          - openshift_cleanup_domain.rc != 0 or workshop_id in openshift_cleanup_domain.stdout
-        fail_msg: The existing VM does not contain the expected LinDeploy ownership marker.
+          - >-
+            openshift_cleanup_domain.rc != 0
+            or workshop_id in openshift_cleanup_domain.stdout
+            or (
+              openshift_cleanup_ownership_marker_matches | bool
+              and openshift_cleanup_ownership_workshop_id
+                  in openshift_cleanup_domain.stdout
+            )
+        fail_msg: >-
+          The existing VM has neither the requested LinDeploy XML identity nor
+          a protected ownership marker matching its VM, pool and volume. It was
+          preserved for manual review.
         quiet: true
+
+    - name: Report accepted legacy LinDeploy ownership
+      ansible.builtin.debug:
+        msg: >-
+          Accepted legacy LinDeploy ownership identity
+          {{ openshift_cleanup_ownership_workshop_id }} because the protected
+          marker and domain XML agree on the requested VM, pool and volume.
+      when:
+        - openshift_cleanup_domain.rc == 0
+        - openshift_cleanup_ownership_marker_matches | bool
+        - openshift_cleanup_ownership_workshop_id != workshop_id
 
     - name: Destroy running managed SNO domain
       ansible.builtin.command:
@@ -57,31 +128,10 @@
       changed_when: false
       failed_when: false
 
-    - name: Inspect the LinDeploy ownership marker
-      ansible.builtin.stat:
-        path: "{{ openshift_ownership_marker_path }}"
-      register: openshift_cleanup_ownership_marker
-
-    - name: Read the LinDeploy ownership marker
-      ansible.builtin.slurp:
-        src: "{{ openshift_ownership_marker_path }}"
-      register: openshift_cleanup_ownership_marker_content
-      when: openshift_cleanup_ownership_marker.stat.isreg | default(false)
-
-    - name: Decode the LinDeploy ownership marker
-      ansible.builtin.set_fact:
-        openshift_cleanup_ownership_data: >-
-          {{ openshift_cleanup_ownership_marker_content.content | b64decode | from_json }}
-      when: openshift_cleanup_ownership_marker.stat.isreg | default(false)
-
     - name: Refuse to remove an unowned orphan volume
       ansible.builtin.assert:
         that:
-          - openshift_cleanup_ownership_marker.stat.isreg | default(false)
-          - openshift_cleanup_ownership_data.workshop_id == workshop_id
-          - openshift_cleanup_ownership_data.vm_name == libvirt_vm_name
-          - openshift_cleanup_ownership_data.pool_name == libvirt_pool_name
-          - openshift_cleanup_ownership_data.volume_name == libvirt_volume_name
+          - openshift_cleanup_ownership_marker_matches | bool
         fail_msg: >-
           The VM domain is absent, but its volume has no matching LinDeploy
           ownership marker. The volume was preserved for manual review.
@@ -101,10 +151,45 @@
         state: absent
       loop: "{{ openshift_cluster_asset_directories }}"
 
+    - name: Resolve the cleanup operator account
+      ansible.builtin.command:
+        argv: [getent, passwd, "{{ openshift_cli_access_user }}"]
+      register: openshift_cleanup_operator_passwd
+      changed_when: false
+
+    - name: Select the cleanup operator home
+      ansible.builtin.set_fact:
+        openshift_cleanup_operator_home: "{{ openshift_cleanup_operator_passwd.stdout.split(':')[5] }}"
+
+    - name: Inspect the cleanup operator Bash configuration
+      ansible.builtin.stat:
+        path: "{{ openshift_cleanup_operator_home }}/.bashrc"
+      register: openshift_cleanup_operator_bashrc
+
+    - name: Remove managed OpenShift CLI activation
+      ansible.builtin.blockinfile:
+        path: "{{ openshift_cleanup_operator_home }}/.bashrc"
+        marker: "{{ openshift_cli_bashrc_marker }}"
+        state: absent
+      when: openshift_cleanup_operator_bashrc.stat.isreg | default(false)
+
+    - name: Remove the cluster-specific user kubeconfig
+      ansible.builtin.file:
+        path: >-
+          {{ openshift_cleanup_operator_home }}/.kube/{{ openshift_cli_kubeconfig_name }}
+        state: absent
+
     - name: Remove the LinDeploy ownership marker
       ansible.builtin.file:
         path: "{{ openshift_ownership_marker_path }}"
         state: absent
+
+    - name: Remove controller-side OpenShift resolver records
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} {{ openshift_dns_hosts_marker }}"
+        state: absent
+        backup: true
 
     - name: Confirm preserved mirror content
       ansible.builtin.debug:

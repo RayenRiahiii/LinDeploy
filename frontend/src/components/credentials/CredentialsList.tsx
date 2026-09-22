@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Card,
-  Container,
   Divider,
   Group,
   Modal,
@@ -17,7 +16,6 @@ import {
   Text,
   TextInput,
   Textarea,
-  ThemeIcon,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -28,9 +26,10 @@ import {
   IconLockPassword,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconTrash,
-  IconUserShield,
 } from "@tabler/icons-react";
+import PageHeader from "../common/PageHeader";
 import ConfirmDeleteModal from "../crud/ConfirmDeleteModal";
 import { formatApiError, parseApiPayload } from "../../lib/api";
 
@@ -303,37 +302,29 @@ export default function CredentialsList() {
   }
 
   return (
-    <Container size="xl" py="xl">
+    <>
       <Stack gap="lg">
-        <Card className="console-panel" padding="xl">
-          <Group justify="space-between" align="flex-start" gap="lg">
-            <Stack gap={6}>
-              <Group gap="sm">
-                <ThemeIcon color="red" variant="light" size="lg" radius="md">
-                  <IconUserShield size={18} />
-                </ThemeIcon>
-                <div>
-                  <Title order={2}>Credentials Vault</Title>
-                  <Text c="dimmed" size="sm">
-                    Manage SSH usernames, password-based access, and key-based credentials used by your targets.
-                  </Text>
-                </div>
-              </Group>
-
-              <Group gap="sm">
-                <Badge color="red" variant="light">
-                  Total: {credentials.length}
-                </Badge>
-                <Badge color="teal" variant="light">
-                  Password: {passwordAuthCount}
-                </Badge>
-                <Badge color="gray" variant="outline">
-                  SSH Key: {sshKeyAuthCount}
-                </Badge>
-              </Group>
-            </Stack>
-
-            <Group>
+        <PageHeader
+          icon={<IconKey size={22} />}
+          badge="Access Management"
+          badgeColor="red"
+          title="Credentials Vault"
+          description="Manage SSH usernames, password-based access, and key-based credentials used by your targets."
+          badges={
+            <>
+              <Badge color="red" variant="light" size="sm">
+                Total: {credentials.length}
+              </Badge>
+              <Badge color="teal" variant="light" size="sm">
+                Password: {passwordAuthCount}
+              </Badge>
+              <Badge color="gray" variant="outline" size="sm">
+                SSH Key: {sshKeyAuthCount}
+              </Badge>
+            </>
+          }
+          actions={
+            <>
               <Button
                 variant="default"
                 leftSection={<IconRefresh size={16} />}
@@ -345,9 +336,9 @@ export default function CredentialsList() {
               <Button leftSection={<IconPlus size={16} />} onClick={openCreateModal}>
                 Add Credential
               </Button>
-            </Group>
-          </Group>
-        </Card>
+            </>
+          }
+        />
 
         {error && (
           <Alert color="red" title="Request failed" variant="light">
@@ -370,6 +361,7 @@ export default function CredentialsList() {
             </Group>
 
             <TextInput
+              leftSection={<IconSearch size={16} />}
               placeholder="Search by credential name, username, or auth type"
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
@@ -382,8 +374,8 @@ export default function CredentialsList() {
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 {filteredCredentials.map((credential) => (
-                  <Card key={credential.id} className="host-panel" padding="lg">
-                    <Stack gap="sm">
+                  <Card key={credential.id} className="host-panel card-grid-item" padding="lg">
+                    <Stack gap="sm" style={{ height: "100%" }}>
                       <Group justify="space-between" align="flex-start">
                         <div>
                           <Text fw={700} size="lg">
@@ -430,7 +422,7 @@ export default function CredentialsList() {
                         </Table.Tbody>
                       </Table>
 
-                      <Group grow>
+                      <Group grow mt="auto">
                         <Button
                           variant="default"
                           leftSection={<IconEye size={16} />}
@@ -642,6 +634,6 @@ export default function CredentialsList() {
         onClose={closeDeleteModal}
         onConfirm={() => void handleDelete()}
       />
-    </Container>
+    </>
   );
 }

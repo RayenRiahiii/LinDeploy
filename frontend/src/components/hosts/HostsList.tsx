@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Container,
   Divider,
   Group,
   Modal,
@@ -17,7 +16,6 @@ import {
   Table,
   Text,
   TextInput,
-  ThemeIcon,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -26,9 +24,11 @@ import {
   IconEye,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconServer,
   IconTrash,
 } from "@tabler/icons-react";
+import PageHeader from "../common/PageHeader";
 import ConfirmDeleteModal from "../crud/ConfirmDeleteModal";
 import { formatApiError, parseApiPayload } from "../../lib/api";
 
@@ -367,40 +367,32 @@ export default function HostsList() {
   }
 
   return (
-    <Container size="xl" py="xl">
+    <>
       <Stack gap="lg">
-        <Card className="console-panel" padding="xl">
-          <Group justify="space-between" align="flex-start" gap="lg">
-            <Stack gap={6}>
-              <Group gap="sm">
-                <ThemeIcon color="red" variant="light" size="lg" radius="md">
-                  <IconServer size={18} />
-                </ThemeIcon>
-                <div>
-                  <Title order={2}>Hosts Registry</Title>
-                  <Text c="dimmed" size="sm">
-                    Register targets, inspect them, and edit connection properties from a compact operator view.
-                  </Text>
-                </div>
-              </Group>
-
-              <Group gap="sm">
-                <Badge color="red" variant="light">
-                  Total: {hosts.length}
-                </Badge>
-                <Badge color="teal" variant="light">
-                  Enabled: {enabledHostsCount}
-                </Badge>
-                <Badge color="grape" variant="light">
-                  Roles: {new Set(hosts.map((host) => host.node_role)).size}
-                </Badge>
-                <Badge color="gray" variant="outline">
-                  Credentials: {credentials.length}
-                </Badge>
-              </Group>
-            </Stack>
-
-            <Group>
+        <PageHeader
+          icon={<IconServer size={22} />}
+          badge="Infrastructure Inventory"
+          badgeColor="red"
+          title="Hosts Registry"
+          description="Register targets, inspect connection health, and manage machine properties from a centralized operator view."
+          badges={
+            <>
+              <Badge color="red" variant="light" size="sm">
+                Total: {hosts.length}
+              </Badge>
+              <Badge color="teal" variant="light" size="sm">
+                Enabled: {enabledHostsCount}
+              </Badge>
+              <Badge color="grape" variant="light" size="sm">
+                Roles: {new Set(hosts.map((host) => host.node_role)).size}
+              </Badge>
+              <Badge color="gray" variant="outline" size="sm">
+                Credentials: {credentials.length}
+              </Badge>
+            </>
+          }
+          actions={
+            <>
               <Button
                 variant="default"
                 leftSection={<IconRefresh size={16} />}
@@ -412,9 +404,9 @@ export default function HostsList() {
               <Button leftSection={<IconPlus size={16} />} onClick={openCreateModal}>
                 Add Host
               </Button>
-            </Group>
-          </Group>
-        </Card>
+            </>
+          }
+        />
 
         {error && (
           <Alert color="red" title="Request failed" variant="light">
@@ -437,6 +429,7 @@ export default function HostsList() {
             </Group>
 
             <TextInput
+              leftSection={<IconSearch size={16} />}
               placeholder="Search by name, IP, hostname, role, or credential"
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
@@ -449,8 +442,8 @@ export default function HostsList() {
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 {filteredHosts.map((host) => (
-                  <Card key={host.id} className="host-panel" padding="lg">
-                    <Stack gap="sm">
+                  <Card key={host.id} className="host-panel card-grid-item" padding="lg">
+                    <Stack gap="sm" style={{ height: "100%" }}>
                       <Group justify="space-between" align="flex-start">
                         <div>
                           <Text fw={700} size="lg">
@@ -497,7 +490,7 @@ export default function HostsList() {
                         </Table.Tbody>
                       </Table>
 
-                      <Group grow>
+                      <Group grow mt="auto">
                         <Button
                           variant="default"
                           leftSection={<IconEye size={16} />}
@@ -750,6 +743,6 @@ export default function HostsList() {
         onClose={closeDeleteModal}
         onConfirm={() => void handleDelete()}
       />
-    </Container>
+    </>
   );
 }

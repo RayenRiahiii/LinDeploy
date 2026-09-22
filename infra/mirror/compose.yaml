@@ -99,6 +99,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./runtime/certs:/etc/nginx/certs:ro
+      - artifact-cache-data:/var/cache/lindeploy:ro
     networks: [mirror]
     read_only: true
     tmpfs:
@@ -107,6 +108,7 @@ services:
       - /var/log/nginx:rw,noexec,nosuid,size=32m
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID"]
     pids_limit: 128
     mem_limit: 512m
     cpus: 1.0

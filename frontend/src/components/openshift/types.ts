@@ -107,6 +107,8 @@ export type OpenShiftLaunchPayload = {
     secret_reference: string;
     target_modification_approved: true;
     install_confirmation: string;
+    cleanup_mode?: string;
+    preserve_iso?: boolean;
   };
   host_overrides: Array<{
     host_id: number;

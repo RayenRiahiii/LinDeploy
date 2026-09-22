@@ -7,8 +7,10 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .models import Credential, Host, Installation, InstallationTemplate, OpenShiftSecretBundle
+from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate, OpenShiftSecretBundle
 from .openshift_secrets import OpenShiftSecretError, consume_secret_bundle, create_secret_bundle
 from .services import normalize_host_overrides
+from .services import build_extra_vars_file, normalize_host_overrides
 
 
 VALID_PULL_SECRET = json.dumps({"auths": {"cloud.redhat.com": {"auth": "hidden"}}})
@@ -19,6 +21,8 @@ VALID_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILinDeployTest"
     OPENSHIFT_SECRET_ENCRYPTION_KEY="",
     OPENSHIFT_SECRET_TTL_SECONDS=1800,
     OPENSHIFT_RED_HAT_OFFLINE_TOKEN="offline-token-for-test",
+    OPENSHIFT_MIRROR_USERNAME="mirroruser",
+    OPENSHIFT_MIRROR_PASSWORD="mirrorpassword",
 )
 class OpenShiftSecurityTests(TestCase):
     def setUp(self):
@@ -62,6 +66,11 @@ class OpenShiftSecurityTests(TestCase):
     OPENSHIFT_SECRET_ENCRYPTION_KEY="",
     OPENSHIFT_SECRET_TTL_SECONDS=1800,
     OPENSHIFT_RED_HAT_OFFLINE_TOKEN="offline-token-for-test",
+    OPENSHIFT_MIRROR_USERNAME="mirroruser",
+    OPENSHIFT_MIRROR_PASSWORD="mirrorpassword",
+    OPENSHIFT_MIRROR_REGISTRY="registry.lab.test:8443",
+    OPENSHIFT_MIRROR_VERSION="4.20.3",
+    OPENSHIFT_MIRROR_STORAGE_PATH="/var/cache/lindeploy/mirror",
 )
 class OpenShiftLaunchTests(TestCase):
     def setUp(self):
@@ -95,13 +104,17 @@ class OpenShiftLaunchTests(TestCase):
             system_type=InstallationTemplate.SystemType.OPENSHIFT_SNO,
             playbook_path="playbooks/openshift_sno_cleanup.yml",
         )
+        self.full_uninstall_template = InstallationTemplate.objects.get(
+            system_type=InstallationTemplate.SystemType.OPENSHIFT_SNO,
+            playbook_path="playbooks/openshift_sno_full_uninstall.yml",
+        )
 
-    def request_payload(self, reference, confirmation="ERASE /dev/vda", disconnected=False):
+    def request_payload(self, reference, confirmation="ERASE /dev/vda", disconnected=True):
         return {
             "deployment_mode": "manual",
             "system_type": "openshift_sno",
             "topology": "single_node",
-            "template_id": self.template.id,
+            "template_id": self.disconnected_template.id if disconnected else self.template.id,
             "host_ids": [self.host.id],
             "cluster_config": {
                 "cluster_name": "sno-test",
@@ -135,7 +148,7 @@ class OpenShiftLaunchTests(TestCase):
             }],
         }
 
-    def create_bundle(self, disconnected=False, include_mirror_ca=True):
+    def create_bundle(self, disconnected=True, include_mirror_ca=True):
         mirror_values = (
             {
                 "mirror_ca_bundle": (
@@ -169,11 +182,11 @@ class OpenShiftLaunchTests(TestCase):
     def test_connected_template_rejects_disconnected_mode(self):
         response = self.client.post(
             "/api/installations/launch/",
-            self.request_payload(self.create_bundle().reference, disconnected=True),
+            self.request_payload(self.create_bundle(disconnected=False).reference, disconnected=False),
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("disconnected template", response.json()["message"])
+        self.assertIn("disconnected", response.json()["message"].lower())
 
     @override_settings(OPENSHIFT_RED_HAT_OFFLINE_TOKEN="")
     @patch("auto_K8S.views.run_installation_task")
@@ -257,6 +270,26 @@ class OpenShiftLaunchTests(TestCase):
         self.assertEqual(response.status_code, 202)
         installation = Installation.objects.get(pk=response.json()["installation_id"])
         self.assertEqual(installation.template, self.cleanup_template)
+        self.assertTrue(installation.cluster_config["preserve_iso"])
+        run_task_mock.delay.assert_called_once_with(installation.id)
+
+    @patch("auto_K8S.views.run_installation_task")
+    def test_full_uninstall_does_not_require_secrets_and_disables_preserve_iso(self, run_task_mock):
+        run_task_mock.delay.return_value = Mock(id="openshift-full-uninstall-task")
+        payload = self.request_payload("unused")
+        payload["template_id"] = self.full_uninstall_template.id
+        payload["cluster_config"].pop("secret_reference")
+        payload["cluster_config"].pop("machine_network_cidr")
+        payload["cluster_config"].pop("rendezvous_ip")
+        payload["cluster_config"]["target_modification_approved"] = False
+        payload["cluster_config"]["install_confirmation"] = ""
+
+        response = self.client.post("/api/installations/launch/", payload, format="json")
+
+        self.assertEqual(response.status_code, 202)
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        self.assertEqual(installation.template, self.full_uninstall_template)
+        self.assertFalse(installation.cluster_config["preserve_iso"])
         run_task_mock.delay.assert_called_once_with(installation.id)
 
     def test_launch_rejects_network_address_as_node_and_rendezvous_ip(self):
@@ -290,7 +323,7 @@ class OpenShiftLaunchTests(TestCase):
         serialized = json.dumps(installation.cluster_config)
         self.assertNotIn("cloud.redhat.com", serialized)
         self.assertNotIn("AAAAC3", serialized)
-        self.assertEqual(installation.template, self.template)
+        self.assertEqual(installation.template, self.disconnected_template)
         self.assertEqual(installation.host_overrides[0]["installation_disk"], "/dev/vda")
         run_task_mock.delay.assert_called_once_with(installation.id)
 
@@ -338,6 +371,49 @@ class OpenShiftLaunchTests(TestCase):
         self.assertEqual(original.status, Installation.Status.FAILED)
         run_task_mock.delay.assert_called_with(restarted.id)
 
+    def test_sanitize_log_line_redacts_tokens_passwords_and_keys(self):
+        from auto_K8S.services import sanitize_log_line
+        raw = 'Token: eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXRoX3NjaGVtZSI6InVzZXJBdXRoIn0.xBIqF7LMjn0RtynKqTEtEMc9PSMei_030KPd7CWSYiLtsJcQ-CWzhyRxlyXaAru4kUC0GndmUDgHG8g80nBgYA ansible_password: secretpassword123'
+        sanitized = sanitize_log_line(raw)
+        self.assertNotIn('eyJhbGciOiJFUzI1Ni', sanitized)
+        self.assertNotIn('secretpassword123', sanitized)
+        self.assertIn('<redacted-jwt-token>', sanitized)
+        self.assertIn('<redacted>', sanitized)
+
+    @patch("auto_K8S.views.get_runner")
+    def test_detect_host_orphans_endpoint(self, get_runner_mock):
+        runner_mock = Mock()
+        runner_mock.run_command.side_effect = [
+            Mock(returncode=0, stdout="sno-01\nother-vm\n"),
+            Mock(returncode=0, stdout="sno-01.qcow2 /home/libvirt/images/sno-01.qcow2\n"),
+        ]
+        get_runner_mock.return_value = runner_mock
+        response = self.client.get(f"/api/hosts/{self.host.id}/orphans/")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["host_id"], self.host.id)
+        self.assertIn("sno-01", data["orphaned_vms"])
+        self.assertTrue(data["has_orphans"])
+
+    @patch("auto_K8S.views.get_runner")
+    def test_stream_vm_console(self, get_runner_mock):
+        installation = Installation.objects.create(
+            template=self.disconnected_template,
+            cluster_name="sno-01",
+            status=Installation.Status.RUNNING,
+        )
+        InstallationTarget.objects.create(
+            installation=installation,
+            host=self.host,
+            status=InstallationTarget.Status.RUNNING,
+        )
+        runner_mock = Mock()
+        runner_mock.run_command.return_value = Mock(returncode=0, stdout="guest console boot log")
+        get_runner_mock.return_value = runner_mock
+        response = self.client.get(f"/api/installations/{installation.id}/console/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("guest console boot log", response.json()["console_output"])
+
     @patch("auto_K8S.views.run_installation_task")
     def test_running_openshift_installation_cannot_be_restarted(self, run_task_mock):
         run_task_mock.delay.return_value = Mock(id="original-task")
@@ -356,3 +432,60 @@ class OpenShiftLaunchTests(TestCase):
 
         self.assertEqual(retry_response.status_code, 409)
         self.assertEqual(Installation.objects.count(), 1)
+
+    def test_build_extra_vars_includes_mirror_credentials(self):
+        host_overrides = [{
+            "host_id": self.host.id,
+            "vm_name": "sno-test",
+            "node_name": "sno-test-node",
+            "node_ip": "192.168.130.10",
+            "prefix_length": 24,
+            "gateway": "192.168.130.1",
+            "interface_name": "enp1s0",
+            "installation_disk": "/dev/vda",
+            "libvirt_network": "sno-workshop",
+            "storage_pool": "sno-pool",
+            "vcpu": 8,
+            "memory_gib": 24,
+            "disk_gib": 150,
+            "network_mode": "dhcp_reservation",
+        }]
+        cluster_cfg = {
+            "cluster_name": "sno-test",
+            "base_domain": "lab.test",
+            "openshift_version": "4.20.3",
+            "mirror_registry": "registry.lab.test:8443",
+        }
+        vars_path = build_extra_vars_file(
+            cluster_config=cluster_cfg,
+            host_overrides=host_overrides,
+            system_type=InstallationTemplate.SystemType.OPENSHIFT_SNO,
+        )
+        try:
+            with open(vars_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.assertEqual(data["mirror_username"], "mirroruser")
+            self.assertEqual(data["mirror_password"], "mirrorpassword")
+            self.assertEqual(data["cluster_config"]["cluster_name"], "sno-test")
+            self.assertEqual(data["selected_hosts_config"][0]["node_ip"], "192.168.130.10")
+        finally:
+            vars_path.unlink(missing_ok=True)
+            vars_path.parent.rmdir()
+
+    def test_secret_bundle_accepts_custom_mirror_credentials(self):
+        response = self.client.post(
+            "/api/openshift/secrets/",
+            {
+                "pull_secret": VALID_PULL_SECRET,
+                "ssh_public_key": VALID_PUBLIC_KEY,
+                "mirror_username": "custom-init",
+                "mirror_password": "custom-pass-123",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        ref = response.json()["secret_reference"]
+        _, secrets = consume_secret_bundle(ref)
+        self.assertEqual(secrets["mirror_username"], "custom-init")
+        self.assertEqual(secrets["mirror_password"], "custom-pass-123")
+

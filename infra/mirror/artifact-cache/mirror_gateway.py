@@ -471,6 +471,17 @@ class MirrorHandler(BaseHTTPRequestHandler):
             self.send_header("ETag", etag)
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+
+        accel_supported = self.headers.get("X-Accel-Supported") == "1" or os.getenv("MIRROR_ENABLE_ACCEL_REDIRECT", "0") == "1"
+        if accel_supported and status == HTTPStatus.OK:
+            try:
+                rel_path = path.resolve().relative_to(CACHE_DIR.resolve())
+                self.send_header("X-Accel-Redirect", f"/internal-cache/{rel_path.as_posix()}")
+                self.end_headers()
+                return
+            except ValueError:
+                pass
+
         self.end_headers()
 
         if not send_body:

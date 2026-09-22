@@ -51,6 +51,19 @@
       Hat pull secret, and SSH public key.
     quiet: true
 
+- name: Install Agent network configuration prerequisite
+  ansible.builtin.dnf:
+    name: nmstate
+    state: present
+    update_cache: false
+    disablerepo:
+      - docker-ce-stable
+
+- name: Verify Agent network configuration tool
+  ansible.builtin.command:
+    argv: [nmstatectl, --version]
+  changed_when: false
+
 - name: Require verified mirror release marker
   ansible.builtin.stat:
     path: "{{ openshift_agent_ready_file }}"
@@ -120,22 +133,58 @@
         group: root
         mode: "0600"
 
-    - name: Authenticate to the trusted mirror API
+    - name: Verify the trusted mirror health endpoint
       ansible.builtin.uri:
-        url: "https://{{ openshift_mirror_registry }}/v2/"
-        user: "{{ mirror_username }}"
-        password: "{{ mirror_password }}"
-        force_basic_auth: true
+        url: "https://{{ openshift_mirror_registry }}/health/instance"
         validate_certs: true
         ca_path: "{{ openshift_agent_temporary_ca.path }}"
         status_code: 200
-      no_log: true
   always:
     - name: Remove temporary mirror CA file
       ansible.builtin.file:
         path: "{{ openshift_agent_temporary_ca.path | default('') }}"
         state: absent
       when: openshift_agent_temporary_ca.path | default('') | length > 0
+
+- name: Inspect protected mirror authentication file
+  ansible.builtin.stat:
+    path: "{{ openshift_mirror_auth_file }}"
+  register: openshift_agent_mirror_auth_file
+
+- name: Require protected mirror authentication file
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_mirror_auth_file.stat.isreg | default(false)
+      - openshift_agent_mirror_auth_file.stat.pw_name | default('') == 'root'
+      - openshift_agent_mirror_auth_file.stat.mode | default('') == '0600'
+    fail_msg: >-
+      The protected mirror authentication file is missing or has unsafe
+      ownership or permissions. Run Prepare mirror content again.
+    quiet: true
+
+- name: Verify authenticated exact OpenShift release manifest
+  ansible.builtin.command:
+    argv:
+      - podman
+      - manifest
+      - inspect
+      - --authfile
+      - "{{ openshift_mirror_auth_file }}"
+      - --tls-verify=true
+      - "{{ openshift_mirror_registry }}/openshift/release-images:{{ openshift_version }}-{{ cpu_architecture }}"
+  register: openshift_agent_release_manifest
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Require authenticated access to the exact mirrored release
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_release_manifest.rc | default(1) == 0
+    fail_msg: >-
+      The exact mirrored OpenShift release cannot be authenticated and read.
+      Verify Quay credentials, TLS trust, and the mirror readiness marker.
+    quiet: true
 
 - name: Require exact Agent-Based installer binary
   ansible.builtin.command:
@@ -152,10 +201,302 @@
       {{ openshift_version }}.
     quiet: true
 
+- name: Read the installer-pinned RHCOS stream metadata
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/openshift-install"
+      - coreos
+      - print-stream-json
+  register: openshift_agent_installer_stream_json
+  changed_when: false
+
+- name: Select the installer-pinned Agent base ISO checksum
+  ansible.builtin.set_fact:
+    openshift_agent_expected_base_iso_sha256: >-
+      {{
+        (openshift_agent_installer_stream_json.stdout | from_json)
+        ['architectures'][cpu_architecture]
+        ['artifacts']['metal']['formats']['iso']['disk']['sha256']
+      }}
+
+- name: Require a valid installer-pinned Agent base ISO checksum
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_expected_base_iso_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      The matching openshift-install binary did not expose a valid SHA-256
+      checksum for the {{ cpu_architecture }} RHCOS metal ISO.
+    quiet: true
+
+- name: Require the matching OpenShift client binary
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/oc"
+      - version
+      - --client
+  register: openshift_agent_oc_version
+  changed_when: false
+
+- name: Validate OpenShift client release
+  ansible.builtin.assert:
+    that:
+      - openshift_version in openshift_agent_oc_version.stdout
+    fail_msg: >-
+      Installed oc does not match the mirrored release {{ openshift_version }}.
+      Run Prepare mirror content again.
+    quiet: true
+
+- name: Resolve machine OS image from the exact mirrored release
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/oc"
+      - adm
+      - release
+      - info
+      - --registry-config
+      - "{{ openshift_mirror_auth_file }}"
+      - --image-for=machine-os-images
+      - "{{ openshift_mirror_registry }}/{{ openshift_agent_release_image_repository }}:{{ openshift_version }}-{{ cpu_architecture }}"
+  register: openshift_agent_machine_os_source
+  changed_when: false
+
+- name: Validate the resolved machine OS digest
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_machine_os_source.stdout | trim is match('^.+@sha256:[0-9a-f]{64}$')
+    fail_msg: >-
+      The exact mirrored release did not expose a digest-pinned machine OS
+      image. The Agent ISO cannot be generated safely.
+    quiet: true
+
+- name: Select the direct local machine OS image
+  ansible.builtin.set_fact:
+    openshift_agent_machine_os_digest: >-
+      {{ openshift_agent_machine_os_source.stdout | trim | regex_search('sha256:[0-9a-f]{64}') }}
+    openshift_agent_machine_os_image: >-
+      {{ openshift_mirror_registry }}/{{ openshift_agent_machine_os_repository }}@{{ openshift_agent_machine_os_source.stdout | trim | regex_search('sha256:[0-9a-f]{64}') }}
+
+- name: Verify the direct local machine OS manifest
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/oc"
+      - image
+      - info
+      - --registry-config
+      - "{{ openshift_mirror_auth_file }}"
+      - "{{ openshift_agent_machine_os_image }}"
+  register: openshift_agent_machine_os_manifest
+  changed_when: false
+  no_log: true
+
+- name: Create the protected Agent base ISO cache
+  ansible.builtin.file:
+    path: "{{ openshift_agent_base_iso_cache_directory }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Inspect the cached Agent base ISO
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_base_iso_cache_path }}"
+    checksum_algorithm: sha256
+  register: openshift_agent_cached_base_iso
+
+- name: Inspect the cached machine OS digest marker
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_base_iso_digest_path }}"
+  register: openshift_agent_cached_base_iso_digest
+
+- name: Read the cached machine OS digest marker
+  ansible.builtin.slurp:
+    src: "{{ openshift_agent_base_iso_digest_path }}"
+  register: openshift_agent_cached_base_iso_digest_content
+  when: openshift_agent_cached_base_iso_digest.stat.isreg | default(false)
+
+- name: Select reusable Agent base ISO cache
+  ansible.builtin.set_fact:
+    openshift_agent_base_iso_reusable: >-
+      {{
+        openshift_agent_cached_base_iso.stat.isreg | default(false)
+        and openshift_agent_cached_base_iso.stat.size | default(0) | int > 500000000
+        and openshift_agent_cached_base_iso.stat.checksum | default('')
+        == openshift_agent_expected_base_iso_sha256
+        and openshift_agent_cached_base_iso_digest.stat.isreg | default(false)
+        and
+        (openshift_agent_cached_base_iso_digest_content.content | default('') | b64decode | trim)
+        == openshift_agent_machine_os_digest
+      }}
+
+- name: Populate the Agent base ISO cache from the local mirror
+  when: not (openshift_agent_base_iso_reusable | bool)
+  block:
+    - name: Create a temporary local base ISO extraction directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ openshift_agent_base_iso_cache_directory }}"
+        prefix: .lindeploy-rhcos-
+      register: openshift_agent_base_iso_stage
+
+    - name: Extract the base ISO from the direct local machine OS image
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_mirror_tools_directory }}/oc"
+          - image
+          - extract
+          - --registry-config
+          - "{{ openshift_mirror_auth_file }}"
+          - --path
+          - "/coreos/coreos-x86_64.iso:{{ openshift_agent_base_iso_stage.path }}"
+          - --confirm
+          - "{{ openshift_agent_machine_os_image }}"
+      register: openshift_agent_base_iso_extract
+      changed_when: openshift_agent_base_iso_extract.rc == 0
+
+    - name: Inspect the extracted Agent base ISO
+      ansible.builtin.stat:
+        path: "{{ openshift_agent_base_iso_stage.path }}/coreos-x86_64.iso"
+        checksum_algorithm: sha256
+      register: openshift_agent_extracted_base_iso
+
+    - name: Require a usable extracted Agent base ISO
+      ansible.builtin.assert:
+        that:
+          - openshift_agent_extracted_base_iso.stat.isreg | default(false)
+          - openshift_agent_extracted_base_iso.stat.size | int > 500000000
+          - openshift_agent_extracted_base_iso.stat.checksum == openshift_agent_expected_base_iso_sha256
+        fail_msg: >-
+          The local machine OS image did not contain the exact RHCOS base ISO
+          pinned by openshift-install. No cached ISO was replaced.
+        quiet: true
+
+    - name: Atomically publish the verified Agent base ISO cache
+      ansible.builtin.command:
+        argv:
+          - mv
+          - --force
+          - "{{ openshift_agent_base_iso_stage.path }}/coreos-x86_64.iso"
+          - "{{ openshift_agent_base_iso_cache_path }}"
+      changed_when: true
+
+    - name: Protect the Agent base ISO cache
+      ansible.builtin.file:
+        path: "{{ openshift_agent_base_iso_cache_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Record the verified machine OS digest
+      ansible.builtin.copy:
+        dest: "{{ openshift_agent_base_iso_digest_path }}"
+        content: "{{ openshift_agent_machine_os_digest }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+  always:
+    - name: Remove the temporary local base ISO extraction directory
+      ansible.builtin.file:
+        path: "{{ openshift_agent_base_iso_stage.path | default('') }}"
+        state: absent
+      when: openshift_agent_base_iso_stage.path | default('') | length > 0
+
+- name: Calculate protected Agent request fingerprint
+  ansible.builtin.set_fact:
+    openshift_agent_request_fingerprint: >-
+      {{
+        {
+          'schema': 1,
+          'cluster_name': cluster_name,
+          'base_dns_domain': base_dns_domain,
+          'openshift_version': openshift_version,
+          'cpu_architecture': cpu_architecture,
+          'mirror_registry': openshift_mirror_registry,
+          'machine_network': libvirt_network_cidr,
+          'cluster_network': cluster_network_cidr,
+          'cluster_host_prefix': cluster_network_host_prefix,
+          'service_network': service_network_cidr,
+          'node_name': sno_node_name,
+          'node_ip': sno_ip_address,
+          'prefix_length': sno_prefix_length,
+          'gateway': sno_gateway,
+          'dns_servers': sno_dns_servers,
+          'interface_name': sno_interface_name,
+          'mac_address': sno_mac_address,
+          'installation_disk': installation_disk_path,
+          'fips': openshift_fips_enabled | bool,
+          'mirror_ca_sha256': openshift_effective_mirror_ca_bundle | hash('sha256'),
+          'mirror_password_sha256': mirror_password | hash('sha256'),
+          'pull_secret_sha256': pull_secret | hash('sha256'),
+          'ssh_public_key_sha256': ssh_public_key | hash('sha256')
+        }
+        | to_json
+        | hash('sha256')
+      }}
+  no_log: true
+
 - name: Inspect existing Agent assets
   ansible.builtin.stat:
     path: "{{ openshift_agent_iso_path }}"
   register: openshift_agent_existing_iso
+
+- name: Inspect existing Agent generation state
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_state_path }}"
+  register: openshift_agent_existing_state
+
+- name: Inspect existing Agent request fingerprint
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_fingerprint_path }}"
+  register: openshift_agent_existing_fingerprint
+
+- name: Read existing Agent request fingerprint
+  ansible.builtin.slurp:
+    src: "{{ openshift_agent_fingerprint_path }}"
+  register: openshift_agent_existing_fingerprint_content
+  when: openshift_agent_existing_fingerprint.stat.isreg | default(false)
+
+- name: Select reusable Agent asset state
+  ansible.builtin.set_fact:
+    openshift_agent_fingerprint_matches: >-
+      {{
+        openshift_agent_existing_fingerprint.stat.isreg | default(false)
+        and
+        (openshift_agent_existing_fingerprint_content.content | default('') | b64decode | trim)
+        == openshift_agent_request_fingerprint
+      }}
+    openshift_agent_iso_reusable: >-
+      {{
+        openshift_agent_existing_iso.stat.isreg | default(false)
+        and openshift_agent_existing_iso.stat.size | default(0) | int > 100000000
+        and openshift_agent_existing_fingerprint.stat.isreg | default(false)
+        and
+        (openshift_agent_existing_fingerprint_content.content | default('') | b64decode | trim)
+        == openshift_agent_request_fingerprint
+      }}
+    openshift_agent_generation_state_reusable: >-
+      {{
+        openshift_agent_existing_state.stat.isreg | default(false)
+        and openshift_agent_existing_fingerprint.stat.isreg | default(false)
+        and
+        (openshift_agent_existing_fingerprint_content.content | default('') | b64decode | trim)
+        == openshift_agent_request_fingerprint
+      }}
+  no_log: true
+
+- name: Refuse stale or unowned Agent assets
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (openshift_agent_existing_iso.stat.exists | default(false))
+        or openshift_agent_fingerprint_matches | bool
+      - >-
+        not (openshift_agent_existing_state.stat.exists | default(false))
+        or openshift_agent_fingerprint_matches | bool
+    fail_msg: >-
+      Existing Agent assets do not have a matching LinDeploy request
+      fingerprint. Run the managed OpenShift cleanup before changing this
+      cluster configuration.
+    quiet: true
 
 - name: Create protected Agent assets directory
   ansible.builtin.file:
@@ -165,6 +506,15 @@
     group: "{{ ansible_user_gid }}"
     mode: "0700"
 
+- name: Record protected Agent request fingerprint
+  ansible.builtin.copy:
+    dest: "{{ openshift_agent_fingerprint_path }}"
+    content: "{{ openshift_agent_request_fingerprint }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not (openshift_agent_iso_reusable | bool)
+
 - name: Render protected install-config
   ansible.builtin.template:
     src: install-config.yaml.j2
@@ -173,7 +523,9 @@
     group: "{{ ansible_user_gid }}"
     mode: "0600"
   no_log: true
-  when: not openshift_agent_existing_iso.stat.exists
+  when:
+    - not (openshift_agent_iso_reusable | bool)
+    - not (openshift_agent_generation_state_reusable | bool)
 
 - name: Render Agent host configuration
   ansible.builtin.template:
@@ -183,7 +535,9 @@
     group: "{{ ansible_user_gid }}"
     mode: "0600"
   no_log: true
-  when: not openshift_agent_existing_iso.stat.exists
+  when:
+    - not (openshift_agent_iso_reusable | bool)
+    - not (openshift_agent_generation_state_reusable | bool)
 
 - name: Generate Agent cluster manifests
   ansible.builtin.command:
@@ -197,13 +551,20 @@
       - --log-level
       - info
   register: openshift_agent_manifests
+  environment:
+    PATH: "{{ openshift_mirror_tools_directory }}:{{ ansible_env.PATH }}"
   changed_when: openshift_agent_manifests.rc == 0
-  no_log: true
-  when: not openshift_agent_existing_iso.stat.exists
+  when:
+    - not (openshift_agent_iso_reusable | bool)
+    - not (openshift_agent_generation_state_reusable | bool)
 
 - name: Generate disconnected Agent ISO
   ansible.builtin.command:
     argv:
+      - /usr/bin/timeout
+      - --signal=TERM
+      - --kill-after=60s
+      - "{{ openshift_agent_image_generation_timeout_seconds }}s"
       - "{{ openshift_mirror_tools_directory }}/openshift-install"
       - agent
       - create
@@ -213,9 +574,12 @@
       - --log-level
       - info
   register: openshift_agent_image
+  environment:
+    PATH: "{{ openshift_mirror_tools_directory }}:{{ ansible_env.PATH }}"
+    OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE: >-
+      {{ openshift_agent_base_iso_override_url }}?sha256={{ openshift_agent_expected_base_iso_sha256 }}
   changed_when: openshift_agent_image.rc == 0
-  no_log: true
-  when: not openshift_agent_existing_iso.stat.exists
+  when: not (openshift_agent_iso_reusable | bool)
 
 - name: Require generated Agent ISO
   ansible.builtin.stat:

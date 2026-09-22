@@ -1,7 +1,12 @@
 ---
 require_workshop_readiness: false
 validate_console_and_oauth: true
+openshift_installation_method: Assisted Installer
 openshift_route_validate_certs: false
+api_access_retries: 90
+api_access_delay: 10
+critical_operator_retries: 120
+critical_operator_delay: 15
 openshift_route_retries: 60
 openshift_route_delay: 15
 critical_cluster_operators:

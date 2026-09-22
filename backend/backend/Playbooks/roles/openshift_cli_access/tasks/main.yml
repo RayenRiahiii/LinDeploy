@@ -1,0 +1,97 @@
+---
+- name: Validate the OpenShift CLI access request
+  ansible.builtin.assert:
+    that:
+      - openshift_cli_access_user is match('^[a-z_][a-z0-9_-]*[$]?$')
+      - cluster_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+    fail_msg: OpenShift CLI access requires a valid local user and cluster name.
+    quiet: true
+
+- name: Resolve the OpenShift CLI user account
+  ansible.builtin.command:
+    argv: [getent, passwd, "{{ openshift_cli_access_user }}"]
+  register: openshift_cli_passwd
+  changed_when: false
+
+- name: Resolve the OpenShift CLI user group
+  ansible.builtin.command:
+    argv: [id, -gn, "{{ openshift_cli_access_user }}"]
+  register: openshift_cli_group
+  changed_when: false
+
+- name: Select protected OpenShift CLI paths
+  ansible.builtin.set_fact:
+    openshift_cli_user_home: "{{ openshift_cli_passwd.stdout.split(':')[5] }}"
+    openshift_cli_user_group: "{{ openshift_cli_group.stdout | trim }}"
+    openshift_cli_user_kubeconfig: >-
+      {{ openshift_cli_passwd.stdout.split(':')[5] }}/.kube/{{ openshift_cli_kubeconfig_name }}
+
+- name: Validate the OpenShift CLI user home
+  ansible.builtin.assert:
+    that:
+      - openshift_cli_user_home is match('^/[^\n]+$')
+      - openshift_cli_user_home != '/root'
+    fail_msg: Refusing to configure OpenShift CLI access for an unsafe user home.
+    quiet: true
+
+- name: Expose the verified OpenShift CLI on the system PATH
+  ansible.builtin.file:
+    src: "{{ oc_binary_path }}"
+    dest: "{{ openshift_cli_binary_path }}"
+    state: link
+    force: true
+
+- name: Create the protected user kubeconfig directory
+  ansible.builtin.file:
+    path: "{{ openshift_cli_user_home }}/.kube"
+    state: directory
+    owner: "{{ openshift_cli_access_user }}"
+    group: "{{ openshift_cli_user_group }}"
+    mode: "0700"
+
+- name: Install the cluster-specific user kubeconfig
+  ansible.builtin.copy:
+    src: "{{ kubeconfig_path }}"
+    dest: "{{ openshift_cli_user_kubeconfig }}"
+    remote_src: true
+    owner: "{{ openshift_cli_access_user }}"
+    group: "{{ openshift_cli_user_group }}"
+    mode: "0600"
+  no_log: true
+
+- name: Generate OpenShift Bash completion
+  ansible.builtin.command:
+    argv: ["{{ openshift_cli_binary_path }}", completion, bash]
+  register: openshift_cli_completion
+  changed_when: false
+
+- name: Publish OpenShift Bash completion
+  ansible.builtin.copy:
+    dest: "{{ openshift_cli_completion_path }}"
+    content: "{{ openshift_cli_completion.stdout }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Activate direct OpenShift CLI access for the installation user
+  ansible.builtin.blockinfile:
+    path: "{{ openshift_cli_user_home }}/.bashrc"
+    marker: "# {mark} LINDEPLOY OPENSHIFT CLI {{ cluster_name }}"
+    block: |
+      export KUBECONFIG="$HOME/.kube/{{ openshift_cli_kubeconfig_name }}"
+      if [ -r {{ openshift_cli_completion_path }} ]; then
+        source {{ openshift_cli_completion_path }}
+      fi
+    create: true
+    owner: "{{ openshift_cli_access_user }}"
+    group: "{{ openshift_cli_user_group }}"
+    mode: "0600"
+
+- name: Report direct OpenShift CLI access
+  ansible.builtin.debug:
+    msg:
+      - "User: {{ openshift_cli_access_user }}"
+      - "Command: oc get nodes"
+      - "Kubeconfig: {{ openshift_cli_user_kubeconfig }}"
+      - A new Bash session loads oc completion automatically.
+

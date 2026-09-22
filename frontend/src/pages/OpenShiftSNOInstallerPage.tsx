@@ -3,6 +3,8 @@ import { notifications } from "@mantine/notifications";
 import { IconArrowLeft, IconArrowRight, IconChecklist, IconHistory, IconId, IconKey, IconPlayerPlay, IconRefresh, IconServer2, IconTrash } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import PageHeader from "../components/common/PageHeader";
+import { getInstallerLogo } from "../features/installers/catalog";
 import DeploymentWizard, { type DeploymentWizardStep, type DeploymentWizardStepDefinition } from "../components/installers/DeploymentWizard";
 import InstallerLabel from "../components/installers/InstallerLabel";
 import ClusterIdentityStep from "../components/openshift/ClusterIdentityStep";
@@ -50,6 +52,7 @@ export default function OpenShiftSNOInstallerPage() {
   const selectedHostAvailable = values.provisioningHostId !== null && enabledHosts.some((host) => host.id === values.provisioningHostId);
   const disconnectedTemplate = useMemo(() => templates.find((template) => template.playbook_path === "playbooks/openshift_sno_disconnected.yml"), [templates]);
   const cleanupTemplate = useMemo(() => templates.find((template) => template.playbook_path === "playbooks/openshift_sno_cleanup.yml"), [templates]);
+  const fullUninstallTemplate = useMemo(() => templates.find((template) => template.playbook_path === "playbooks/openshift_sno_full_uninstall.yml"), [templates]);
   const validTemplate = disconnectedTemplate;
   const blockingFields = stepFields[activeStep].filter((field) => errors[field]);
   const canLaunch = canLaunchOpenShift(errors, selectedHostAvailable, Boolean(validTemplate), submitting);
@@ -160,12 +163,14 @@ export default function OpenShiftSNOInstallerPage() {
     await queueWorkflow(validTemplate, "Disconnected SNO installation queued");
   }
 
-  async function launchCleanup() {
-    if (!cleanupTemplate || values.provisioningHostId === null || submitting) return;
+  async function launchCleanup(preserveIso = true) {
+    const targetTemplate = preserveIso ? cleanupTemplate : (fullUninstallTemplate || cleanupTemplate);
+    if (!targetTemplate || values.provisioningHostId === null || submitting) return;
     setSubmitting(true);
     try {
-      const payload = buildOpenShiftPayload(values, cleanupTemplate.id, "");
+      const payload = buildOpenShiftPayload(values, targetTemplate.id, "");
       payload.cluster_config.secret_reference = "";
+      payload.cluster_config.preserve_iso = preserveIso;
       const response = await fetch(`${BASE_URL}/api/installations/launch/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -176,7 +181,7 @@ export default function OpenShiftSNOInstallerPage() {
       setCleanupOpen(false);
       notifications.show({
         color: "green",
-        title: "OpenShift cleanup queued",
+        title: preserveIso ? "OpenShift reset queued (ISO preserved)" : "OpenShift full cleanup queued",
         message: result.message || `Execution #${result.installation_id} was created.`,
       });
       navigate("/executions");
@@ -193,26 +198,49 @@ export default function OpenShiftSNOInstallerPage() {
 
   return (
     <Stack gap="lg" className="openshift-page">
-      <Card className="console-panel" padding="lg">
-        <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
-          <Box>
-            <Badge color="red" variant="light" size="lg" mb="sm">
-              <InstallerLabel label="OpenShift SNO Installer" withLogo installerId="openshift_sno" />
-            </Badge>
-            <Title order={2}>
-              <InstallerLabel label="Deploy Single Node OpenShift" withLogo installerId="openshift_sno" className="page-installer-heading" />
-            </Title>
-            <Text c="dimmed" mt={6} maw={780}>
-              Create one OpenShift cluster as a KVM/libvirt virtual machine. LinDeploy validates the host, prepares the discovery ISO, installs RHCOS, and verifies the resulting cluster.
-            </Text>
-          </Box>
+      <PageHeader
+        icon={
+          <img
+            src={getInstallerLogo("openshift_sno")}
+            alt=""
+            className="template-logo-inline"
+            style={{ width: 22, height: 22 }}
+          />
+        }
+        badge="OpenShift SNO Installer"
+        badgeColor="red"
+        title={
+          <InstallerLabel
+            label="Deploy Single Node OpenShift"
+            withLogo
+            installerId="openshift_sno"
+            className="page-installer-heading"
+          />
+        }
+        subtitle="Create one OpenShift cluster as a KVM/libvirt virtual machine. LinDeploy validates the host, prepares the discovery ISO, installs RHCOS, and verifies the resulting cluster."
+        actions={
           <Group gap="sm">
-            <Button variant="default" leftSection={<IconRefresh size={16} />} onClick={() => setReloadToken((value) => value + 1)} disabled={loading}>Refresh</Button>
-            <Button variant="default" leftSection={<IconHistory size={16} />} onClick={() => navigate("/history")}>History</Button>
-            <Button color="red" variant="light" onClick={() => setResetOpen(true)}>Reset form</Button>
+            <Button
+              variant="default"
+              leftSection={<IconRefresh size={16} />}
+              onClick={() => setReloadToken((value) => value + 1)}
+              disabled={loading}
+            >
+              Refresh
+            </Button>
+            <Button
+              variant="default"
+              leftSection={<IconHistory size={16} />}
+              onClick={() => navigate("/history")}
+            >
+              History
+            </Button>
+            <Button color="red" variant="light" onClick={() => setResetOpen(true)}>
+              Reset form
+            </Button>
           </Group>
-        </Group>
-      </Card>
+        }
+      />
 
       <DeploymentWizard
         activeStep={activeStep}
@@ -257,15 +285,42 @@ export default function OpenShiftSNOInstallerPage() {
         </Card>
       )}
       <Modal opened={resetOpen} onClose={() => setResetOpen(false)} title="Reset OpenShift configuration?" centered><Stack><Text size="sm">This clears every field, including sensitive values held in memory. No controller resource is changed.</Text><Group justify="flex-end"><Button variant="default" onClick={() => setResetOpen(false)}>Cancel</Button><Button color="red" onClick={resetForm}>Clear configuration</Button></Group></Stack></Modal>
-      <Modal opened={cleanupOpen} onClose={() => setCleanupOpen(false)} title="Remove the managed SNO environment?" centered>
-        <Stack>
+      <Modal opened={cleanupOpen} onClose={() => setCleanupOpen(false)} title="Remove the managed SNO environment?" size="md" centered>
+        <Stack gap="md">
           <Alert color="orange" title="Destructive cleanup">
-            LinDeploy will remove the managed VM <strong>{values.vmName}</strong>, its managed disk, and generated Agent installation assets on the selected provisioning host. The OpenShift mirror registry and mirrored releases are preserved.
+            LinDeploy will remove the managed VM <strong>{values.vmName}</strong> and its disks on the selected provisioning host. The local Quay mirror registry and mirrored releases are always preserved.
           </Alert>
-          <Text size="sm" c="dimmed">The playbook refuses to remove a VM that does not contain the expected LinDeploy ownership marker.</Text>
+          <Text size="sm" c="dimmed">Choose whether to preserve the generated Agent ISO image for faster subsequent installations:</Text>
+          
+          <Card padding="sm" withBorder className="host-panel">
+            <Stack gap="xs">
+              <Group justify="space-between">
+                <Text fw={600} size="sm">Reset Cluster (Keep ISO)</Text>
+                <Badge color="yellow" variant="light">Recommended</Badge>
+              </Group>
+              <Text size="xs" c="dimmed">
+                Removes the VM and disk, but keeps the generated ISO image and mirror cache so future reinstallations boot in seconds without waiting to generate assets.
+              </Text>
+              <Button color="orange" variant="light" size="xs" loading={submitting} onClick={() => void launchCleanup(true)}>
+                Reset & Keep ISO
+              </Button>
+            </Stack>
+          </Card>
+
+          <Card padding="sm" withBorder className="host-panel">
+            <Stack gap="xs">
+              <Text fw={600} size="sm">Full Uninstall (Purge All)</Text>
+              <Text size="xs" c="dimmed">
+                Removes the VM, its disk, the runtime ISO from the storage pool, and deletes all cluster-specific installation assets.
+              </Text>
+              <Button color="red" variant="light" size="xs" loading={submitting} onClick={() => void launchCleanup(false)}>
+                Full Uninstall
+              </Button>
+            </Stack>
+          </Card>
+
           <Group justify="flex-end">
-            <Button variant="default" onClick={() => setCleanupOpen(false)}>Cancel</Button>
-            <Button color="red" leftSection={<IconTrash size={16} />} loading={submitting} onClick={() => void launchCleanup()}>Start cleanup</Button>
+            <Button variant="default" size="xs" onClick={() => setCleanupOpen(false)}>Cancel</Button>
           </Group>
         </Stack>
       </Modal>

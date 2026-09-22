@@ -59,6 +59,13 @@ type LiveExecution = {
     line: string;
     timestamp?: string;
   }>;
+  telemetry?: {
+    total_percentage?: number;
+    cluster_status?: string;
+    stage?: string;
+    stage_percentage?: number;
+    progress_info?: string;
+  };
 };
 
 type LastExecution = {
@@ -215,6 +222,26 @@ export default function DeploymentMonitor({
                       </div>
                     </Group>
                   </div>
+                )}
+
+                {loading && live.telemetry && (
+                  <Card withBorder padding="xs" mt="xs" radius="md" style={{ background: "rgba(255, 107, 107, 0.05)", borderColor: "rgba(255, 107, 107, 0.2)" }}>
+                    <Group justify="space-between" mb={4}>
+                      <Badge color="red" variant="light" size="sm">
+                        OpenShift Telemetry: {live.telemetry.stage || live.telemetry.cluster_status || "Installing"}
+                      </Badge>
+                      <Text size="xs" fw={700} c="dimmed">
+                        Node: {live.telemetry.stage_percentage ?? 0}% | Cluster: {live.telemetry.total_percentage ?? 0}%
+                      </Text>
+                    </Group>
+                    <Progress
+                      value={live.telemetry.stage_percentage ?? 0}
+                      color="red"
+                      size="sm"
+                      striped
+                      animated
+                    />
+                  </Card>
                 )}
 
                 {loading && (live.seenTasks > 0 || live.completedTasks > 0) && (

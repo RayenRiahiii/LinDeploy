@@ -29,8 +29,8 @@
     that:
       - kubernetes_api_check.rc == 0
     fail_msg: >-
-      Assisted Installer completed, but the Kubernetes API could not
-      be reached using the downloaded kubeconfig.
+      OpenShift installation completed, but the Kubernetes API could not be
+      reached using the generated kubeconfig.
     quiet: true
 
 - name: Wait for OpenShift convergence when requested
@@ -135,49 +135,50 @@
     quiet: true
   when: require_workshop_readiness | bool
 
-- name: Read cluster operator status
+- name: Wait for critical ClusterOperator conditions
   ansible.builtin.command:
-    argv:
-      - "{{ oc_binary_path }}"
-      - --kubeconfig
-      - "{{ kubeconfig_path }}"
-      - get
-      - clusteroperators
-  register: installed_cluster_operators
-  changed_when: false
-  failed_when: false
-
-- name: Read critical ClusterOperator conditions
-  ansible.builtin.command:
-    argv:
-      - "{{ oc_binary_path }}"
-      - --kubeconfig
-      - "{{ kubeconfig_path }}"
-      - get
-      - clusteroperators
-      - "{{ item }}"
-      - -o
-      - 'jsonpath={.metadata.name}={.status.conditions[?(@.type=="Available")].status}/{.status.conditions[?(@.type=="Progressing")].status}/{.status.conditions[?(@.type=="Degraded")].status}'
-  loop: "{{ critical_cluster_operators }}"
+    argv: >-
+      {{
+        [oc_binary_path, '--kubeconfig', kubeconfig_path, 'get', 'clusteroperators']
+        + critical_cluster_operators
+        + [
+          '-o',
+          'jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Available")].status}/{.status.conditions[?(@.type=="Progressing")].status}/{.status.conditions[?(@.type=="Degraded")].status}{"\n"}{end}'
+        ]
+      }}
   register: critical_operator_conditions
   changed_when: false
   failed_when: false
   until:
-    - critical_operator_conditions.rc == 0
-    - critical_operator_conditions.stdout is match('^.+=True/False/False$')
-  retries: "{{ cluster_convergence_retries if require_workshop_readiness | bool else 1 }}"
-  delay: "{{ cluster_convergence_delay }}"
+    - >-
+      not (require_workshop_readiness | bool)
+      or (
+        critical_operator_conditions.rc == 0
+        and critical_operator_conditions.stdout_lines | length == critical_cluster_operators | length
+        and (
+          critical_operator_conditions.stdout_lines
+          | reject('match', '^.+=True/False/False$')
+          | list
+          | length
+        ) == 0
+      )
+  retries: "{{ critical_operator_retries if require_workshop_readiness | bool else 1 }}"
+  delay: "{{ critical_operator_delay }}"
 
 - name: Require healthy critical ClusterOperators
   ansible.builtin.assert:
     that:
-      - item.rc == 0
-      - item.stdout is match('^.+=True/False/False$')
-    fail_msg: "Critical ClusterOperator is unhealthy: {{ item.stdout | default(item.item) }}"
+      - critical_operator_conditions.rc == 0
+      - critical_operator_conditions.stdout_lines | length == critical_cluster_operators | length
+      - >-
+        critical_operator_conditions.stdout_lines
+        | reject('match', '^.+=True/False/False$')
+        | list
+        | length == 0
+    fail_msg: >-
+      One or more critical ClusterOperators are not healthy:
+      {{ critical_operator_conditions.stdout_lines | default([]) | join(', ') }}
     quiet: true
-  loop: "{{ critical_operator_conditions.results }}"
-  loop_control:
-    label: "{{ item.item }}"
   when: require_workshop_readiness | bool
 
 - name: Wait for the OpenShift Console route
@@ -214,7 +215,8 @@
   ansible.builtin.debug:
     msg:
       - "Cluster: {{ cluster_name }}"
-      - Assisted Installer installation is complete.
+      - "Installation method: {{ openshift_installation_method }}"
+      - OpenShift installation is complete.
       - Kubernetes API access succeeded.
       - "Fully converged: {{ sno_cluster_converged }}"
       - "Kubeconfig: {{ kubeconfig_path }}"
@@ -233,8 +235,8 @@
           and installed_sno_node_readiness.stdout_lines | length == 1
           and installed_sno_node_readiness.stdout_lines[0] is match('^.+=True$')
           and (
-            critical_operator_conditions.results
-            | rejectattr('stdout', 'match', '^.+=True/False/False$')
+            critical_operator_conditions.stdout_lines
+            | reject('match', '^.+=True/False/False$')
             | list
             | length == 0
           )

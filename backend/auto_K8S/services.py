@@ -17,6 +17,7 @@ from django.utils import timezone
 from backend.celery import app as celery_app
 from .models import Host, Installation, InstallationTarget, InstallationTemplate, MirrorProfile
 from .openshift_secrets import consume_secret_bundle, destroy_secret_bundle
+from .openshift_telemetry import OpenShiftTelemetryPoller
 from .runners import get_runner
 
 
@@ -25,18 +26,42 @@ class InstallationCancelled(Exception):
 
 
 AUTO_FULL_PLAYBOOK_PATH = "playbooks/k8s_single_node.yml"
-AUTO_PREPARED_PLAYBOOK_PATH = "playbooks/init_single_node.yml"
+AUTO_PREPARED_PLAYBOOK_PATH = "playbooks/k8s_single_node.yml"
 AUTO_K3S_SINGLE_NODE_PLAYBOOK_PATH = "playbooks/k3s_single_node.yml"
 LIVE_OUTPUT_LINE_LIMIT = 5000
+
+SECRET_PATTERNS = [
+    # Red Hat Offline Tokens / JWTs
+    (re.compile(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}"), "<redacted-jwt-token>"),
+    # Docker auth tokens / base64 auth
+    (re.compile(r'("auth":\s*")[^"]+(")'), r'\1<redacted-auth>\2'),
+    (re.compile(r'("password":\s*")[^"]+(")'), r'\1<redacted-password>\2'),
+    # OpenShift pull secret auths
+    (re.compile(r'("auths":\s*\{)[^\}]+(\})'), r'\1"<redacted-pull-secret>"\2'),
+    # Ansible & SSH passwords in key-value format
+    (re.compile(r'(ansible_(?:password|become_password|ssh_pass)\s*[:=]\s*)[^\s,]+', re.IGNORECASE), r'\1"<redacted>"'),
+    # Private keys
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "<redacted-private-key>"),
+    # Generic bearer tokens
+    (re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.]{20,}", re.IGNORECASE), r"\1<redacted-token>"),
+]
+
+
+def sanitize_log_line(text):
+    """Scrub sensitive credentials, tokens, passwords, and private keys from log lines."""
+    if not text or not isinstance(text, str):
+        return text or ""
+    sanitized = text
+    for pattern, replacement in SECRET_PATTERNS:
+        sanitized = pattern.sub(replacement, sanitized)
+    return sanitized
 
 
 def redact_inventory_secrets(inventory_content):
     """Return a diagnostic-safe inventory without SSH or sudo secret values."""
-    return re.sub(
-        r'(?m)^(\s*ansible_(?:password|become_password):\s*).+$',
-        r'\1"<redacted>"',
-        inventory_content or "",
-    )
+    if not inventory_content:
+        return ""
+    return sanitize_log_line(inventory_content)
 
 
 def get_live_output_path(installation_id):
@@ -51,16 +76,17 @@ def reset_live_output(installation_id):
 
 
 def append_live_output_line(path, lock, *, channel, line, timestamp):
+    safe_line = sanitize_log_line(line)
     payload = json.dumps(
         {
             "channel": channel,
-            "line": line,
+            "line": safe_line,
             "timestamp": timestamp,
         },
         ensure_ascii=False,
     )
     with lock:
-        with path.open("a", encoding="utf-8", newline="\n") as stream:
+        with path.open("a", encoding="utf-8") as stream:
             stream.write(f"{payload}\n")
 
 
@@ -83,6 +109,41 @@ def read_live_output_lines(installation_id, limit=LIVE_OUTPUT_LINE_LIMIT):
         return []
 
     return list(output_lines)
+
+
+def read_live_output_chunk(installation_id, offset=0, limit=LIVE_OUTPUT_LINE_LIMIT):
+    """
+    Read output lines starting from line index `offset` (0-indexed).
+    Returns a dict: {"lines": [...], "next_offset": int, "total_lines": int}
+    """
+    path = get_live_output_path(installation_id)
+    if not path.is_file():
+        return {"lines": [], "next_offset": 0, "total_lines": 0}
+
+    offset_val = max(0, int(offset or 0))
+    limit_val = max(1, int(limit or LIVE_OUTPUT_LINE_LIMIT))
+
+    lines = []
+    current_index = 0
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for raw_line in stream:
+                try:
+                    item = json.loads(raw_line)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(item, dict) and isinstance(item.get("line"), str):
+                    if current_index >= offset_val and len(lines) < limit_val:
+                        lines.append(item)
+                    current_index += 1
+    except OSError:
+        return {"lines": [], "next_offset": offset_val, "total_lines": current_index}
+
+    return {
+        "lines": lines,
+        "next_offset": offset_val + len(lines),
+        "total_lines": current_index,
+    }
 
 
 def normalize_node_name(value, fallback="node"):
@@ -155,7 +216,7 @@ def kill_process_tree(pid):
                 "for target in pids:\n"
                 "    try: os.kill(target, signal.SIGTERM)\n"
                 "    except ProcessLookupError: pass\n"
-                "time.sleep(2)\n"
+                "time.sleep(1)\n"
                 "for target in pids:\n"
                 "    try: os.kill(target, signal.SIGKILL)\n"
                 "    except ProcessLookupError: pass\n"
@@ -168,6 +229,21 @@ def kill_process_tree(pid):
                     "python3",
                     "-c",
                     terminate_script,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+            )
+            # Extra safeguard for lingering ansible/openshift processes
+            subprocess.run(
+                [
+                    "wsl",
+                    "-d",
+                    distro,
+                    "sh",
+                    "-c",
+                    f"pkill -TERM -P {wsl_pid} 2>/dev/null || true; sleep 1; pkill -KILL -P {wsl_pid} 2>/dev/null || true",
                 ],
                 capture_output=True,
                 text=True,
@@ -262,6 +338,13 @@ def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
                 "network_mode",
             ):
                 normalized_item[key] = raw.get(key)
+            if not normalized_item.get("mac_address"):
+                try:
+                    host_id_byte = int(host.id) % 256
+                    last_ip_byte = int(str(normalized_item.get("node_ip", "10")).split(".")[-1]) % 256
+                    normalized_item["mac_address"] = f"52:54:00:01:{host_id_byte:02x}:{last_ip_byte:02x}"
+                except Exception:
+                    normalized_item["mac_address"] = "52:54:00:01:00:10"
         normalized.append(normalized_item)
 
     return normalized
@@ -461,6 +544,10 @@ def build_extra_vars_file(
     }
     if system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
         payload.update(ephemeral_secrets or {})
+        if not payload.get("mirror_username"):
+            payload["mirror_username"] = getattr(settings, "OPENSHIFT_MIRROR_USERNAME", "init")
+        if not payload.get("mirror_password"):
+            payload["mirror_password"] = getattr(settings, "OPENSHIFT_MIRROR_PASSWORD", "")
         payload["redhat_offline_token"] = settings.OPENSHIFT_RED_HAT_OFFLINE_TOKEN
         payload["openshift_default_version"] = settings.OPENSHIFT_DEFAULT_VERSION
 
@@ -1644,7 +1731,10 @@ def execute_installation(installation_id, task=None):
     )
 
     try:
-        if installation.template.system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+        if (
+            installation.template.system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO
+            and installation.template.deployment_type != InstallationTemplate.DeploymentType.CLEANUP
+        ):
             secret_reference = (installation.cluster_config or {}).get("secret_reference")
             if secret_reference:
                 openshift_secret_bundle, ephemeral_secrets = consume_secret_bundle(secret_reference)
@@ -2011,18 +2101,76 @@ def execute_installation(installation_id, task=None):
 
         publish_live_playbook_state()
 
-        result, playbook_metadata = run_playbook(
-            repo_root=ansible_repo_root,
-            playbook_relative_path=installation.template.playbook_path,
-            inventory_path=inventory_path,
-            extra_vars_path=extra_vars_path,
-            on_stdout_line=lambda line: handle_playbook_line("stdout", line),
-            on_stderr_line=lambda line: handle_playbook_line("stderr", line),
-            on_process_start=lambda process: update_installation(
-                installation,
-                runner_pid=process.pid,
-            ),
-        )
+        telemetry_poller = None
+        if installation.template.system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+            cluster_cfg = installation.cluster_config or {}
+            target_ip = cluster_cfg.get("rendezvous_ip") or "192.168.130.10"
+            cluster_name = cluster_cfg.get("cluster_name") or "sno-01"
+            home_dir = os.environ.get("HOME") or "/home/rayen"
+            assets_dir = f"{home_dir}/.local/share/lindeploy/openshift-agent/{cluster_name}"
+            standard_assets_dir = f"/var/lib/lindeploy/openshift-agent/{cluster_name}"
+            legacy_assets_dir = f"{home_dir}/.local/share/lindeploy/openshift-agent/{cluster_name}"
+            assets_dir = standard_assets_dir if os.path.isdir(standard_assets_dir) else legacy_assets_dir
+
+            def on_telemetry(data):
+                stage = data.get("stage") or ""
+                stage_pct = data.get("stage_percentage") or 0
+                tot_pct = data.get("total_percentage") or 0
+                prog_info = data.get("progress_info") or ""
+                extra = f" ({prog_info})" if prog_info and prog_info != str(stage_pct) + "%" else ""
+                msg = f"Stage: {stage}{extra} - {stage_pct}% (Cluster: {tot_pct}%)"
+                installation.summary_message = msg
+                update_installation(
+                    installation,
+                    summary_message=msg,
+                    progress=max(installation.progress or 0, min(92, 35 + int(tot_pct * 0.57))),
+                )
+                publish_task_progress(
+                    task,
+                    installation,
+                    current_step=4,
+                    total_steps=5,
+                    task_id=celery_task_id,
+                    extra_meta={
+                        "current_play": live_tracker["current_play"],
+                        "current_role": live_tracker["current_role"],
+                        "current_task": live_tracker["current_task"],
+                        "seen_tasks": live_tracker["seen_tasks"],
+                        "completed_tasks": live_tracker["completed_tasks"],
+                        "total_tasks": live_tracker["total_tasks"],
+                        "recent_events": live_tracker["recent_events"],
+                        "telemetry": data,
+                    },
+                )
+
+            try:
+                telemetry_poller = OpenShiftTelemetryPoller(
+                    vm_ip=target_ip,
+                    assets_directory=assets_dir,
+                    on_update_callback=on_telemetry,
+                    poll_interval=5.0,
+                )
+                telemetry_poller.start()
+            except Exception:
+                pass
+
+        try:
+            result, playbook_metadata = run_playbook(
+                repo_root=ansible_repo_root,
+                playbook_relative_path=installation.template.playbook_path,
+                inventory_path=inventory_path,
+                extra_vars_path=extra_vars_path,
+                on_stdout_line=lambda line: handle_playbook_line("stdout", line),
+                on_stderr_line=lambda line: handle_playbook_line("stderr", line),
+                on_process_start=lambda process: update_installation(
+                    installation,
+                    runner_pid=process.pid,
+                ),
+            )
+        finally:
+            if telemetry_poller:
+                telemetry_poller.stop()
+
         timings["playbook_execution_seconds"] = playbook_metadata["execution_seconds"]
         live_tracker["completed_tasks"] = max(
             live_tracker["completed_tasks"],
@@ -2122,8 +2270,8 @@ def execute_installation(installation_id, task=None):
             cancel_requested=False,
             finished_at=timezone.now(),
             command=playbook_metadata["command"],
-            stdout=result.stdout,
-            stderr=result.stderr,
+            stdout=sanitize_log_line(result.stdout),
+            stderr=sanitize_log_line(result.stderr),
             summary_message=summary_message,
             return_code=result.returncode,
             timings=timings,

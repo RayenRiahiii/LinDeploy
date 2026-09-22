@@ -11,6 +11,11 @@
       <hostname>{{ cluster.name }}-node.{{ cluster.name }}.{{ workshop_base_domain }}</hostname>
     </host>
 {% endfor %}
+{% for record in libvirt_additional_dns_records | default([]) %}
+    <host ip='{{ record.ip_address }}'>
+      <hostname>{{ record.name }}</hostname>
+    </host>
+{% endfor %}
   </dns>
   <ip address='{{ libvirt_gateway }}' netmask='{{ libvirt_netmask }}'>
     <dhcp>

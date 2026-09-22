@@ -24,3 +24,49 @@
 - name: Load the selected DNS provider
   ansible.builtin.include_tasks:
     file: "providers/{{ dns_provider }}.yml"
+
+- name: Publish controller-side OpenShift resolver records
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} LINDEPLOY OPENSHIFT {{ cluster_name }}.{{ base_dns_domain }}"
+    block: >-
+      {{ sno_ip_address }} api.{{ cluster_name }}.{{ base_dns_domain }}
+      api-int.{{ cluster_name }}.{{ base_dns_domain }}
+      console-openshift-console.apps.{{ cluster_name }}.{{ base_dns_domain }}
+      oauth-openshift.apps.{{ cluster_name }}.{{ base_dns_domain }}
+    create: false
+    backup: true
+  become: true
+  when:
+    - automation_mode == 'apply'
+    - dns_publish_controller_records | default(false) | bool
+
+- name: Verify controller-side OpenShift resolver records
+  ansible.builtin.command:
+    argv: [getent, ahostsv4, "{{ item }}"]
+  loop:
+    - "api.{{ cluster_name }}.{{ base_dns_domain }}"
+    - "console-openshift-console.apps.{{ cluster_name }}.{{ base_dns_domain }}"
+    - "oauth-openshift.apps.{{ cluster_name }}.{{ base_dns_domain }}"
+  register: dns_controller_queries
+  changed_when: false
+  failed_when: false
+  when:
+    - automation_mode == 'apply'
+    - dns_publish_controller_records | default(false) | bool
+
+- name: Require controller-side OpenShift name resolution
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - sno_ip_address in item.stdout
+    fail_msg: >-
+      The KVM host cannot resolve {{ item.item }} to {{ sno_ip_address }}.
+      Installation was stopped before creating or starting the SNO VM.
+    quiet: true
+  loop: "{{ dns_controller_queries.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('OpenShift endpoint') }}"
+  when:
+    - automation_mode == 'apply'
+    - dns_publish_controller_records | default(false) | bool

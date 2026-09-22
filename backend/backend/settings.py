@@ -185,9 +185,10 @@ ANSIBLE_TIMEOUT = int(os.getenv("ANSIBLE_TIMEOUT", "15"))
 ANSIBLE_HOST_KEY_CHECKING = env_bool("ANSIBLE_HOST_KEY_CHECKING", False)
 ANSIBLE_SSH_ARGS = os.getenv(
     "ANSIBLE_SSH_ARGS",
-    "-C -o ControlMaster=auto -o ControlPersist=60s "
+    "-C -o ControlMaster=auto -o ControlPersist=1800s "
     "-o ConnectTimeout=15 -o ConnectionAttempts=1 "
     "-o ServerAliveInterval=15 -o ServerAliveCountMax=3 "
+    "-o Ciphers=chacha20-poly1305@openssh.com,aes128-gcm@openssh.com,aes256-gcm@openssh.com "
     "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
 )
 
@@ -207,6 +208,7 @@ OPENSHIFT_MIRROR_PASSWORD = os.getenv("OPENSHIFT_MIRROR_PASSWORD", "")
 OPENSHIFT_MIRROR_STORAGE_PATH = os.getenv(
     "OPENSHIFT_MIRROR_STORAGE_PATH", "/home/lindeploy/openshift-mirror"
 ).strip()
+OPENSHIFT_MIRROR_CA_FILE = os.getenv("OPENSHIFT_MIRROR_CA_FILE", "").strip()
 
 # Release hosts held by an orphaned queued/SSH-check execution. Running
 # playbooks always have a runner PID and are never expired by this safeguard.

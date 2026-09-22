@@ -353,6 +353,19 @@
   when:
     - not lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
     - containerd_config_stat.stat.exists
+  notify: Restart containerd
+
+- name: Remove stale LinDeploy registry mirror directories when mirror is disabled
+  file:
+    path: "{{ containerd_registry_config_dir }}/{{ item }}"
+    state: absent
+  loop:
+    - docker.io
+    - registry.k8s.io
+    - quay.io
+  when:
+    - not lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+  notify: Restart containerd
 
 - name: Ensure containerd registry configuration directory exists
   file:

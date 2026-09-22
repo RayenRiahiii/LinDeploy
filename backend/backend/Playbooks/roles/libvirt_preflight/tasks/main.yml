@@ -43,11 +43,34 @@
   changed_when: false
   failed_when: false
 
+- name: Check already running requested domains
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", domid, "{{ item.vm_name }}"]
+  loop: "{{ workshop_clusters | default([]) }}"
+  loop_control:
+    label: "{{ item.vm_name }}"
+  register: libvirt_running_domain_checks
+  changed_when: false
+  failed_when: false
+
+- name: Select domains that still require host capacity
+  ansible.builtin.set_fact:
+    libvirt_capacity_cluster_count: >-
+      {{
+        (libvirt_running_domain_checks.results
+         | default([])
+         | selectattr('rc', 'ne', 0)
+         | list
+         | length)
+        if workshop_clusters | default([]) | length > 0
+        else cluster_count | int
+      }}
+
 - name: Calculate requested workshop capacity
   ansible.builtin.set_fact:
-    libvirt_required_vcpus: "{{ cluster_count | int * libvirt_vm_vcpus | int }}"
-    libvirt_required_memory_mb: "{{ cluster_count | int * libvirt_vm_memory_mb | int }}"
-    libvirt_required_storage_gb: "{{ cluster_count | int * libvirt_vm_disk_gb | int }}"
+    libvirt_required_vcpus: "{{ libvirt_capacity_cluster_count | int * libvirt_vm_vcpus | int }}"
+    libvirt_required_memory_mb: "{{ libvirt_capacity_cluster_count | int * libvirt_vm_memory_mb | int }}"
+    libvirt_required_storage_gb: "{{ libvirt_capacity_cluster_count | int * libvirt_vm_disk_gb | int }}"
     libvirt_available_vcpus: "{{ libvirt_host_cpu.stdout | int }}"
     libvirt_available_memory_mb: >-
       {{ libvirt_host_memory.stdout | int - libvirt_host_reserved_memory_mb | int }}
@@ -101,6 +124,7 @@
   ansible.builtin.debug:
     msg:
       - "Clusters requested: {{ cluster_count }}"
+      - "Domains requiring new capacity: {{ libvirt_capacity_cluster_count }}"
       - "CPU requested/available: {{ libvirt_required_vcpus }}/{{ libvirt_available_vcpus }} vCPU"
       - "RAM requested/available: {{ libvirt_required_memory_mb }}/{{ libvirt_available_memory_mb }} MiB"
       - "Storage requested/available: {{ libvirt_required_storage_gb }}/{{ libvirt_available_storage_gb }} GiB"

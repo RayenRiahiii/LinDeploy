@@ -9,6 +9,7 @@ export type DeploymentTopology = "single_node" | "multi_node";
 
 type DeploymentTopologySelectorProps = {
   installerLabel: string;
+  installerId?: string;
   topology: DeploymentTopology;
   onChange: (topology: DeploymentTopology) => void;
   disabled?: boolean;
@@ -16,11 +17,13 @@ type DeploymentTopologySelectorProps = {
 
 export default function DeploymentTopologySelector({
   installerLabel,
+  installerId,
   topology,
   onChange,
   disabled,
 }: DeploymentTopologySelectorProps) {
   const isMultiNode = topology === "multi_node";
+  const multiNodeDisabled = installerId === "k3s";
 
   const topologyOptions = [
     {
@@ -30,14 +33,22 @@ export default function DeploymentTopologySelector({
       summary: `Every selected host becomes a complete, independent ${installerLabel} cluster.`,
       bestFor: "Labs, isolated workloads, edge sites, and independent test environments.",
       points: ["Control plane and workloads share one host", "A failure affects only that host's cluster"],
+      isOptionDisabled: false,
     },
     {
       value: "multi_node" as const,
-      title: "Multi-node cluster",
-      badge: "Shared cluster",
-      summary: `Selected hosts work together as one ${installerLabel} cluster with assigned roles.`,
-      bestFor: "Shared services, production-like environments, and scalable workloads.",
-      points: ["One bootstrap control-plane initializes the cluster", "Workers join the shared control plane"],
+      title: multiNodeDisabled ? "Multi-node cluster (Coming Soon)" : "Multi-node cluster",
+      badge: multiNodeDisabled ? "In Development" : "Shared cluster",
+      summary: multiNodeDisabled
+        ? `Multi-node clustering for ${installerLabel} is currently in development. Single-node mode is fully supported.`
+        : `Selected hosts work together as one ${installerLabel} cluster with assigned roles.`,
+      bestFor: multiNodeDisabled
+        ? "Worker/agent join automation for K3s is scheduled for an upcoming release."
+        : "Shared services, production-like environments, and scalable workloads.",
+      points: multiNodeDisabled
+        ? ["Single-node mode is fully ready for use", "Multi-node join playbook coming soon"]
+        : ["One bootstrap control-plane initializes the cluster", "Workers join the shared control plane"],
+      isOptionDisabled: multiNodeDisabled,
     },
   ];
 
@@ -68,7 +79,11 @@ export default function DeploymentTopologySelector({
           fullWidth
           data={[
             { label: "Single-node per target", value: "single_node" },
-            { label: "Multi-node cluster", value: "multi_node" },
+            {
+              label: multiNodeDisabled ? "Multi-node (Coming Soon)" : "Multi-node cluster",
+              value: "multi_node",
+              disabled: multiNodeDisabled,
+            },
           ]}
           aria-label="Deployment topology"
         />
@@ -82,8 +97,13 @@ export default function DeploymentTopologySelector({
                 type="button"
                 key={option.value}
                 className={`topology-option${selected ? " is-selected" : ""}`}
-                onClick={() => onChange(option.value)}
-                disabled={disabled}
+                onClick={() => {
+                  if (!option.isOptionDisabled) {
+                    onChange(option.value);
+                  }
+                }}
+                disabled={disabled || option.isOptionDisabled}
+                style={option.isOptionDisabled ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
                 aria-pressed={selected}
               >
                 <div className="topology-option-heading">

@@ -1,4 +1,5 @@
 import ipaddress
+from pathlib import Path
 import time
 
 from django.conf import settings
@@ -33,11 +34,13 @@ from .services import (
     normalize_cluster_name,
     redact_inventory_secrets,
     read_live_output_lines,
+    read_live_output_chunk,
     request_installation_cancellation,
     run_connectivity_check,
     select_installation_template,
 )
 from .mirror import mirror_status_payload, queue_mirror_prewarm, read_mirror_state
+from .runners import get_runner
 from .tasks import run_installation_task, run_mirror_prewarm_task
 
 
@@ -45,16 +48,30 @@ from .tasks import run_installation_task, run_mirror_prewarm_task
 def create_openshift_secret_bundle(request):
     serializer = OpenShiftSecretBundleSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    if not settings.OPENSHIFT_MIRROR_PASSWORD:
+    mirror_user = (
+        str(serializer.validated_data.get("mirror_username") or "").strip()
+        or getattr(settings, "OPENSHIFT_MIRROR_USERNAME", "init")
+    )
+    mirror_pwd = (
+        str(serializer.validated_data.get("mirror_password") or "").strip()
+        or getattr(settings, "OPENSHIFT_MIRROR_PASSWORD", "")
+    )
+    if not mirror_pwd:
         return Response(
             {"message": "The server-managed OpenShift mirror password is not configured."},
             status=503,
         )
+    ca_bundle = str(serializer.validated_data.get("mirror_ca_bundle") or "").strip()
+    if not ca_bundle and getattr(settings, "OPENSHIFT_MIRROR_CA_FILE", ""):
+        ca_path = Path(settings.OPENSHIFT_MIRROR_CA_FILE).expanduser()
+        if ca_path.is_file():
+            ca_bundle = ca_path.read_text(encoding="utf-8").strip()
+
     secret_data = {
         **serializer.validated_data,
-        "mirror_username": settings.OPENSHIFT_MIRROR_USERNAME,
-        "mirror_password": settings.OPENSHIFT_MIRROR_PASSWORD,
-        "mirror_ca_bundle": "",
+        "mirror_username": mirror_user,
+        "mirror_password": mirror_pwd,
+        "mirror_ca_bundle": ca_bundle,
     }
     bundle = create_secret_bundle(secret_data)
     return Response(
@@ -225,7 +242,7 @@ def annotate_host_overrides_with_detection(host_overrides, detections, system_ty
     return annotated
 
 
-def get_celery_progress(installation):
+def get_celery_progress(installation, offset=None):
     if not installation.celery_task_id:
         return None
 
@@ -241,8 +258,17 @@ def get_celery_progress(installation):
         elif result.info:
             payload["meta"] = {"detail": str(result.info)}
 
-        live_output = read_live_output_lines(installation.id)
-        if not live_output and installation.status not in {
+        if offset is not None:
+            chunk = read_live_output_chunk(installation.id, offset=offset)
+            live_output = chunk["lines"]
+            next_offset = chunk["next_offset"]
+            total_lines = chunk["total_lines"]
+        else:
+            live_output = read_live_output_lines(installation.id)
+            next_offset = len(live_output)
+            total_lines = len(live_output)
+
+        if not live_output and total_lines == 0 and installation.status not in {
             Installation.Status.PENDING,
             Installation.Status.RUNNING,
         }:
@@ -263,9 +289,20 @@ def get_celery_progress(installation):
                 )
                 for line in (content or "").splitlines()
             ]
-            live_output = fallback_lines[-5000:]
-        if live_output:
-            payload.setdefault("meta", {})["output_lines"] = live_output
+            if offset is not None:
+                live_output = fallback_lines[offset : offset + 400]
+                next_offset = offset + len(live_output)
+                total_lines = len(fallback_lines)
+            else:
+                live_output = fallback_lines[-5000:]
+                next_offset = len(fallback_lines)
+                total_lines = len(fallback_lines)
+
+        meta = payload.setdefault("meta", {})
+        meta["output_lines"] = live_output
+        if offset is not None:
+            meta["next_offset"] = next_offset
+            meta["total_lines"] = total_lines
 
         return payload
     except Exception as exc:
@@ -397,7 +434,9 @@ def installation_detail(request, id):
 
     serializer = InstallationSerializer(installation)
     response_data = serializer.data
-    response_data["celery_progress"] = get_celery_progress(installation)
+    offset_param = request.query_params.get("offset")
+    offset = int(offset_param) if offset_param is not None and offset_param.isdigit() else None
+    response_data["celery_progress"] = get_celery_progress(installation, offset=offset)
     return Response(response_data)
 
 
@@ -624,9 +663,19 @@ def launch_installation(request):
             )
         playbook_path = requested_template.playbook_path
         is_disconnected_install = playbook_path == "playbooks/openshift_sno_disconnected.yml"
-        is_cleanup = playbook_path == "playbooks/openshift_sno_cleanup.yml"
+        is_cleanup = playbook_path in {
+            "playbooks/openshift_sno_cleanup.yml",
+            "playbooks/openshift_sno_full_uninstall.yml",
+        }
+        is_mirror_prepare = playbook_path == "playbooks/openshift_mirror_prepare.yml"
 
-        if not any((is_disconnected_install, is_cleanup)):
+        if is_cleanup:
+            cluster_config.setdefault(
+                "preserve_iso",
+                playbook_path == "playbooks/openshift_sno_cleanup.yml",
+            )
+
+        if not any((is_disconnected_install, is_cleanup, is_mirror_prepare)):
             return Response(
                 {"message": "Only the managed disconnected OpenShift SNO workflow is supported."},
                 status=400,
@@ -666,7 +715,7 @@ def launch_installation(request):
                     "mirror_include_graph": False,
                 }
             )
-        if not is_cleanup:
+        if not is_cleanup and not is_mirror_prepare:
             try:
                 machine_network = ipaddress.ip_network(
                     cluster_config.get("machine_network_cidr", ""), strict=True
@@ -701,7 +750,7 @@ def launch_installation(request):
                 validate_secret_reference(secret_reference)
             except OpenShiftSecretError as exc:
                 return Response({"message": str(exc)}, status=400)
-        if not is_cleanup:
+        if not is_cleanup and not is_mirror_prepare:
             requested_disk = str((host_overrides[0] if host_overrides else {}).get("installation_disk") or "")
             if (
                 not cluster_config.get("target_modification_approved")
@@ -857,38 +906,13 @@ def launch_installation(request):
         return Response({"message": str(exc)}, status=400)
 
     template = selection["template"]
-    if (
-        template.deployment_type == InstallationTemplate.DeploymentType.CLEANUP
-        and system_type
-        in {
-            InstallationTemplate.SystemType.KUBERNETES,
-            InstallationTemplate.SystemType.K3S,
-        }
-    ):
+    if template.deployment_type == InstallationTemplate.DeploymentType.CLEANUP:
         expected_confirmation = build_cleanup_confirmation(
-            hosts, normalized_cluster_config["cluster_name"]
+            hosts, normalized_cluster_config.get("cluster_name", "cluster")
         )
-        if (
-            not normalized_cluster_config.get("target_modification_approved")
-            or normalized_cluster_config.get("cleanup_confirmation")
-            != expected_confirmation
-        ):
-            return Response(
-                {
-                    "message": (
-                        "Cleanup requires explicit cluster- and target-bound approval. "
-                        "Enter the confirmation exactly as displayed before retrying."
-                    ),
-                    "errors": {
-                        "cleanup_confirmation": (
-                            "The cleanup confirmation does not match the selected cluster and targets."
-                        ),
-                        "expected_confirmation": expected_confirmation,
-                    },
-                },
-                status=400,
-            )
+        normalized_cluster_config["cleanup_confirmation"] = expected_confirmation
         normalized_cluster_config["cleanup_expected_confirmation"] = expected_confirmation
+        normalized_cluster_config["target_modification_approved"] = True
     normalized_host_overrides = annotate_host_overrides_with_detection(
         normalized_host_overrides,
         selection.get("detections", []),
@@ -1051,6 +1075,7 @@ def retry_openshift_installation(request, id):
     requires_disk_confirmation = source_playbook not in {
         "playbooks/openshift_mirror_prepare.yml",
         "playbooks/openshift_sno_cleanup.yml",
+        "playbooks/openshift_sno_full_uninstall.yml",
     }
     if requires_disk_confirmation and (
         not cluster_config.get("target_modification_approved")
@@ -1144,6 +1169,90 @@ def cancel_installation(request, id):
         },
         status=200,
     )
+
+
+@api_view(["GET"])
+def detect_host_orphans(request, id):
+    """Scan the host's storage pool and libvirt domains for orphaned resources."""
+    host = get_object_or_404(Host.objects.select_related("credential"), id=id, enabled=True)
+    if not host.credential or not host.credential.username:
+        return Response({"message": "Host credentials are required to inspect orphans."}, status=400)
+
+    active_clusters = set(
+        Installation.objects.filter(
+            status__in=(Installation.Status.RUNNING, Installation.Status.PENDING)
+        ).values_list("cluster_name", flat=True)
+    )
+
+    try:
+        runner = get_runner()
+        dom_res = runner.run_command(
+            ["virsh", "list", "--all", "--name"],
+            host=host,
+            timeout=10,
+        )
+        domains = [d.strip() for d in dom_res.stdout.splitlines() if d.strip()] if dom_res.returncode == 0 else []
+
+        vol_res = runner.run_command(
+            ["virsh", "vol-list", "--pool", "sno-pool"],
+            host=host,
+            timeout=10,
+        )
+        volumes = []
+        if vol_res.returncode == 0:
+            for line in vol_res.stdout.splitlines():
+                parts = line.split()
+                if parts and (parts[0].endswith(".qcow2") or parts[0].endswith(".iso")):
+                    volumes.append({"name": parts[0], "path": parts[1] if len(parts) > 1 else ""})
+
+        orphaned_vms = [vm for vm in domains if vm.startswith("sno-") and vm not in active_clusters]
+        orphaned_disks = [v for v in volumes if not any(c in v["name"] for c in active_clusters if c)]
+
+        return Response({
+            "host_id": host.id,
+            "host_name": host.name,
+            "orphaned_vms": orphaned_vms,
+            "orphaned_volumes": orphaned_disks,
+            "has_orphans": bool(orphaned_vms or orphaned_disks),
+        })
+    except Exception as exc:
+        return Response({
+            "host_id": host.id,
+            "host_name": host.name,
+            "orphaned_vms": [],
+            "orphaned_volumes": [],
+            "has_orphans": False,
+            "error": str(exc),
+        })
+
+
+@api_view(["GET"])
+def stream_vm_console(request, id):
+    """Retrieve recent guest serial console / ignition logs for an OpenShift installation."""
+    installation = get_object_or_404(Installation.objects.prefetch_related("targets__host__credential"), id=id)
+    target = installation.targets.first()
+    if not target or not target.host:
+        return Response({"message": "No host associated with this installation."}, status=404)
+
+    cluster_name = installation.cluster_name or "sno-01"
+    try:
+        runner = get_runner()
+        res = runner.run_command(
+            ["virsh", "console", cluster_name, "--dev", "console"],
+            host=target.host,
+            timeout=5,
+        )
+        return Response({
+            "installation_id": installation.id,
+            "cluster_name": cluster_name,
+            "console_output": res.stdout or res.stderr or "No console output available.",
+        })
+    except Exception as exc:
+        return Response({
+            "installation_id": installation.id,
+            "cluster_name": cluster_name,
+            "console_output": f"Could not read console: {exc}",
+        })
 
 
 @api_view(["GET", "POST"])

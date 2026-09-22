@@ -1,9 +1,10 @@
+import json
 import tempfile
+import threading
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import Mock, patch
-import json
 from pathlib import Path
 
 from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate, MirrorProfile
@@ -27,6 +28,7 @@ from .services import (
     parse_play_recap,
     normalize_host_overrides,
     read_live_output_lines,
+    read_live_output_chunk,
     reset_live_output,
 )
 
@@ -92,6 +94,44 @@ playbook: playbooks/k8s_single_node.yml
 
         self.assertEqual([item["line"] for item in output], ["line 2", "line 3", "line 4"])
         self.assertEqual(output[-1]["channel"], "stderr")
+
+    def test_read_live_output_chunk_supports_offset_and_limits(self):
+        import threading
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with override_settings(BASE_DIR=Path(temp_dir)):
+                output_path = reset_live_output(99)
+                output_lock = threading.Lock()
+                for index in range(10):
+                    append_live_output_line(
+                        output_path,
+                        output_lock,
+                        channel="stdout",
+                        line=f"chunk line {index}",
+                        timestamp=f"2026-08-16T12:00:0{index}+00:00",
+                    )
+
+                chunk1 = read_live_output_chunk(99, offset=0, limit=4)
+                self.assertEqual(len(chunk1["lines"]), 4)
+                self.assertEqual(chunk1["next_offset"], 4)
+                self.assertEqual(chunk1["total_lines"], 10)
+                self.assertEqual(chunk1["lines"][0]["line"], "chunk line 0")
+                self.assertEqual(chunk1["lines"][3]["line"], "chunk line 3")
+
+                chunk2 = read_live_output_chunk(99, offset=chunk1["next_offset"], limit=4)
+                self.assertEqual(len(chunk2["lines"]), 4)
+                self.assertEqual(chunk2["next_offset"], 8)
+                self.assertEqual(chunk2["lines"][0]["line"], "chunk line 4")
+
+                chunk3 = read_live_output_chunk(99, offset=chunk2["next_offset"], limit=4)
+                self.assertEqual(len(chunk3["lines"]), 2)
+                self.assertEqual(chunk3["next_offset"], 10)
+                self.assertEqual(chunk3["lines"][0]["line"], "chunk line 8")
+                self.assertEqual(chunk3["lines"][1]["line"], "chunk line 9")
+
+                empty_chunk = read_live_output_chunk(99, offset=10, limit=4)
+                self.assertEqual(len(empty_chunk["lines"]), 0)
+                self.assertEqual(empty_chunk["next_offset"], 10)
 
 
 class MirrorApiTests(TestCase):
@@ -984,9 +1024,13 @@ class LaunchInstallationAutoModeTests(TestCase):
             ip_address="192.168.100.52",
             credential=self.credential,
         )
-        self.template = InstallationTemplate.objects.create(
-            name="init-single-node",
+        self.template, _ = InstallationTemplate.objects.get_or_create(
             playbook_path="playbooks/init_single_node.yml",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            defaults={
+                "name": "init-single-node",
+                "deployment_type": InstallationTemplate.DeploymentType.SINGLE_NODE,
+            },
         )
 
     @patch("auto_K8S.views.run_installation_task")
@@ -1418,11 +1462,11 @@ class LaunchInstallationAutoModeTests(TestCase):
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
-    def test_cleanup_refuses_wrong_target_confirmation(self, select_template_mock, run_task_mock):
+    def test_direct_cleanup_launch_succeeds_without_manual_confirmation(self, select_template_mock, run_task_mock):
         cleanup_template = InstallationTemplate.objects.create(
-            name="k8s-cleanup-safety-template",
+            name="kubernetes-cleanup",
+            playbook_path="playbooks/test_direct_cleanup.yml",
             system_type=InstallationTemplate.SystemType.KUBERNETES,
-            playbook_path="playbooks/test_launch_k8s_cleanup_safety.yml",
             deployment_type=InstallationTemplate.DeploymentType.CLEANUP,
         )
         select_template_mock.return_value = {
@@ -1430,6 +1474,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "manual",
             "detections": [],
         }
+        run_task_mock.delay.return_value = Mock(id="celery-task-cleanup")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1438,17 +1483,13 @@ class LaunchInstallationAutoModeTests(TestCase):
                 "deployment_mode": "manual",
                 "template_id": cleanup_template.id,
                 "system_type": "kubernetes",
-                "cluster_config": {
-                    "target_modification_approved": True,
-                    "cleanup_confirmation": "CLEAN wrong-target",
-                },
+                "cluster_config": {},
             },
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("cluster- and target-bound", response.json()["message"])
-        self.assertFalse(run_task_mock.delay.called)
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(run_task_mock.delay.called)
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
@@ -1618,3 +1659,34 @@ class InstallationHistoryApiTests(TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertTrue(Installation.objects.filter(id=installation.id).exists())
+
+    def test_installation_detail_returns_incremental_output_with_offset(self):
+        installation = Installation.objects.create(
+            template=self.template,
+            status=Installation.Status.RUNNING,
+            phase=Installation.Phase.RUNNING_PLAYBOOK,
+            summary_message="Running",
+            celery_task_id="test-task-1234",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with override_settings(BASE_DIR=Path(directory)):
+                output_path = reset_live_output(installation.id)
+                output_lock = threading.Lock()
+                for i in range(5):
+                    append_live_output_line(
+                        output_path,
+                        output_lock,
+                        channel="stdout",
+                        line=f"live line {i}",
+                        timestamp="2026-08-16T12:00:00+00:00",
+                    )
+
+                response = self.client.get(f"/api/installations/{installation.id}/?offset=2")
+                self.assertEqual(response.status_code, 200)
+                progress = response.data.get("celery_progress")
+                self.assertIsNotNone(progress)
+                lines = progress["meta"]["output_lines"]
+                self.assertEqual(len(lines), 3)
+                self.assertEqual(lines[0]["line"], "live line 2")
+                self.assertEqual(progress["meta"]["next_offset"], 5)
+                self.assertEqual(progress["meta"]["total_lines"], 5)

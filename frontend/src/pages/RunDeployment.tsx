@@ -6,7 +6,6 @@ import {
   Card,
   Checkbox,
   Code,
-  Container,
   Divider,
   Group,
   Modal,
@@ -30,15 +29,18 @@ import {
   IconChevronUp,
   IconClockHour4,
   IconHistory,
+  IconKey,
   IconLink,
   IconPlayerPlay,
   IconPlayerStop,
   IconPlugConnected,
   IconRefresh,
+  IconServer,
   IconTerminal2,
   IconTrash,
 } from "@tabler/icons-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import PageHeader from "../components/common/PageHeader";
 import DeploymentMonitor from "../components/deployment/DeploymentMonitor";
 import DeploymentTopologySelector, {
   type DeploymentTopology,
@@ -261,6 +263,13 @@ type InstallationDetailResponse = {
       started_at?: string | null;
       updated_at?: string | null;
       detail?: string;
+      telemetry?: {
+        total_percentage?: number;
+        cluster_status?: string;
+        stage?: string;
+        stage_percentage?: number;
+        progress_info?: string;
+      };
     };
   } | null;
   cluster_config?: ClusterConfig;
@@ -803,6 +812,7 @@ export default function RunDeployment({
   const [liveTotalTasks, setLiveTotalTasks] = useState<number>(0);
   const [liveRecentEvents, setLiveRecentEvents] = useState<NonNullable<NonNullable<InstallationDetailResponse["celery_progress"]>["meta"]>["recent_events"]>([]);
   const [liveOutputLines, setLiveOutputLines] = useState<NonNullable<NonNullable<InstallationDetailResponse["celery_progress"]>["meta"]>["output_lines"]>([]);
+  const [liveTelemetry, setLiveTelemetry] = useState<NonNullable<NonNullable<InstallationDetailResponse["celery_progress"]>["meta"]>["telemetry"]>(undefined);
   const [liveExecutionTitle, setLiveExecutionTitle] = useState("Installation in Progress");
   const [wizardStep, setWizardStep] = useState<DeploymentWizardStep>(0);
   const loadingStartedAtRef = useRef<number | null>(null);
@@ -1260,6 +1270,7 @@ export default function RunDeployment({
     setLiveTotalTasks(0);
     setLiveRecentEvents([]);
     setLiveOutputLines([]);
+    setLiveTelemetry(undefined);
     setProgress(0);
     loadingStartedAtRef.current = null;
     persistActiveInstallationId(null);
@@ -1295,6 +1306,7 @@ export default function RunDeployment({
       setLiveTotalTasks(data.celery_progress?.meta?.total_tasks || 0);
       setLiveRecentEvents(data.celery_progress?.meta?.recent_events || []);
       setLiveOutputLines(data.celery_progress?.meta?.output_lines || []);
+      setLiveTelemetry(data.celery_progress?.meta?.telemetry || undefined);
       persistActiveInstallationId(data.id);
       return;
     }
@@ -1470,6 +1482,9 @@ export default function RunDeployment({
         }
         if (Array.isArray(data.celery_progress?.meta?.output_lines)) {
           setLiveOutputLines(data.celery_progress.meta.output_lines);
+        }
+        if (data.celery_progress?.meta?.telemetry) {
+          setLiveTelemetry(data.celery_progress.meta.telemetry);
         }
         if (
           data.status === "success" ||
@@ -2320,7 +2335,7 @@ export default function RunDeployment({
           </Alert>
         ) : (
           <ScrollArea.Autosize mah={mode === "history" ? 640 : "65vh"}>
-            <Table className="installation-history-table" striped withTableBorder>
+            <Table className="installation-history-table" striped withTableBorder style={{ width: "100%" }}>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Run</Table.Th>
@@ -2431,95 +2446,166 @@ export default function RunDeployment({
   );
 
   return (
-    <Container size="xl" px={0}>
-      <Stack gap="lg">
-        <Card className="console-panel" padding="lg">
-          <Group justify="space-between" align="center">
-            <div>
-              {showGuidedInstaller && (
-                <Badge color="red" variant="light" size="lg" mb="sm">
-                  <InstallerLabel
-                    label={`${selectedInstallerOption.label} Installer`}
-                    withLogo
-                    installerId={selectedInstaller}
-                  />
-                </Badge>
-              )}
-              <Group gap="sm" mb={6}>
-                {mode === "execution" ? (
-                  <>
-                    <ThemeIcon color="red" variant="light" size="lg" radius="md">
-                      <IconTerminal2 size={18} />
-                    </ThemeIcon>
-                    <Title order={2}>{pageTitle}</Title>
-                  </>
-                ) : (
-                  <Title order={2}>
-                    <InstallerLabel
-                      label={pageTitle}
-                      withLogo
-                      installerId={forcedInstaller ?? selectedInstaller}
-                      className="page-installer-heading"
-                    />
-                  </Title>
-                )}
-              </Group>
-              <Text c="dimmed" mt={4}>
-                {pageDescription}
-              </Text>
-            </div>
-            <Group>
+    <Stack gap="lg">
+      <PageHeader
+        icon={
+          mode === "execution" ? (
+            <IconTerminal2 size={22} />
+          ) : mode === "history" ? (
+            <IconHistory size={22} />
+          ) : showGuidedInstaller ? (
+            <img
+              src={getInstallerLogo(forcedInstaller ?? selectedInstaller)}
+              alt=""
+              className="template-logo-inline"
+              style={{ width: 22, height: 22 }}
+            />
+          ) : (
+            <IconPlayerPlay size={22} />
+          )
+        }
+        badge={
+          mode === "execution"
+            ? "Live Pipeline"
+            : mode === "history"
+              ? "Execution Records"
+              : showGuidedInstaller
+                ? `${selectedInstallerOption.label} Installer`
+                : "Platform Engine"
+        }
+        badgeColor="red"
+        title={
+          showGuidedInstaller ? (
+            <InstallerLabel
+              label={pageTitle}
+              withLogo
+              installerId={forcedInstaller ?? selectedInstaller}
+              className="page-installer-heading"
+            />
+          ) : (
+            pageTitle
+          )
+        }
+        subtitle={pageDescription}
+        stats={
+          mode === "execution" && dashboard ? (
+            <>
+              <Badge color="red" variant="light">
+                Active: {dashboard.installations.running + dashboard.installations.pending}
+              </Badge>
+              <Badge color="teal" variant="light">
+                Passed: {dashboard.installations.success}
+              </Badge>
+              <Badge color="gray" variant="outline">
+                Total Runs: {dashboard.installations.total}
+              </Badge>
+            </>
+          ) : mode === "history" ? (
+            <>
+              <Badge color="red" variant="light">
+                Total Runs: {historyInstallations.length}
+              </Badge>
+              <Badge color="teal" variant="light">
+                Passed: {historyInstallations.filter((i) => i.status === "success").length}
+              </Badge>
+              <Badge color="gray" variant="outline">
+                Failed: {historyInstallations.filter((i) => i.status === "failed").length}
+              </Badge>
+            </>
+          ) : undefined
+        }
+        actions={
+          <Group gap="sm">
+            <Button
+              variant="default"
+              leftSection={<IconRefresh size={16} />}
+              onClick={() => void refreshOperationalData()}
+            >
+              Refresh
+            </Button>
+            {mode === "history" ? (
               <Button
-                variant="default"
-                leftSection={<IconRefresh size={16} />}
-                onClick={() => void refreshOperationalData()}
+                color="red"
+                variant="light"
+                leftSection={<IconTrash size={16} />}
+                onClick={() => void handleClearHistory()}
+                loading={clearingHistory}
+                disabled={historyInstallations.length === 0}
               >
-                Refresh
+                Delete All History
               </Button>
-              {showHistoryButton && (
-                <Button
-                  variant={showHistory ? "filled" : "default"}
-                  color="red"
-                  leftSection={showHistory ? <IconChevronUp size={16} /> : <IconHistory size={16} />}
-                  onClick={() => setShowHistory(true)}
-                >
-                  {showHistory ? "History Open" : `History (${historyInstallations.length})`}
-                </Button>
-              )}
-            </Group>
+            ) : showHistoryButton ? (
+              <Button
+                variant={showHistory ? "filled" : "default"}
+                color="red"
+                leftSection={showHistory ? <IconChevronUp size={16} /> : <IconHistory size={16} />}
+                onClick={() => setShowHistory(true)}
+              >
+                {showHistory ? "History Open" : `History (${historyInstallations.length})`}
+              </Button>
+            ) : null}
           </Group>
-        </Card>
+        }
+      />
 
         {showDashboardSummary && dashboard && (
-          <SimpleGrid cols={{ base: 1, md: 4 }} spacing="md">
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Hosts</Text>
-              <Title order={3}>{dashboard.hosts.total}</Title>
-              <Text size="sm" c="dimmed">
+          <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Hosts</Text>
+                  <Title order={2} mt={4}>{dashboard.hosts.total}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconServer size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 enabled {dashboard.hosts.enabled} | cp {dashboard.hosts.control_plane} | workers {dashboard.hosts.worker}
               </Text>
-              <Text size="sm" c="dimmed">
+              <Text size="xs" c="dimmed">
                 installer-ready inventory overview
               </Text>
             </Card>
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Credentials</Text>
-              <Title order={3}>{dashboard.credentials.total}</Title>
-              <Text size="sm" c="dimmed">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Credentials</Text>
+                  <Title order={2} mt={4}>{dashboard.credentials.total}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconKey size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 password {dashboard.credentials.password} | ssh key {dashboard.credentials.ssh_key}
               </Text>
             </Card>
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Installations</Text>
-              <Title order={3}>{dashboard.installations.total}</Title>
-              <Text size="sm" c="dimmed">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Installations</Text>
+                  <Title order={2} mt={4}>{dashboard.installations.total}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconPlayerPlay size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 success {dashboard.installations.success} | failed {dashboard.installations.failed} | cancelled {dashboard.installations.cancelled ?? 0}
               </Text>
             </Card>
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Active Queue</Text>
-              <Title order={3}>{dashboard.installations.running + dashboard.installations.pending}</Title>
-              <Text size="sm" c="dimmed">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Active Queue</Text>
+                  <Title order={2} mt={4}>{dashboard.installations.running + dashboard.installations.pending}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconTerminal2 size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 running {dashboard.installations.running} | pending {dashboard.installations.pending}
               </Text>
             </Card>
@@ -3059,6 +3145,7 @@ export default function RunDeployment({
               installationId: activeInstallationId,
               recentEvents: liveRecentEvents || [],
               outputLines: liveOutputLines || [],
+              telemetry: liveTelemetry,
             }}
             result={result ? {
               status: result.status,
@@ -3267,6 +3354,28 @@ export default function RunDeployment({
                 </>
               )}
 
+            </Stack>
+          </Card>
+        )}
+
+        {mode === "execution" && !loading && !result && !resumeCandidate && (
+          <Card className="console-panel" padding="xl">
+            <Stack align="center" gap="md" py="xl">
+              <ThemeIcon color="red" variant="light" size={48} radius="xl">
+                <IconTerminal2 size={24} />
+              </ThemeIcon>
+              <Title order={3}>No Active Pipeline Running</Title>
+              <Text c="dimmed" size="sm" ta="center" maw={520}>
+                All previous deployments have finished. Start a new deployment from the Installer Catalog or inspect completed runs in the History view.
+              </Text>
+              <Group gap="sm" mt="sm">
+                <Button component={Link} to="/installers" leftSection={<IconPlayerPlay size={16} />}>
+                  Open Installer Catalog
+                </Button>
+                <Button component={Link} to="/history" variant="default" leftSection={<IconHistory size={16} />}>
+                  View Installation History
+                </Button>
+              </Group>
             </Stack>
           </Card>
         )}
@@ -4139,7 +4248,6 @@ export default function RunDeployment({
             </Stack>
           </Modal>
         )}
-      </Stack>
-    </Container>
+    </Stack>
   );
 }

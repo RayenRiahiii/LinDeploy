@@ -7,7 +7,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Title,
   UnstyledButton,
 } from "@mantine/core";
 import {
@@ -22,7 +21,6 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import InstallerLabel from "../components/installers/InstallerLabel";
 import lindeployWordmark from "../assets/logo.png";
 import lindeployWordmarkDark from "../assets/darkmodeLogo.png";
 
@@ -204,10 +202,6 @@ type AppShellLayoutProps = {
 export default function AppShellLayout({ colorScheme, onToggleColorScheme }: AppShellLayoutProps) {
   const location = useLocation();
   const meta = getSectionMeta(location.pathname);
-  const isInstallerWorkflowPage =
-    location.pathname === "/installers/kubernetes" ||
-    location.pathname === "/installers/k3s" ||
-    location.pathname === "/installers/openshift-sno";
   const brandLogo = colorScheme === "dark" ? lindeployWordmarkDark : lindeployWordmark;
   const [topbarHidden, setTopbarHidden] = useState(false);
   const lastScrollYRef = useRef(0);
@@ -304,39 +298,6 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
         </header>
 
         <main className="workspace-main">
-          {!isInstallerWorkflowPage && <Paper className="hero-panel" p="xl">
-            <Group justify="space-between" align="flex-start" gap="xl">
-              <Stack gap={8}>
-                <Badge color="red" variant="light" size="lg">
-                  {meta.installerId ? (
-                    <InstallerLabel
-                      label={meta.badge}
-                      withLogo
-                      installerId={meta.installerId}
-                    />
-                  ) : (
-                    meta.badge
-                  )}
-                </Badge>
-                <Title order={2} className="hero-title">
-                  {meta.installerId ? (
-                    <InstallerLabel
-                      label={meta.title}
-                      withLogo
-                      installerId={meta.installerId}
-                      className="page-installer-heading"
-                    />
-                  ) : (
-                    meta.title
-                  )}
-                </Title>
-                <Text c="dimmed" maw={760}>
-                  {meta.description}
-                </Text>
-              </Stack>
-            </Group>
-          </Paper>}
-
           <Box className="page-content">
             <Outlet />
           </Box>

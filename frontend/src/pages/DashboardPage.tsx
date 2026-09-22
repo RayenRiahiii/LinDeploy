@@ -8,15 +8,21 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
 } from "@mantine/core";
 import {
+  IconActivity,
   IconFolders,
+  IconKey,
+  IconLayoutDashboard,
   IconPlayerPlay,
   IconRefresh,
+  IconServer,
   IconTerminal2,
 } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
+import PageHeader from "../components/common/PageHeader";
 import MirrorStatusPanel from "../components/mirror/MirrorStatusPanel";
 
 type DashboardSummary = {
@@ -52,22 +58,10 @@ type DashboardSummary = {
 const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
 
 function getStatusColor(status?: string | null) {
-  if (status === "success") {
-    return "teal";
-  }
-
-  if (status === "partial_success") {
-    return "yellow";
-  }
-
-  if (status === "failed") {
-    return "red";
-  }
-
-  if (status === "cancelled") {
-    return "yellow";
-  }
-
+  if (status === "success") return "teal";
+  if (status === "partial_success") return "yellow";
+  if (status === "failed") return "red";
+  if (status === "cancelled") return "yellow";
   return "gray";
 }
 
@@ -100,14 +94,28 @@ export default function DashboardPage() {
 
   return (
     <Stack gap="lg">
-      <Card className="console-panel" padding="lg">
-        <Group justify="space-between" align="center">
-          <div>
-            <Title order={3}>Operational Summary</Title>
-            <Text c="dimmed" size="sm" mt={4}>
-              Use this page as the starting point before opening an installer workflow or resuming execution monitoring.
-            </Text>
-          </div>
+      <PageHeader
+        icon={<IconLayoutDashboard size={22} />}
+        badge="Platform Overview"
+        badgeColor="red"
+        title="Operational Summary"
+        subtitle="Real-time status of your infrastructure inventory, saved credentials, and deployment pipelines."
+        stats={
+          summary ? (
+            <>
+              <Badge color="red" variant="light">
+                Hosts: {summary.hosts.total}
+              </Badge>
+              <Badge color="teal" variant="light">
+                Active Queue: {summary.installations.running + summary.installations.pending}
+              </Badge>
+              <Badge color="gray" variant="outline">
+                Total Runs: {summary.installations.total}
+              </Badge>
+            </>
+          ) : undefined
+        }
+        actions={
           <Button
             variant="default"
             leftSection={<IconRefresh size={16} />}
@@ -116,8 +124,8 @@ export default function DashboardPage() {
           >
             Refresh
           </Button>
-        </Group>
-      </Card>
+        }
+      />
 
       {error && (
         <Alert color="red" variant="light" title="Dashboard error">
@@ -126,36 +134,64 @@ export default function DashboardPage() {
       )}
 
       {summary && (
-        <SimpleGrid cols={{ base: 1, md: 4 }} spacing="md">
-          <Card className="console-panel" padding="md">
-            <Text c="dimmed" size="sm">Hosts</Text>
-            <Title order={3}>{summary.hosts.total}</Title>
-            <Text size="sm" c="dimmed">
-              enabled {summary.hosts.enabled} | cp {summary.hosts.control_plane} | workers {summary.hosts.worker}
-            </Text>
-            <Text size="sm" c="dimmed">
-              inventory and role distribution
-            </Text>
-          </Card>
-          <Card className="console-panel" padding="md">
-            <Text c="dimmed" size="sm">Credentials</Text>
-            <Title order={3}>{summary.credentials.total}</Title>
-            <Text size="sm" c="dimmed">
-              password {summary.credentials.password} | ssh key {summary.credentials.ssh_key}
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+          <Card className="console-panel dashboard-stat-card" padding="lg">
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Hosts Inventory</Text>
+                <Title order={2} mt={4}>{summary.hosts.total}</Title>
+              </div>
+              <ThemeIcon color="red" variant="light" size={36} radius="md">
+                <IconServer size={18} />
+              </ThemeIcon>
+            </Group>
+            <Text size="xs" c="dimmed" mt="sm">
+              {summary.hosts.enabled} enabled · {summary.hosts.control_plane} CP · {summary.hosts.worker} worker
             </Text>
           </Card>
-          <Card className="console-panel" padding="md">
-            <Text c="dimmed" size="sm">Installations</Text>
-            <Title order={3}>{summary.installations.total}</Title>
-            <Text size="sm" c="dimmed">
-              success {summary.installations.success} | partial {summary.installations.partial_success ?? 0} | failed {summary.installations.failed} | cancelled {summary.installations.cancelled ?? 0}
+
+          <Card className="console-panel dashboard-stat-card" padding="lg">
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Credentials</Text>
+                <Title order={2} mt={4}>{summary.credentials.total}</Title>
+              </div>
+              <ThemeIcon color="red" variant="light" size={36} radius="md">
+                <IconKey size={18} />
+              </ThemeIcon>
+            </Group>
+            <Text size="xs" c="dimmed" mt="sm">
+              {summary.credentials.password} password · {summary.credentials.ssh_key} SSH key
             </Text>
           </Card>
-          <Card className="console-panel" padding="md">
-            <Text c="dimmed" size="sm">Active Queue</Text>
-            <Title order={3}>{summary.installations.running + summary.installations.pending}</Title>
-            <Text size="sm" c="dimmed">
-              running {summary.installations.running} | pending {summary.installations.pending}
+
+          <Card className="console-panel dashboard-stat-card" padding="lg">
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Total Deployments</Text>
+                <Title order={2} mt={4}>{summary.installations.total}</Title>
+              </div>
+              <ThemeIcon color="red" variant="light" size={36} radius="md">
+                <IconPlayerPlay size={18} />
+              </ThemeIcon>
+            </Group>
+            <Text size="xs" c="dimmed" mt="sm">
+              {summary.installations.success} passed · {summary.installations.failed} failed
+            </Text>
+          </Card>
+
+          <Card className="console-panel dashboard-stat-card" padding="lg">
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Active Pipeline</Text>
+                <Title order={2} mt={4}>{summary.installations.running + summary.installations.pending}</Title>
+              </div>
+              <ThemeIcon color="red" variant="light" size={36} radius="md">
+                <IconActivity size={18} />
+              </ThemeIcon>
+            </Group>
+            <Text size="xs" c="dimmed" mt="sm">
+              {summary.installations.running} running · {summary.installations.pending} queued
             </Text>
           </Card>
         </SimpleGrid>
@@ -166,8 +202,10 @@ export default function DashboardPage() {
       <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
         <Card className="installer-card" padding="lg" component={Link} to="/installers">
           <Group gap="sm" mb="sm">
-            <IconPlayerPlay size={18} />
-            <Title order={4}>Open Installer Catalog</Title>
+            <ThemeIcon color="red" variant="light" size={36} radius="md">
+              <IconPlayerPlay size={18} />
+            </ThemeIcon>
+            <Title order={4}>Installer Catalog</Title>
           </Group>
           <Text c="dimmed" size="sm">
             Choose the target system, then move into the dedicated Kubernetes or K3s configuration page.
@@ -176,8 +214,10 @@ export default function DashboardPage() {
 
         <Card className="installer-card" padding="lg" component={Link} to="/executions">
           <Group gap="sm" mb="sm">
-            <IconTerminal2 size={18} />
-            <Title order={4}>Open Execution Center</Title>
+            <ThemeIcon color="red" variant="light" size={36} radius="md">
+              <IconTerminal2 size={18} />
+            </ThemeIcon>
+            <Title order={4}>Execution Center</Title>
           </Group>
           <Text c="dimmed" size="sm">
             Resume active installations, inspect the live pipeline, and review final playbook output.
@@ -186,8 +226,10 @@ export default function DashboardPage() {
 
         <Card className="installer-card" padding="lg" component={Link} to="/history">
           <Group gap="sm" mb="sm">
-            <IconFolders size={18} />
-            <Title order={4}>Open History</Title>
+            <ThemeIcon color="red" variant="light" size={36} radius="md">
+              <IconFolders size={18} />
+            </ThemeIcon>
+            <Title order={4}>History</Title>
           </Group>
           <Text c="dimmed" size="sm">
             Review completed runs separately from the live execution workspace and delete obsolete records.

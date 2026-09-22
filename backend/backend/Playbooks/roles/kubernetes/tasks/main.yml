@@ -191,3 +191,21 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# ==================================================
+# 4. Pre-pull control plane images in parallel
+# ==================================================
+- name: Pre-pull Kubernetes control-plane images in parallel
+  command:
+    argv:
+      - kubeadm
+      - config
+      - images
+      - pull
+      - --cri-socket
+      - "{{ kubeadm_cri_socket }}"
+  register: kubeadm_image_pull_result
+  changed_when: false
+  when:
+    - lindeploy_desired_role | default('control_plane') == 'control_plane'
+

@@ -48,6 +48,59 @@
     argv: [virsh, --connect, "{{ libvirt_uri }}", start, "{{ libvirt_vm_name }}"]
   when: target_libvirt_vm_state == 'shut off'
 
+- name: Read the persistent media configuration for the next boot
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - domblklist
+      - "{{ libvirt_vm_name }}"
+      - --inactive
+      - --details
+  environment:
+    LC_ALL: C
+  register: target_libvirt_persistent_block_devices
+  changed_when: false
+
+- name: Eject the discovery ISO from the next boot configuration
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - change-media
+      - "{{ libvirt_vm_name }}"
+      - "{{ libvirt_iso_target | default('sda') }}"
+      - --eject
+      - --config
+  when: libvirt_iso_runtime_path in target_libvirt_persistent_block_devices.stdout
+
+- name: Verify the next boot uses the installed disk
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - domblklist
+      - "{{ libvirt_vm_name }}"
+      - --inactive
+      - --details
+  environment:
+    LC_ALL: C
+  register: target_libvirt_next_boot_block_devices
+  changed_when: false
+
+- name: Require the discovery ISO to be absent from the next boot
+  ansible.builtin.assert:
+    that:
+      - libvirt_iso_runtime_path not in target_libvirt_next_boot_block_devices.stdout
+    fail_msg: >-
+      The discovery ISO is still configured for the next boot of
+      {{ libvirt_vm_name }}. Installation was stopped before the Agent wait so
+      the VM cannot repeatedly boot the installer ISO.
+    quiet: true
+
 - name: Store the libvirt boot result
   ansible.builtin.set_fact:
     target_boot_performed: "{{ target_libvirt_vm_state == 'shut off' }}"
@@ -58,4 +111,5 @@
       - "VM: {{ libvirt_vm_name }}"
       - "Discovery ISO: {{ libvirt_iso_runtime_path }}"
       - "VM started by this run: {{ target_boot_performed }}"
+      - The active VM keeps the discovery ISO, while its next boot uses the installed disk.
       - The installation disk has not yet been erased.

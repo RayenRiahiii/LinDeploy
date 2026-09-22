@@ -24,13 +24,13 @@
       <driver name='qemu' type='qcow2' discard='unmap'/>
       <source file='{{ libvirt_volume_path }}'/>
       <target dev='vda' bus='{{ libvirt_disk_bus }}'/>
-      <boot order='2'/>
+      <boot order='1'/>
     </disk>
     <disk type='file' device='cdrom'>
       <driver name='qemu' type='raw'/>
       <target dev='sda' bus='sata'/>
       <readonly/>
-      <boot order='1'/>
+      <boot order='2'/>
     </disk>
     <interface type='network'>
       <mac address='{{ sno_mac_address }}'/>

@@ -57,13 +57,50 @@
     that:
       - libvirt_volume_path in libvirt_existing_domain.stdout
       - sno_mac_address | lower in libvirt_existing_domain.stdout | lower
-      - "\"<source network='\" ~ libvirt_network_name ~ \"'/>\" in libvirt_existing_domain.stdout"
+      - >-
+        libvirt_existing_domain.stdout is search(
+          "<source[^>]+network=['\"]"
+          ~ (libvirt_network_name | regex_escape)
+          ~ "['\"]"
+        )
       - workshop_id in libvirt_existing_domain.stdout
+      - workshop_id in libvirt_existing_domain.stdout or 'sno-workshop' in libvirt_existing_domain.stdout
     fail_msg: >-
       Existing domain {{ libvirt_vm_name }} does not match this workshop.
       It will not be replaced automatically.
     quiet: true
   when: libvirt_existing_domain.rc == 0
+
+- name: Undefine an orphaned domain without its volume in apply mode
+  block:
+    - name: Stop running orphaned domain
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", destroy, "{{ libvirt_vm_name }}"]
+      failed_when: false
+
+    - name: Undefine orphaned domain with nvram
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", undefine, "{{ libvirt_vm_name }}", --nvram]
+      register: libvirt_undefine_orphaned_domain
+      failed_when: false
+
+    - name: Undefine orphaned domain without nvram fallback
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", undefine, "{{ libvirt_vm_name }}"]
+      when: libvirt_undefine_orphaned_domain.rc | default(0) != 0
+      failed_when: false
+
+    - name: Reset domain state to unprovisioned
+      ansible.builtin.set_fact:
+        libvirt_existing_domain:
+          rc: 1
+          stdout: ""
+          stderr: ""
+  when:
+    - automation_mode == 'apply'
+    - target_modification_approved | default(false) | bool
+    - libvirt_existing_domain.rc == 0
+    - libvirt_existing_volume.rc != 0
 
 - name: Refuse a domain without its expected volume
   ansible.builtin.assert:
@@ -71,6 +108,8 @@
       - libvirt_existing_domain.rc != 0 or libvirt_existing_volume.rc == 0
     fail_msg: Existing domain has no matching managed volume.
     quiet: true
+  when:
+    - automation_mode != 'apply' or not (target_modification_approved | default(false) | bool)
 
 - name: Report the VM provisioning plan
   ansible.builtin.debug:

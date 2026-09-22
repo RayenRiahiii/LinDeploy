@@ -104,6 +104,20 @@ def queue_mirror_prewarm(force=False):
             ).first()
             if active:
                 return active, False
+                is_stuck = False
+                if active.state == "queued" and (timezone.now() - active.created_at).total_seconds() > 180:
+                    is_stuck = True
+                elif active.lease_expires_at and active.lease_expires_at < timezone.now():
+                    is_stuck = True
+
+                if force or is_stuck:
+                    active.state = "cancelled" if force else "failed"
+                    active.error = "Superseded by forced request." if force else "Job lease expired or stuck in queue."
+                    active.finished_at = timezone.now()
+                    active.owner_token = None
+                    active.save(update_fields=["state", "error", "finished_at", "owner_token", "updated_at"])
+                else:
+                    return active, False
             job = MirrorPrewarmJob.objects.create(
                 dedupe_key=dedupe_key, requested_components=["kubernetes", "k3s"],
                 result={"force": bool(force)},
@@ -196,6 +210,16 @@ def _persist_profiles(state, job):
 
 def run_automatic_mirror_prewarm(job_id=None, force=False):
     if not settings.LINDEPLOY_MIRROR_ENABLED:
+        if job_id:
+            try:
+                job = MirrorPrewarmJob.objects.get(job_id=job_id)
+                job.state = "skipped"
+                job.error = "LinDeploy mirror is disabled."
+                job.finished_at = timezone.now()
+                job.save(update_fields=["state", "error", "finished_at", "updated_at"])
+            except Exception:
+                pass
+        mark_mirror_prewarm_failed("LinDeploy mirror is disabled.")
         return {"status": "skipped", "message": "LinDeploy mirror is disabled."}
     if job_id is None:
         queued, created = queue_mirror_prewarm(force=force)
