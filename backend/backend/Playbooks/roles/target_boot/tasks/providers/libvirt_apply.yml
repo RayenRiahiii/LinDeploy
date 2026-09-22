@@ -1,3 +1,4 @@
+---
 - name: Forcibly stop running VM when force_reinstall is approved
   ansible.builtin.command:
     argv: [virsh, --connect, "{{ libvirt_uri }}", destroy, "{{ libvirt_vm_name }}"]

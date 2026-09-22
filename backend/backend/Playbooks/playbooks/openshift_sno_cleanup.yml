@@ -117,6 +117,7 @@
         argv: >-
           {{
             ['virsh', '--connect', libvirt_uri, 'undefine', libvirt_vm_name]
+            + (['--nvram'] if '<nvram' in openshift_cleanup_domain.stdout else [])
             + (['--nvram'] if ('<nvram' in openshift_cleanup_domain.stdout or 'firmware' in openshift_cleanup_domain.stdout) else [])
           }}
       when: openshift_cleanup_domain.rc == 0

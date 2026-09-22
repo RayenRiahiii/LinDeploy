@@ -17,6 +17,7 @@
     target_provider: libvirt
     automation_mode: apply
     target_modification_approved: "{{ sno_request.target_modification_approved | default(false) }}"
+    force_reinstall: "{{ sno_request.force_reinstall | default(false) | bool }}"
     cluster_name: "{{ sno_request.cluster_name }}"
     base_dns_domain: "{{ sno_request.base_domain }}"
     openshift_version: "{{ openshift_default_version if sno_request.openshift_version | default('stable') == 'stable' else sno_request.openshift_version }}"
@@ -285,6 +286,8 @@
     - name: Inspect existing VM domain state
       ansible.builtin.command:
         argv: [virsh, --connect, "{{ libvirt_uri }}", domstate, "{{ libvirt_vm_name }}"]
+      environment:
+        LC_ALL: C
       register: openshift_sno_existing_vm_state
       changed_when: false
       failed_when: false
@@ -294,10 +297,17 @@
         path: "{{ kubeconfig_path }}"
       register: openshift_sno_existing_kubeconfig
 
+    - name: Locate available OpenShift CLI
+      ansible.builtin.command:
+        argv: [which, oc]
+      register: openshift_sno_which_oc
+      changed_when: false
+      failed_when: false
+
     - name: Probe existing cluster readiness
       ansible.builtin.command:
         argv:
-          - "{{ oc_binary_path }}"
+          - "{{ (openshift_sno_which_oc.stdout | trim) if (openshift_sno_which_oc.rc | default(1) == 0) else oc_binary_path }}"
           - --kubeconfig
           - "{{ kubeconfig_path }}"
           - get
@@ -310,20 +320,23 @@
       failed_when: false
       when:
         - openshift_sno_existing_vm_state.rc | default(1) == 0
-        - "'running' in (openshift_sno_existing_vm_state.stdout | default(''))"
+        - >-
+          ('running' in (openshift_sno_existing_vm_state.stdout | default('') | lower))
+          or ('cours' in (openshift_sno_existing_vm_state.stdout | default('') | lower))
         - openshift_sno_existing_kubeconfig.stat.exists | default(false)
-        - not (sno_request.force_reinstall | default(false) | bool)
+        - not (force_reinstall | default(false) | bool)
 
     - name: Evaluate existing cluster health
       ansible.builtin.set_fact:
         sno_already_converged: >-
           {{
             openshift_sno_existing_nodes_probe.rc | default(1) == 0
+            and (openshift_sno_existing_nodes_probe.stdout | default('') | length > 0)
             and (openshift_sno_existing_nodes_probe.stdout | default('{}') | from_json).get('items', []) | length > 0
-            and ((openshift_sno_existing_nodes_probe.stdout | default('{}') | from_json)['items'][0]['status']['conditions']
-                 | selectattr('type', 'equalto', 'Ready')
-                 | map(attribute='status')
-                 | first | default('False')) == 'True'
+            and (((openshift_sno_existing_nodes_probe.stdout | default('{}') | from_json)['items'][0]['status']['conditions']
+                  | selectattr('type', 'equalto', 'Ready')
+                  | map(attribute='status')
+                  | first | default('False')) == 'True')
           }}
 
     - name: Activate verification facts for already converged cluster
