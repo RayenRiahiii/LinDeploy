@@ -31,6 +31,7 @@
     fail_msg: >-
       OpenShift installation completed, but the Kubernetes API could not be
       reached using the generated kubeconfig.
+      Details: {{ kubernetes_api_check.stderr | default(kubernetes_api_check.stdout | default('Unknown error')) | trim }}
     quiet: true
 
 - name: Wait for OpenShift convergence when requested

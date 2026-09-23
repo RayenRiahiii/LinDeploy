@@ -304,6 +304,13 @@
       changed_when: false
       failed_when: false
 
+    - name: Select effective OpenShift CLI path
+      ansible.builtin.set_fact:
+        oc_binary_path: "{{ openshift_sno_which_oc.stdout | trim }}"
+      when:
+        - openshift_sno_which_oc.rc | default(1) == 0
+        - openshift_sno_which_oc.stdout | default('') | trim | length > 0
+
     - name: Probe existing cluster readiness
       ansible.builtin.command:
         argv:
@@ -353,9 +360,13 @@
 
   roles:
     - role: libvirt_preflight
+      when: not (sno_already_converged | default(false) | bool)
     - role: libvirt_network
+      when: not (sno_already_converged | default(false) | bool)
     - role: libvirt_storage
+      when: not (sno_already_converged | default(false) | bool)
     - role: dns_preflight
+      when: not (sno_already_converged | default(false) | bool)
     - role: openshift_agent_assets
       when: not (sno_already_converged | default(false) | bool)
     - role: libvirt_vm

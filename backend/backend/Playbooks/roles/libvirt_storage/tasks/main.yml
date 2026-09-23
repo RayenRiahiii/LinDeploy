@@ -23,6 +23,7 @@
     owner: root
     group: root
     mode: "0711"
+  register: libvirt_pool_dir
   become: true
   when: automation_mode == 'apply'
 
@@ -44,6 +45,7 @@
       - -t
       - virt_image_t
       - "{{ libvirt_pool_path }}(/.*)?"
+  register: libvirt_fcontext_added
   become: true
   when:
     - automation_mode == 'apply'
@@ -52,10 +54,12 @@
 
 - name: Restore the storage pool SELinux labels
   ansible.builtin.command:
-    argv: [restorecon, -RF, "{{ libvirt_pool_path }}"]
+    argv: [restorecon, -r, "{{ libvirt_pool_path }}"]
   become: true
   changed_when: false
-  when: automation_mode == 'apply'
+  when:
+    - automation_mode == 'apply'
+    - (libvirt_pool_info.rc | default(1) != 0) or (libvirt_pool_dir.changed | default(false)) or (libvirt_fcontext_added.changed | default(false))
 
 - name: Define the missing directory storage pool
   ansible.builtin.command:
