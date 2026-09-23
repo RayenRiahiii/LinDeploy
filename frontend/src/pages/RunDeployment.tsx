@@ -151,6 +151,14 @@ type ClusterConfig = {
   control_plane_endpoint: string;
   cni_plugin: string;
   disable_ingress: boolean;
+  base_domain?: string;
+  machine_network_cidr?: string;
+  cluster_network_cidr?: string;
+  service_network_cidr?: string;
+  rendezvous_ip?: string;
+  host_prefix?: number;
+  dns_servers?: string[];
+  disconnected?: boolean;
   control_plane_count?: number;
   worker_count?: number;
   target_modification_approved?: boolean;
@@ -351,6 +359,29 @@ function buildDefaultClusterConfig(installer: InstallerId): ClusterConfig {
       control_plane_endpoint: "",
       cni_plugin: "flannel",
       disable_ingress: false,
+    };
+  }
+
+  if (installer === "openshift_sno") {
+    return {
+      cluster_name: "sno-01",
+      base_domain: "lab.test",
+      version: "4.20.3",
+      topology_mode: "single_node",
+      pod_cidr: "10.128.0.0/14",
+      service_cidr: "172.30.0.0/16",
+      cluster_domain: "cluster.local",
+      control_plane_endpoint: "",
+      cni_plugin: "OVNKubernetes",
+      disable_ingress: false,
+      machine_network_cidr: "192.168.130.0/24",
+      rendezvous_ip: "192.168.130.10",
+      cluster_network_cidr: "10.128.0.0/14",
+      service_network_cidr: "172.30.0.0/16",
+      host_prefix: 23,
+      dns_servers: ["192.168.130.1"],
+      target_modification_approved: true,
+      disconnected: true,
     };
   }
 
@@ -1935,22 +1966,29 @@ export default function RunDeployment({
       return;
     }
 
-    const conflictHostOverrides = hosts
-      .filter((host) => conflictHostIds.includes(host.id))
-      .map((host) => {
-        const hostOverride = buildDefaultHostOverride(host, conflictCleanupSystem);
-        return {
-          ...hostOverride,
-          labels: splitListInput(hostOverride.labels),
-          taints: splitListInput(hostOverride.taints),
-        };
-      });
+    const conflictClusterConfig =
+      (result?.cluster_config as ClusterConfig | undefined) ||
+      buildDefaultClusterConfig(conflictCleanupSystem);
+
+    const conflictHostOverrides =
+      result?.host_overrides && result.host_overrides.length > 0
+        ? result.host_overrides.filter((o) => conflictHostIds.includes(o.host_id))
+        : hosts
+            .filter((host) => conflictHostIds.includes(host.id))
+            .map((host) => {
+              const hostOverride = buildDefaultHostOverride(host, conflictCleanupSystem);
+              return {
+                ...hostOverride,
+                labels: splitListInput(hostOverride.labels),
+                taints: splitListInput(hostOverride.taints),
+              };
+            });
 
     setSelectedHostIds(conflictHostIds);
     openCleanupDialog({
       systemType: conflictCleanupSystem,
       hostIds: conflictHostIds,
-      clusterConfig: buildDefaultClusterConfig(conflictCleanupSystem),
+      clusterConfig: conflictClusterConfig,
       hostOverrides: conflictHostOverrides,
       title:
         hasKubernetesIdentityConflict

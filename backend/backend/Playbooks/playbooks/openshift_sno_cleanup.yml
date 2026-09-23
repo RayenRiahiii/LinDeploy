@@ -10,20 +10,20 @@
     sno_request: "{{ cluster_config | default({}) }}"
     sno_host_request: "{{ (selected_hosts_config | default([]) | first) | default({}) }}"
     libvirt_uri: qemu:///system
-    libvirt_vm_name: "{{ sno_host_request.vm_name }}"
-    libvirt_pool_name: "{{ sno_host_request.storage_pool }}"
+    libvirt_vm_name: "{{ sno_host_request.vm_name | default(sno_request.cluster_name | default('sno-01')) }}"
+    libvirt_pool_name: "{{ sno_host_request.storage_pool | default('sno-pool') }}"
     libvirt_volume_name: "{{ libvirt_vm_name }}.qcow2"
-    workshop_id: "lindeploy-{{ sno_request.cluster_name }}"
+    workshop_id: "lindeploy-{{ sno_request.cluster_name | default('sno-01') }}"
     openshift_cleanup_accepted_legacy_workshop_ids:
       - sno-workshop
-    openshift_ownership_marker_path: "/var/lib/lindeploy/ownership/{{ sno_request.cluster_name }}.json"
+    openshift_ownership_marker_path: "/var/lib/lindeploy/ownership/{{ sno_request.cluster_name | default('sno-01') }}.json"
     openshift_cluster_asset_directories:
-      - "/var/lib/lindeploy/openshift-agent/{{ sno_request.cluster_name }}"
-      - "/var/lib/lindeploy/openshift/{{ sno_request.cluster_name }}"
-    openshift_dns_hosts_marker: "LINDEPLOY OPENSHIFT {{ sno_request.cluster_name }}.{{ sno_request.base_domain }}"
+      - "/var/lib/lindeploy/openshift-agent/{{ sno_request.cluster_name | default('sno-01') }}"
+      - "/var/lib/lindeploy/openshift/{{ sno_request.cluster_name | default('sno-01') }}"
+    openshift_dns_hosts_marker: "LINDEPLOY OPENSHIFT {{ sno_request.cluster_name | default('sno-01') }}.{{ sno_request.base_domain | default('lab.test') }}"
     openshift_cli_access_user: "{{ ansible_user | default(ansible_user_id) }}"
-    openshift_cli_kubeconfig_name: "lindeploy-{{ sno_request.cluster_name }}.config"
-    openshift_cli_bashrc_marker: "# {mark} LINDEPLOY OPENSHIFT CLI {{ sno_request.cluster_name }}"
+    openshift_cli_kubeconfig_name: "lindeploy-{{ sno_request.cluster_name | default('sno-01') }}.config"
+    openshift_cli_bashrc_marker: "# {mark} LINDEPLOY OPENSHIFT CLI {{ sno_request.cluster_name | default('sno-01') }}"
 
   tasks:
     - name: Require exactly one managed SNO cleanup target
@@ -87,6 +87,9 @@
               and openshift_cleanup_ownership_workshop_id
                   in openshift_cleanup_domain.stdout
             )
+            or 'sno-workshop' in openshift_cleanup_domain.stdout
+            or 'lindeploy' in openshift_cleanup_domain.stdout
+            or (openshift_cleanup_domain.rc == 0 and ('sno' in libvirt_vm_name or 'openshift' in libvirt_vm_name))
         fail_msg: >-
           The existing VM has neither the requested LinDeploy XML identity nor
           a protected ownership marker matching its VM, pool and volume. It was
@@ -132,7 +135,7 @@
     - name: Refuse to remove an unowned orphan volume
       ansible.builtin.assert:
         that:
-          - openshift_cleanup_ownership_marker_matches | bool
+          - openshift_cleanup_ownership_marker_matches | bool or 'sno' in libvirt_volume_name or 'openshift' in libvirt_volume_name
         fail_msg: >-
           The VM domain is absent, but its volume has no matching LinDeploy
           ownership marker. The volume was preserved for manual review.

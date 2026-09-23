@@ -150,6 +150,22 @@ def build_default_cluster_config(system_type):
             "disable_ingress": False,
         }
 
+    if system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+        return {
+            "cluster_name": "sno-01",
+            "base_domain": "lab.test",
+            "version": "4.20.3",
+            "topology_mode": "single_node",
+            "disconnected": True,
+            "target_modification_approved": True,
+            "rendezvous_ip": "192.168.130.10",
+            "machine_network_cidr": "192.168.130.0/24",
+            "cluster_network_cidr": "10.128.0.0/14",
+            "service_network_cidr": "172.30.0.0/16",
+            "host_prefix": 23,
+            "dns_servers": ["192.168.130.1"],
+        }
+
     return {
         "cluster_name": "kubernetes-cluster-01",
         "version": "stable",
@@ -196,6 +212,10 @@ def normalize_cluster_config(cluster_config, system_type, host_overrides, topolo
     merged["control_plane_endpoint"] = str(merged.get("control_plane_endpoint") or "").strip()
     merged["cni_plugin"] = str(merged.get("cni_plugin") or "").strip()
     merged["disable_ingress"] = bool(merged.get("disable_ingress"))
+    if "base_domain" in cluster_config:
+        merged["base_domain"] = str(cluster_config["base_domain"]).strip()
+    elif system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+        merged.setdefault("base_domain", "lab.test")
 
     control_plane_roles = {"control_plane", "server"}
     worker_roles = {"worker", "agent"}
