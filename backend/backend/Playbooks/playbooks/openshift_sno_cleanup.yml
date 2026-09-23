@@ -122,7 +122,18 @@
             ['virsh', '--connect', libvirt_uri, 'undefine', libvirt_vm_name]
             + (['--nvram'] if ('<nvram' in openshift_cleanup_domain.stdout or 'firmware' in openshift_cleanup_domain.stdout) else [])
           }}
+      register: openshift_cleanup_undefine
+      failed_when: false
       when: openshift_cleanup_domain.rc == 0
+
+    - name: Retry undefining managed SNO domain without NVRAM flag if needed
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", undefine, "{{ libvirt_vm_name }}"]
+      register: openshift_cleanup_undefine_retry
+      failed_when: false
+      when:
+        - openshift_cleanup_domain.rc == 0
+        - openshift_cleanup_undefine.rc | default(0) != 0
 
     - name: Read managed SNO volume
       ansible.builtin.command:
