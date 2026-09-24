@@ -13,10 +13,9 @@ def seed_openshift_fast_reset_template(apps, schema_editor):
             "deployment_type": "cleanup",
             "playbook_path": "playbooks/openshift_sno_reset.yml",
             "description": (
-                "Fast Reset — destroy the managed SNO VM and its disk in seconds, "
-                "while preserving the storage pool definition, base RHCOS ISO cache, "
-                "Quay mirror registry, ownership marker, and kubeconfig templates. "
-                "Use this to quickly wipe and reinstall the cluster without re-downloading assets."
+                "Fast Reset - destroy the managed SNO VM and its disk, "
+                "preserving the storage pool, RHCOS ISO cache, Quay mirror, "
+                "ownership marker, and kubeconfig templates."
             ),
         },
     )
