@@ -33,6 +33,8 @@ import {
   formatPhaseLabel,
   getStatusColor,
 } from "../../features/executions/presentation";
+import OpenShiftPhaseBar from "./OpenShiftPhaseBar";
+
 
 type LiveExecution = {
   status?: string;
@@ -88,7 +90,10 @@ type DeploymentMonitorProps = {
   pipelineStageIndex: number;
   actions?: ReactNode;
   onCancel?: () => void;
+  /** When true, renders the OpenShift SNO phase progress bar */
+  isOpenShift?: boolean;
 };
+
 
 function getLineClass(line: string, channel: string): string | undefined {
   if (channel === "stderr") return "is-stderr";
@@ -111,7 +116,9 @@ export default function DeploymentMonitor({
   pipelineStageIndex,
   actions,
   onCancel,
+  isOpenShift = false,
 }: DeploymentMonitorProps) {
+
   const [detailsOpen, setDetailsOpen] = useState(false);
   const status = loading ? live.status : result?.status;
   const statusColor = getStatusColor(status) === "gray" ? "teal" : getStatusColor(status);
@@ -403,7 +410,17 @@ export default function DeploymentMonitor({
                   </Card>
                 )}
 
+                {/* OpenShift SNO named phase bar */}
+                {isOpenShift && loading && (
+                  <OpenShiftPhaseBar
+                    currentTask={live.currentTask}
+                    currentRole={live.currentRole}
+                    isRunning={loading}
+                  />
+                )}
+
                 {loading && (live.seenTasks > 0 || live.completedTasks > 0) && (
+
                   <Text size="sm" mt={6}>
                     Completed tasks: {live.completedTasks}
                     {live.totalTasks > 0 ? ` / ${live.totalTasks} planned` : ` | ${live.seenTasks} observed`}

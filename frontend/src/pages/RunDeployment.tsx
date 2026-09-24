@@ -3201,6 +3201,7 @@ export default function RunDeployment({
             activeStage={activeStage}
             stages={pipelineStageMap}
             pipelineStageIndex={pipelineStageIndex}
+            isOpenShift={selectedInstaller === "openshift_sno"}
             onCancel={
               loading && activeInstallationId !== null
                 ? () => void handleCancelInstallation()
