@@ -90,30 +90,131 @@
           target VM definition. No host resource was changed.
         quiet: true
 
-    - name: Validate the current disconnected libvirt adapter contract
+    - name: Preflight — disconnected mode must be enabled
       ansible.builtin.assert:
-        that:
-          - sno_request.disconnected | default(false) | bool
-          - sno_request.cluster_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
-          - sno_request.base_domain is match('^[A-Za-z0-9.-]+$')
-          - sno_request.mirror_registry is match('^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
-          - sno_request.dns_servers | default([]) | length > 0
-          - sno_request.rendezvous_ip == sno_host_request.node_ip
-          - sno_request.machine_network_cidr == (sno_host_request.node_ip.split('.')[0:3] | join('.') ~ '.0/24')
-          - sno_host_request.prefix_length | int == 24
-          - sno_host_request.gateway == (sno_host_request.node_ip.split('.')[0:3] | join('.') ~ '.1')
-          - sno_host_request.installation_disk is match('^/dev/[A-Za-z0-9._/-]+$')
-          - sno_host_request.mac_address is match('^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
-          - (sno_host_request.mac_address | default('') | length == 0) or (sno_host_request.mac_address is match('^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'))
-          - sno_host_request.interface_name is match('^[A-Za-z0-9_.:-]+$')
-          - sno_host_request.vcpu | int >= 8
-          - sno_host_request.memory_gib | int >= 16
-          - sno_host_request.disk_gib | int >= 120
+        that: sno_request.disconnected | default(false) | bool
         fail_msg: >-
-          The disconnected libvirt adapter requires exactly one target, a /24
-          machine network, rendezvousIP equal to node_ip, gateway .1, and valid
-          DNS, disk, MAC, interface, and SNO capacity values (8 vCPU, 16 GiB
-          RAM, 120 GiB disk minimum). No VM or volume was changed.
+          cluster_config.disconnected must be true for the KVM disconnected adapter.
+          Check the LinDeploy form and enable disconnected mode before retrying.
+        quiet: true
+
+    - name: Preflight — cluster name must be a valid RFC-1123 DNS label
+      ansible.builtin.assert:
+        that: sno_request.cluster_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+        fail_msg: >-
+          cluster_name '{{ sno_request.cluster_name | default('') }}' is not a valid
+          lowercase RFC-1123 label. Use only a-z, 0-9 and hyphens.
+        quiet: true
+
+    - name: Preflight — base domain must be a valid DNS domain
+      ansible.builtin.assert:
+        that: sno_request.base_domain is match('^[A-Za-z0-9.-]+$')
+        fail_msg: >-
+          base_domain '{{ sno_request.base_domain | default('') }}' is not a valid
+          DNS domain. Enter a lowercase domain name such as lab.test.
+        quiet: true
+
+    - name: Preflight — mirror registry identity must be valid
+      ansible.builtin.assert:
+        that: sno_request.mirror_registry is match('^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
+        fail_msg: >-
+          mirror_registry '{{ sno_request.mirror_registry | default('') }}' is not a valid
+          host:port identity. Expected format: registry.lab.test:8443.
+        quiet: true
+
+    - name: Preflight — at least one DNS server required
+      ansible.builtin.assert:
+        that: sno_request.dns_servers | default([]) | length > 0
+        fail_msg: >-
+          dns_servers must contain at least one IPv4 address.
+          The gateway ({{ sno_host_request.gateway | default('?') }}) is typically used.
+        quiet: true
+
+    - name: Preflight — rendezvous IP must equal node IP for SNO
+      ansible.builtin.assert:
+        that: sno_request.rendezvous_ip == sno_host_request.node_ip
+        fail_msg: >-
+          rendezvous_ip ({{ sno_request.rendezvous_ip | default('?') }}) must equal
+          node_ip ({{ sno_host_request.node_ip | default('?') }}) for Single Node OpenShift.
+        quiet: true
+
+    - name: Preflight — machine network CIDR must derive from node IP /24
+      ansible.builtin.assert:
+        that: >-
+          sno_request.machine_network_cidr ==
+          (sno_host_request.node_ip.split('.')[0:3] | join('.') ~ '.0/24')
+        fail_msg: >-
+          machine_network_cidr must be the /24 network derived from node_ip
+          (expected: {{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}.0/24,
+          got: {{ sno_request.machine_network_cidr | default('?') }}).
+        quiet: true
+
+    - name: Preflight — prefix length must be 24 for the supported KVM profile
+      ansible.builtin.assert:
+        that: sno_host_request.prefix_length | int == 24
+        fail_msg: >-
+          prefix_length is {{ sno_host_request.prefix_length | default('?') }} but the
+          current KVM adapter requires exactly /24.
+        quiet: true
+
+    - name: Preflight — gateway must be the .1 address of the machine network
+      ansible.builtin.assert:
+        that: >-
+          sno_host_request.gateway ==
+          (sno_host_request.node_ip.split('.')[0:3] | join('.') ~ '.1')
+        fail_msg: >-
+          gateway ({{ sno_host_request.gateway | default('?') }}) must be
+          {{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}.1.
+        quiet: true
+
+    - name: Preflight — installation disk must be a valid /dev path
+      ansible.builtin.assert:
+        that: sno_host_request.installation_disk is match('^/dev/[A-Za-z0-9._/-]+$')
+        fail_msg: >-
+          installation_disk '{{ sno_host_request.installation_disk | default('') }}' is not
+          a valid Linux device path. Use /dev/vda for the managed virtio guest disk.
+        quiet: true
+
+    - name: Preflight — MAC address must be valid or omitted
+      ansible.builtin.assert:
+        that: >-
+          (sno_host_request.mac_address | default('') | length == 0)
+          or (sno_host_request.mac_address is match('^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'))
+        fail_msg: >-
+          mac_address '{{ sno_host_request.mac_address | default('') }}' is not valid.
+          Use the format 52:54:00:01:00:0a or leave the field empty.
+        quiet: true
+
+    - name: Preflight — guest interface name must be valid
+      ansible.builtin.assert:
+        that: sno_host_request.interface_name is match('^[A-Za-z0-9_.:-]+$')
+        fail_msg: >-
+          interface_name '{{ sno_host_request.interface_name | default('') }}' is not valid.
+          Use enp1s0 for the standard libvirt VirtIO network interface.
+        quiet: true
+
+    - name: Preflight — SNO minimum vCPU requirement (8 vCPU)
+      ansible.builtin.assert:
+        that: sno_host_request.vcpu | int >= 8
+        fail_msg: >-
+          vcpu is {{ sno_host_request.vcpu | default(0) }} but SNO requires at least 8.
+          Increase the VM vCPU count in the form.
+        quiet: true
+
+    - name: Preflight — SNO minimum memory requirement (16 GiB)
+      ansible.builtin.assert:
+        that: sno_host_request.memory_gib | int >= 16
+        fail_msg: >-
+          memory_gib is {{ sno_host_request.memory_gib | default(0) }} but SNO requires
+          at least 16 GiB RAM. Increase the VM memory in the form.
+        quiet: true
+
+    - name: Preflight — SNO minimum disk requirement (120 GiB)
+      ansible.builtin.assert:
+        that: sno_host_request.disk_gib | int >= 120
+        fail_msg: >-
+          disk_gib is {{ sno_host_request.disk_gib | default(0) }} but SNO requires
+          at least 120 GiB storage. Increase the VM disk size in the form.
         quiet: true
 
     - name: Require explicit SNO disk approval
