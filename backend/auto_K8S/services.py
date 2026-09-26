@@ -611,14 +611,16 @@ def build_extra_vars_file(
                     mirror_payload["kubeadm_kubernetes_version"] = profile.exact_version
                 elif system_type == InstallationTemplate.SystemType.K3S:
                     mirror_payload["k3s_version"] = profile.exact_version
-        if settings.LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED:
+        if settings.LINDEPLOY_PACKAGE_MIRROR_BASE_URL:
             package_mirror_url = settings.LINDEPLOY_PACKAGE_MIRROR_BASE_URL
             if not package_mirror_url.startswith("https://"):
                 raise ValueError(
-                    "LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED requires an HTTPS "
+                    "LINDEPLOY_PACKAGE_MIRROR_BASE_URL requires an HTTPS "
                     "LINDEPLOY_PACKAGE_MIRROR_BASE_URL."
                 )
+
             mirror_payload["lindeploy_package_mirror_base_url"] = package_mirror_url
+
         ca_file = settings.LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE
         if ca_file:
             ca_path = Path(ca_file).expanduser()

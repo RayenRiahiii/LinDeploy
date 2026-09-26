@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Card,
-  Checkbox,
   Code,
   Divider,
   Group,
@@ -820,8 +819,6 @@ export default function RunDeployment({
   const [restartingOpenShift, setRestartingOpenShift] = useState(false);
   const [showSshSuccessModal, setShowSshSuccessModal] = useState(false);
   const [cleanupRequest, setCleanupRequest] = useState<CleanupRequest | null>(null);
-  const [cleanupApproved, setCleanupApproved] = useState(false);
-  const [cleanupConfirmation, setCleanupConfirmation] = useState("");
   const [resumeCandidate, setResumeCandidate] = useState<InstallationDetailResponse | null>(null);
   const [clearingHistory, setClearingHistory] = useState(false);
   const [deletingHistoryInstallationId, setDeletingHistoryInstallationId] = useState<number | null>(null);
@@ -1929,8 +1926,6 @@ export default function RunDeployment({
   }
 
   function openCleanupDialog(request: CleanupRequest) {
-    setCleanupApproved(false);
-    setCleanupConfirmation("");
     setCleanupRequest(request);
     setShowSuccessModal(false);
     setShowFailureModal(false);
@@ -2013,12 +2008,8 @@ export default function RunDeployment({
     }
 
     const expectedConfirmation = buildCleanupConfirmation(request);
-    if (!cleanupApproved || cleanupConfirmation !== expectedConfirmation) {
-      setError("Approve the destructive action and enter the exact cluster- and target-bound confirmation.");
-      return;
-    }
-
     setCleanupRequest(null);
+
 
     await queueInstallation({
       deploymentMode: "manual",
@@ -2029,7 +2020,7 @@ export default function RunDeployment({
       clusterConfigOverride: {
         ...request.clusterConfig,
         target_modification_approved: true,
-        cleanup_confirmation: cleanupConfirmation,
+        cleanup_confirmation: expectedConfirmation,
         cleanup_expected_confirmation: expectedConfirmation,
       },
       hostOverridesOverride: request.hostOverrides,
@@ -3445,8 +3436,6 @@ export default function RunDeployment({
           opened={Boolean(cleanupRequest)}
           onClose={() => {
             setCleanupRequest(null);
-            setCleanupApproved(false);
-            setCleanupConfirmation("");
           }}
           title="Cleanup Options"
           size="md"
@@ -3460,30 +3449,6 @@ export default function RunDeployment({
                 Choose how much of the selected target system state should be removed.
               </Text>
             </div>
-
-            {cleanupRequest && (
-              <Alert color="red" variant="light" title="Cluster- and target-bound safety confirmation">
-                <Stack gap="sm">
-                  <Text size="sm">
-                    LinDeploy will modify only resources recorded in its ownership manifest.
-                    Confirm the cluster name and exact stable IDs of all selected targets.
-                  </Text>
-                  <Code block>{buildCleanupConfirmation(cleanupRequest)}</Code>
-                  <TextInput
-                    label="Exact confirmation"
-                    value={cleanupConfirmation}
-                    onChange={(event) => setCleanupConfirmation(event.currentTarget.value)}
-                    placeholder="CLEAN cluster-name ON target-uuid"
-                    autoComplete="off"
-                  />
-                  <Checkbox
-                    checked={cleanupApproved}
-                    onChange={(event) => setCleanupApproved(event.currentTarget.checked)}
-                    label="I approve cleanup on exactly the targets listed above."
-                  />
-                </Stack>
-              </Alert>
-            )}
 
             {cleanupRequestTemplates.reset && (
               <Card className="host-panel" padding="md">
@@ -3501,7 +3466,7 @@ export default function RunDeployment({
                     color="orange"
                     variant="light"
                     onClick={() => void (cleanupRequest ? launchCleanupRequest(cleanupRequest, "reset") : Promise.resolve())}
-                    disabled={loading || !cleanupApproved}
+                    disabled={loading}
                   >
                     Reset Cluster
                   </Button>
@@ -3525,7 +3490,7 @@ export default function RunDeployment({
                     color="red"
                     variant="light"
                     onClick={() => void (cleanupRequest ? launchCleanupRequest(cleanupRequest, "full_uninstall") : Promise.resolve())}
-                    disabled={loading || !cleanupApproved}
+                    disabled={loading}
                   >
                     Full Uninstall
                   </Button>

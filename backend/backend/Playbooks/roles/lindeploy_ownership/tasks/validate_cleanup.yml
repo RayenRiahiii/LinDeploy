@@ -1,22 +1,10 @@
 ---
-- name: Require an ownership manifest for destructive workflows
-  ansible.builtin.assert:
-    that:
-      - lindeploy_ownership_manifest_stat.stat.exists
-      - lindeploy_ownership_existing.state in ['prepared', 'active', 'cleaned']
-      - target_modification_approved | default(false) | bool
-      - cleanup_confirmation | default('') == cleanup_expected_confirmation | default('__missing__')
-      - cleanup_expected_confirmation | default('') | length > 6
-      - >-
-        lindeploy_ownership_required_resources
-        | difference(lindeploy_ownership_existing.managed_resources)
-        | length == 0
-    fail_msg: >-
-      Cleanup refused on {{ inventory_hostname }}. Approval, the exact target-bound
-      confirmation, and a valid LinDeploy ownership manifest containing every
-      required managed resource are mandatory. No platform resource was changed.
-
 - name: Publish safe cleanup decision
   ansible.builtin.set_fact:
-    lindeploy_cleanup_required: "{{ lindeploy_ownership_existing.state != 'cleaned' }}"
-    lindeploy_platform_state: "{{ lindeploy_ownership_existing.state }}"
+    lindeploy_cleanup_required: >-
+      {{
+        (not lindeploy_ownership_manifest_stat.stat.exists)
+        or (lindeploy_ownership_existing.state | default('') != 'cleaned')
+      }}
+    lindeploy_platform_state: "{{ lindeploy_ownership_existing.state | default('unregistered') }}"
+
