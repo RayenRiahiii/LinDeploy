@@ -1293,6 +1293,7 @@
         and
         (
           k3s_kube_system_pods_health.stdout_lines
+          | reject('search', '^helm-install-')
           | select('search', '\\s(Error|CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|Pending|Unknown|Failed)\\s')
           | list
           | length
@@ -1328,6 +1329,26 @@
         - k3s_deep_healthcheck_required | bool
         - k3s_metrics_server_expected | bool
 
+    - name: Wait for K3s Helm install jobs to complete
+      command: >-
+        {{ k3s_binary_path }} kubectl --kubeconfig={{ k3s_kubeconfig_path }}
+        -n kube-system wait --for=condition=complete job --all --timeout={{ k3s_healthcheck_timeout }}
+      register: k3s_helm_jobs_wait
+      changed_when: false
+      failed_when: false
+      when: k3s_deep_healthcheck_required | bool
+
+    - name: Wait for Traefik rollout
+      command: >-
+        {{ k3s_binary_path }} kubectl --kubeconfig={{ k3s_kubeconfig_path }}
+        -n kube-system rollout status deploy/traefik --timeout={{ k3s_healthcheck_timeout }}
+      register: k3s_traefik_rollout
+      changed_when: false
+      failed_when: false
+      when:
+        - k3s_deep_healthcheck_required | bool
+        - "'traefik' not in k3s_disable_components"
+
     - name: Capture cluster node summary
       command: >-
         {{ k3s_binary_path }} kubectl --kubeconfig={{ k3s_kubeconfig_path }}
@@ -1353,13 +1374,18 @@
         get pods -A --no-headers
       register: k3s_cluster_pods_health
       changed_when: false
-      failed_when: >-
+      retries: "{{ k3s_healthcheck_retries }}"
+      delay: "{{ k3s_healthcheck_delay }}"
+      until: >-
+        k3s_cluster_pods_health.rc == 0
+        and
         (
           k3s_cluster_pods_health.stdout_lines
+          | reject('search', '^kube-system\\s+helm-install-')
           | select('search', '\\s(Error|CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|Pending|Unknown|Failed)\\s')
           | list
           | length
-        ) > 0
+        ) == 0
       when: k3s_deep_healthcheck_required | bool
   rescue:
     - name: Gather cluster nodes for diagnostics
