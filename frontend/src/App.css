@@ -165,9 +165,9 @@
 
 .topbar-shell {
   display: grid;
-  grid-template-columns: minmax(190px, 220px) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
-  align-items: start;
+  align-items: center;
 }
 
 .topbar-panel,
@@ -179,11 +179,13 @@
 }
 
 .topbar-brand-panel {
-  border-radius: 20px;
-  padding: 10px 12px;
-  align-self: start;
+  border-radius: 45px;
+  padding: 8px 18px;
+  align-self: center;
   min-width: 0;
-  justify-self: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .topbar-panel {
@@ -198,9 +200,9 @@
 }
 
 .brand-wordmark {
-  width: 100%;
-  max-width: 196px;
-  height: auto;
+  width: auto;
+  max-width: 140px;
+  height: 28px;
   display: block;
   object-fit: contain;
 }
@@ -264,29 +266,29 @@
 }
 
 .topbar-terminal {
-  justify-self: stretch;
-  width: 100%;
-  min-width: 0;
+  justify-self: end;
+  width: auto;
+  min-width: fit-content;
   margin-top: 0;
-  align-self: start;
+  align-self: center;
   display: flex;
   align-items: center;
   min-height: 0;
 }
 
 .topbar-terminal.hero-terminal {
-  width: 100%;
-  min-width: 0;
+  width: auto;
+  min-width: fit-content;
   margin-top: 0;
-  padding: 12px 18px;
-  border-radius: 18px;
+  padding: 8px 16px;
+  border-radius: 45px;
   justify-self: end;
 }
 
 .topbar-terminal > .mantine-Group-root {
   width: 100%;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
 }
 
 .workspace-main {
@@ -343,13 +345,13 @@
 }
 
 .topbar-terminal-copy {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: fit-content;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   padding-left: 2px;
-  padding-right: 16px;
+  padding-right: 6px;
 }
 
 .topbar-terminal-label,
@@ -358,21 +360,22 @@
 }
 
 .topbar-terminal-label {
-  font-size: 0.66rem;
-  opacity: 0.84;
+  font-size: 0.64rem;
+  opacity: 0.72;
   line-height: 1.1;
 }
 
 .topbar-terminal-value {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
+  font-weight: 600;
   line-height: 1.15;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .theme-toggle-button {
   flex: 0 0 auto;
-  margin-left: 16px;
+  margin-left: 4px;
   align-self: center;
 }
 

@@ -1,11 +1,9 @@
 import {
   ActionIcon,
-  Badge,
   Box,
   Group,
   Menu,
   Paper,
-  Stack,
   Text,
   ThemeIcon,
   UnstyledButton,
@@ -182,11 +180,11 @@ const sectionMetaMap: Array<{ match: (pathname: string) => boolean; meta: Sectio
 function getSectionMeta(pathname: string): SectionMeta {
   return (
     sectionMetaMap.find((item) => item.match(pathname))?.meta || {
-      badge: "Control Center",
+      badge: "Platform Workspace",
       title: "Operate installers, inventory, and execution from one workspace",
       description:
         "Navigate through inventory, installer workflows, and execution monitoring from a structured application shell.",
-      terminalSection: "control_center",
+      terminalSection: "workspace",
     }
   );
 }
@@ -240,13 +238,10 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
       <div className="workspace-shell">
         <header className={`workspace-topbar${topbarHidden ? " is-hidden" : ""}`}>
           <div className="topbar-shell">
-            <Paper className="topbar-brand-panel" p="md">
-              <Stack gap={6} className="topbar-brand-block">
-                <Badge color="red" variant="light" size="md" w="fit-content">
-                  Control Center
-                </Badge>
+            <Paper className="topbar-brand-panel" p="xs">
+              <Link to="/dashboard" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }} aria-label="LinDeploy Home">
                 <img src={brandLogo} alt="LinDeploy" className="brand-wordmark" />
-              </Stack>
+              </Link>
             </Paper>
 
             <Paper className="topbar-panel" p="md">
