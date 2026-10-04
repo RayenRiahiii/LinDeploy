@@ -573,6 +573,48 @@
   opacity: 0.72;
 }
 
+.installer-card-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--mantine-color-red-4, #ff6b6b);
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: rgba(238, 0, 0, 0.06);
+  border: 1px solid rgba(238, 0, 0, 0.16);
+  width: fit-content;
+  transition: all 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.installer-card:hover .installer-card-action {
+  background: rgba(238, 0, 0, 0.12);
+  border-color: rgba(238, 0, 0, 0.3);
+  color: var(--mantine-color-red-3, #ffa8a8);
+  transform: translateX(3px);
+}
+
+.installer-card-action-icon {
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.installer-card:hover .installer-card-action-icon {
+  transform: translateX(2px);
+}
+
+[data-mantine-color-scheme="light"] .installer-card-action {
+  color: var(--mantine-color-red-7, #c92a2a);
+  background: rgba(224, 49, 49, 0.05);
+  border-color: rgba(224, 49, 49, 0.16);
+}
+
+[data-mantine-color-scheme="light"] .installer-card:hover .installer-card-action {
+  background: rgba(224, 49, 49, 0.1);
+  border-color: rgba(224, 49, 49, 0.28);
+  color: var(--mantine-color-red-8, #a61e4d);
+}
+
 .workflow-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

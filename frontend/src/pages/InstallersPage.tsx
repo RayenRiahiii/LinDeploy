@@ -59,10 +59,10 @@ export default function InstallersPage() {
               </Group>
 
               {isAvailable && (
-                <Group gap="xs" mt="auto" pt="sm">
-                  <IconArrowRight size={16} />
-                  <Text size="sm" fw={600} c="red.6">Open workflow page</Text>
-                </Group>
+                <div className="installer-card-action" style={{ marginTop: "auto" }}>
+                  <span>Open workflow page</span>
+                  <IconArrowRight size={14} className="installer-card-action-icon" />
+                </div>
               )}
             </Stack>
           );
