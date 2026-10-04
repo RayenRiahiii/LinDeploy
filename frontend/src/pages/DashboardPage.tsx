@@ -22,6 +22,7 @@ import {
   IconTerminal2,
 } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import PageHeader from "../components/common/PageHeader";
 import MirrorStatusPanel from "../components/mirror/MirrorStatusPanel";
 
@@ -66,6 +67,7 @@ function getStatusColor(status?: string | null) {
 }
 
 export default function DashboardPage() {
+  const { t } = useTranslation();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -96,21 +98,21 @@ export default function DashboardPage() {
     <Stack gap="lg">
       <PageHeader
         icon={<IconLayoutDashboard size={22} />}
-        badge="Platform Overview"
+        badge={t("dashboard.badge", "Platform Overview")}
         badgeColor="red"
-        title="Operational Summary"
-        subtitle="Real-time status of your infrastructure inventory, saved credentials, and deployment pipelines."
+        title={t("dashboard.title", "Operational Summary")}
+        subtitle={t("dashboard.subtitle", "Real-time status of your infrastructure inventory, saved credentials, and deployment pipelines.")}
         stats={
           summary ? (
             <>
               <Badge color="red" variant="light">
-                Hosts: {summary.hosts.total}
+                {t("nav.hosts", "Hosts")}: {summary.hosts.total}
               </Badge>
               <Badge color="teal" variant="light">
-                Active Queue: {summary.installations.running + summary.installations.pending}
+                {t("dashboard.activeQueue", "Active Queue")}: {summary.installations.running + summary.installations.pending}
               </Badge>
               <Badge color="gray" variant="outline">
-                Total Runs: {summary.installations.total}
+                {t("dashboard.totalRuns", "Total Runs")}: {summary.installations.total}
               </Badge>
             </>
           ) : undefined
@@ -122,13 +124,13 @@ export default function DashboardPage() {
             onClick={() => void fetchSummary()}
             loading={loading}
           >
-            Refresh
+            {t("common.refresh", "Refresh")}
           </Button>
         }
       />
 
       {error && (
-        <Alert color="red" variant="light" title="Dashboard error">
+        <Alert color="red" variant="light" title={t("common.error", "Dashboard error")}>
           {error}
         </Alert>
       )}
@@ -138,7 +140,9 @@ export default function DashboardPage() {
           <Card className="console-panel dashboard-stat-card" padding="lg">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Hosts Inventory</Text>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
+                  {t("dashboard.hostsInventory", "Hosts Inventory")}
+                </Text>
                 <Title order={2} mt={4}>{summary.hosts.total}</Title>
               </div>
               <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -146,14 +150,21 @@ export default function DashboardPage() {
               </ThemeIcon>
             </Group>
             <Text size="xs" c="dimmed" mt="sm">
-              {summary.hosts.enabled} enabled · {summary.hosts.control_plane} CP · {summary.hosts.worker} worker
+              {t("dashboard.hostsStats", {
+                enabled: summary.hosts.enabled,
+                cp: summary.hosts.control_plane,
+                worker: summary.hosts.worker,
+                defaultValue: `${summary.hosts.enabled} enabled · ${summary.hosts.control_plane} CP · ${summary.hosts.worker} worker`,
+              })}
             </Text>
           </Card>
 
           <Card className="console-panel dashboard-stat-card" padding="lg">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Credentials</Text>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
+                  {t("dashboard.credentials", "Credentials")}
+                </Text>
                 <Title order={2} mt={4}>{summary.credentials.total}</Title>
               </div>
               <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -161,14 +172,20 @@ export default function DashboardPage() {
               </ThemeIcon>
             </Group>
             <Text size="xs" c="dimmed" mt="sm">
-              {summary.credentials.password} password · {summary.credentials.ssh_key} SSH key
+              {t("dashboard.credStats", {
+                password: summary.credentials.password,
+                sshKey: summary.credentials.ssh_key,
+                defaultValue: `${summary.credentials.password} password · ${summary.credentials.ssh_key} SSH key`,
+              })}
             </Text>
           </Card>
 
           <Card className="console-panel dashboard-stat-card" padding="lg">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Total Deployments</Text>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
+                  {t("dashboard.totalDeployments", "Total Deployments")}
+                </Text>
                 <Title order={2} mt={4}>{summary.installations.total}</Title>
               </div>
               <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -176,14 +193,20 @@ export default function DashboardPage() {
               </ThemeIcon>
             </Group>
             <Text size="xs" c="dimmed" mt="sm">
-              {summary.installations.success} passed · {summary.installations.failed} failed
+              {t("dashboard.deployStats", {
+                passed: summary.installations.success,
+                failed: summary.installations.failed,
+                defaultValue: `${summary.installations.success} passed · ${summary.installations.failed} failed`,
+              })}
             </Text>
           </Card>
 
           <Card className="console-panel dashboard-stat-card" padding="lg">
             <Group justify="space-between" align="flex-start">
               <div>
-                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Active Pipeline</Text>
+                <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
+                  {t("dashboard.activePipeline", "Active Pipeline")}
+                </Text>
                 <Title order={2} mt={4}>{summary.installations.running + summary.installations.pending}</Title>
               </div>
               <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -191,7 +214,11 @@ export default function DashboardPage() {
               </ThemeIcon>
             </Group>
             <Text size="xs" c="dimmed" mt="sm">
-              {summary.installations.running} running · {summary.installations.pending} queued
+              {t("dashboard.pipelineStats", {
+                running: summary.installations.running,
+                queued: summary.installations.pending,
+                defaultValue: `${summary.installations.running} running · ${summary.installations.pending} queued`,
+              })}
             </Text>
           </Card>
         </SimpleGrid>
@@ -205,10 +232,10 @@ export default function DashboardPage() {
             <ThemeIcon color="red" variant="light" size={36} radius="md">
               <IconPlayerPlay size={18} />
             </ThemeIcon>
-            <Title order={4}>Installer Catalog</Title>
+            <Title order={4}>{t("installers.title", "Installer Catalog")}</Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Choose the target system, then move into the dedicated Kubernetes or K3s configuration page.
+            {t("dashboard.installerCatalogDesc", "Choose the target system, then move into the dedicated Kubernetes or K3s configuration page.")}
           </Text>
         </Card>
 
@@ -217,10 +244,10 @@ export default function DashboardPage() {
             <ThemeIcon color="red" variant="light" size={36} radius="md">
               <IconTerminal2 size={18} />
             </ThemeIcon>
-            <Title order={4}>Execution Center</Title>
+            <Title order={4}>{t("sections.executions.badge", "Execution Center")}</Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Resume active installations, inspect the live pipeline, and review final playbook output.
+            {t("dashboard.executionCenterDesc", "Resume active installations, inspect the live pipeline, and review final playbook output.")}
           </Text>
         </Card>
 
@@ -229,10 +256,10 @@ export default function DashboardPage() {
             <ThemeIcon color="red" variant="light" size={36} radius="md">
               <IconFolders size={18} />
             </ThemeIcon>
-            <Title order={4}>History</Title>
+            <Title order={4}>{t("nav.history", "History")}</Title>
           </Group>
           <Text c="dimmed" size="sm">
-            Review completed runs separately from the live execution workspace and delete obsolete records.
+            {t("dashboard.historyDesc", "Review completed runs separately from the live execution workspace and delete obsolete records.")}
           </Text>
         </Card>
       </SimpleGrid>
@@ -241,9 +268,13 @@ export default function DashboardPage() {
         <Card className="console-panel" padding="lg">
           <Group justify="space-between" align="center">
             <div>
-              <Title order={3}>Latest Installation</Title>
+              <Title order={3}>{t("dashboard.latestInstallation", "Latest Installation")}</Title>
               <Text c="dimmed" size="sm" mt={4}>
-                installation #{summary.latest_installation.id} | {summary.latest_installation.template_name}
+                {t("dashboard.installationNum", {
+                  id: summary.latest_installation.id,
+                  name: summary.latest_installation.template_name,
+                  defaultValue: `installation #${summary.latest_installation.id} | ${summary.latest_installation.template_name}`,
+                })}
               </Text>
             </div>
             <Badge color={getStatusColor(summary.latest_installation.status)} variant="light">
@@ -251,7 +282,11 @@ export default function DashboardPage() {
             </Badge>
           </Group>
           <Text size="sm" c="dimmed" mt="md">
-            phase {summary.latest_installation.phase} | progress {summary.latest_installation.progress}%
+            {t("dashboard.phaseProgress", {
+              phase: summary.latest_installation.phase,
+              progress: summary.latest_installation.progress,
+              defaultValue: `phase ${summary.latest_installation.phase} | progress ${summary.latest_installation.progress}%`,
+            })}
           </Text>
         </Card>
       )}

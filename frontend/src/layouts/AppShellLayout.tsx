@@ -23,7 +23,9 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
+import LanguageSelector from "../components/common/LanguageSelector";
 import lindeployWordmark from "../assets/logo.png";
 import lindeployWordmarkDark from "../assets/darkmodeLogo.png";
 
@@ -35,166 +37,148 @@ type SectionMeta = {
   installerId?: "kubernetes" | "k3s" | "openshift_sno" | null;
 };
 
-type NavigationItem = {
+type NavigationItemDef = {
   route: string;
-  label: string;
-  shortLabel: string;
+  labelKey: string;
+  shortLabelKey: string;
   icon: typeof IconLayoutDashboard;
 };
 
-const navigationItems: NavigationItem[] = [
+const navigationItemDefs: NavigationItemDef[] = [
   {
     route: "/dashboard",
-    label: "Dashboard",
-    shortLabel: "Overview",
+    labelKey: "nav.dashboard",
+    shortLabelKey: "nav.dashboardShort",
     icon: IconLayoutDashboard,
   },
   {
     route: "/hosts",
-    label: "Hosts",
-    shortLabel: "Inventory",
+    labelKey: "nav.hosts",
+    shortLabelKey: "nav.hostsShort",
     icon: IconServer,
   },
   {
     route: "/credentials",
-    label: "Credentials",
-    shortLabel: "Access",
+    labelKey: "nav.credentials",
+    shortLabelKey: "nav.credentialsShort",
     icon: IconKey,
   },
   {
     route: "/installers",
-    label: "Installers",
-    shortLabel: "Catalog",
+    labelKey: "nav.installers",
+    shortLabelKey: "nav.installersShort",
     icon: IconPlayerPlay,
   },
   {
     route: "/executions",
-    label: "Executions",
-    shortLabel: "Monitor",
+    labelKey: "nav.executions",
+    shortLabelKey: "nav.executionsShort",
     icon: IconTerminal2,
   },
   {
     route: "/history",
-    label: "History",
-    shortLabel: "Archive",
+    labelKey: "nav.history",
+    shortLabelKey: "nav.historyShort",
     icon: IconHistory,
   },
 ];
 
-const sectionMetaMap: Array<{ match: (pathname: string) => boolean; meta: SectionMeta }> = [
+const sectionMetaDefs = [
   {
-    match: (pathname) => pathname === "/dashboard",
-    meta: {
-      badge: "Operations Overview",
-      title: "Track installers, hosts, credentials, and execution health",
-      description:
-        "Use the dashboard as the control room for current capacity, latest activity, and direct access to the next operational step.",
-      terminalSection: "dashboard_overview",
-    },
+    match: (pathname: string) => pathname === "/dashboard",
+    badgeKey: "sections.dashboard.badge",
+    titleKey: "sections.dashboard.title",
+    descKey: "sections.dashboard.description",
+    terminalSection: "dashboard_overview",
   },
   {
-    match: (pathname) => pathname.startsWith("/hosts"),
-    meta: {
-      badge: "Infrastructure Inventory",
-      title: "Manage targets with a clean operator workflow",
-      description:
-        "Review host definitions, credentials linkage, and machine properties from a structured CRUD workspace.",
-      terminalSection: "hosts_registry",
-    },
+    match: (pathname: string) => pathname.startsWith("/hosts"),
+    badgeKey: "sections.hosts.badge",
+    titleKey: "sections.hosts.title",
+    descKey: "sections.hosts.description",
+    terminalSection: "hosts_registry",
   },
   {
-    match: (pathname) => pathname.startsWith("/credentials"),
-    meta: {
-      badge: "Access Management",
-      title: "Maintain reusable SSH credentials safely and clearly",
-      description:
-        "Create and edit password-based or key-based SSH credentials used by your host inventory.",
-      terminalSection: "credentials_vault",
-    },
+    match: (pathname: string) => pathname.startsWith("/credentials"),
+    badgeKey: "sections.credentials.badge",
+    titleKey: "sections.credentials.title",
+    descKey: "sections.credentials.description",
+    terminalSection: "credentials_vault",
   },
   {
-    match: (pathname) => pathname === "/installers",
-    meta: {
-      badge: "Installer Catalog",
-      title: "Choose the system you want to install",
-      description:
-        "Select the target platform, then open its dedicated workflow page to configure inputs and start a controlled deployment.",
-      terminalSection: "installer_catalog",
-    },
+    match: (pathname: string) => pathname === "/installers",
+    badgeKey: "sections.installers.badge",
+    titleKey: "sections.installers.title",
+    descKey: "sections.installers.description",
+    terminalSection: "installer_catalog",
   },
   {
-    match: (pathname) => pathname === "/installers/kubernetes",
-    meta: {
-      badge: "Kubernetes Installer",
-      title: "Deploy Kubernetes",
-      description:
-        "Choose a topology, assign target hosts, verify SSH connectivity, and follow deployment or cleanup from one operational page.",
-      terminalSection: "kubernetes_installer",
-      installerId: "kubernetes",
-    },
+    match: (pathname: string) => pathname === "/installers/kubernetes",
+    badgeKey: "sections.kubernetes.badge",
+    titleKey: "sections.kubernetes.title",
+    descKey: "sections.kubernetes.description",
+    terminalSection: "kubernetes_installer",
+    installerId: "kubernetes" as const,
   },
   {
-    match: (pathname) => pathname === "/installers/k3s",
-    meta: {
-      badge: "K3s Installer",
-      title: "Deploy K3s",
-      description:
-        "Choose a topology, assign target hosts, verify SSH connectivity, and follow deployment or cleanup from one operational page.",
-      terminalSection: "k3s_installer",
-      installerId: "k3s",
-    },
+    match: (pathname: string) => pathname === "/installers/k3s",
+    badgeKey: "sections.k3s.badge",
+    titleKey: "sections.k3s.title",
+    descKey: "sections.k3s.description",
+    terminalSection: "k3s_installer",
+    installerId: "k3s" as const,
   },
   {
-    match: (pathname) => pathname === "/installers/openshift-sno",
-    meta: {
-      badge: "OpenShift SNO",
-      title: "Deploy Single Node OpenShift",
-      description:
-        "Define cluster identity, KVM resources, networking and credentials, then review readiness before launch.",
-      terminalSection: "openshift_sno_installer",
-      installerId: "openshift_sno",
-    },
+    match: (pathname: string) => pathname === "/installers/openshift-sno",
+    badgeKey: "sections.openshift.badge",
+    titleKey: "sections.openshift.title",
+    descKey: "sections.openshift.description",
+    terminalSection: "openshift_sno_installer",
+    installerId: "openshift_sno" as const,
   },
   {
-    match: (pathname) => pathname.startsWith("/executions"),
-    meta: {
-      badge: "Execution Center",
-      title: "Monitor active and recent installer runs",
-      description:
-        "Follow live progress, inspect task events, and review the final Ansible output from a dedicated execution workspace.",
-      terminalSection: "execution_center",
-    },
+    match: (pathname: string) => pathname.startsWith("/executions"),
+    badgeKey: "sections.executions.badge",
+    titleKey: "sections.executions.title",
+    descKey: "sections.executions.description",
+    terminalSection: "execution_center",
   },
   {
-    match: (pathname) => pathname.startsWith("/history"),
-    meta: {
-      badge: "History Archive",
-      title: "Inspect and prune completed installation records",
-      description:
-        "Review saved installer runs separately from the live monitor and remove obsolete execution history when needed.",
-      terminalSection: "history_archive",
-    },
+    match: (pathname: string) => pathname.startsWith("/history"),
+    badgeKey: "sections.history.badge",
+    titleKey: "sections.history.title",
+    descKey: "sections.history.description",
+    terminalSection: "history_archive",
   },
 ];
 
-function getSectionMeta(pathname: string): SectionMeta {
-  return (
-    sectionMetaMap.find((item) => item.match(pathname))?.meta || {
-      badge: "Platform Workspace",
-      title: "Operate installers, inventory, and execution from one workspace",
-      description:
-        "Navigate through inventory, installer workflows, and execution monitoring from a structured application shell.",
-      terminalSection: "workspace",
-    }
-  );
+function getSectionMeta(pathname: string, t: (key: string, options?: any) => any): SectionMeta {
+  const match = sectionMetaDefs.find((item) => item.match(pathname));
+  if (match) {
+    return {
+      badge: String(t(match.badgeKey)),
+      title: String(t(match.titleKey)),
+      description: String(t(match.descKey)),
+      terminalSection: match.terminalSection,
+      installerId: match.installerId || null,
+    };
+  }
+  return {
+    badge: String(t("sections.default.badge", { defaultValue: "Platform Workspace" })),
+    title: String(t("sections.default.title", { defaultValue: "Operate installers, inventory, and execution from one workspace" })),
+    description: String(t(
+      "sections.default.description",
+      { defaultValue: "Navigate through inventory, installer workflows, and execution monitoring from a structured application shell." }
+    )),
+    terminalSection: "workspace",
+  };
 }
 
 function isActive(pathname: string, route: string) {
   if (route === "/dashboard") {
     return pathname === "/dashboard";
   }
-
-  return pathname === route || pathname.startsWith(`${route}/`);
+  return pathname.startsWith(route);
 }
 
 type AppShellLayoutProps = {
@@ -205,36 +189,47 @@ type AppShellLayoutProps = {
 export default function AppShellLayout({ colorScheme, onToggleColorScheme }: AppShellLayoutProps) {
   const location = useLocation();
   const { user, logout } = useAuth();
-  const meta = getSectionMeta(location.pathname);
-  const brandLogo = colorScheme === "dark" ? lindeployWordmarkDark : lindeployWordmark;
+  const { t } = useTranslation();
   const [topbarHidden, setTopbarHidden] = useState(false);
   const lastScrollYRef = useRef(0);
+  const brandLogo = colorScheme === "dark" ? lindeployWordmarkDark : lindeployWordmark;
 
   useEffect(() => {
-    const handleScroll = () => {
-      const currentY = window.scrollY;
+    lastScrollYRef.current = window.scrollY;
+  }, [location.pathname]);
 
-      if (currentY < 24) {
+  useEffect(() => {
+    function handleScroll() {
+      const currentScrollY = window.scrollY;
+      const delta = currentScrollY - lastScrollYRef.current;
+      const isMobile = window.innerWidth <= 768;
+      const threshold = isMobile ? 8 : 12;
+
+      if (currentScrollY <= 24) {
         setTopbarHidden(false);
-        lastScrollYRef.current = currentY;
-        return;
+      } else if (delta > threshold && currentScrollY > 72) {
+        setTopbarHidden(true);
+      } else if (delta < -threshold) {
+        setTopbarHidden(false);
       }
 
-      const scrollingDown = currentY > lastScrollYRef.current;
-      const delta = Math.abs(currentY - lastScrollYRef.current);
-
-      if (delta > 10) {
-        setTopbarHidden(scrollingDown);
-        lastScrollYRef.current = currentY;
-      }
-    };
+      lastScrollYRef.current = currentScrollY;
+    }
 
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  const meta = getSectionMeta(location.pathname, t);
+
+  const navigationItems = navigationItemDefs.map((item) => ({
+    ...item,
+    label: t(item.labelKey),
+    shortLabel: t(item.shortLabelKey),
+  }));
+
   return (
-    <Box className="app-shell">
+    <Box className="app-canvas">
       <div className="workspace-shell">
         <header className={`workspace-topbar${topbarHidden ? " is-hidden" : ""}`}>
           <div className="topbar-shell">
@@ -245,7 +240,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
             </Paper>
 
             <Paper className="topbar-panel" p="md">
-              <Group gap="sm" className="topbar-nav" justify="center">
+              <Group gap="sm" className="topbar-nav" wrap="nowrap">
                 {navigationItems.map((item) => {
                   const active = isActive(location.pathname, item.route);
                   const Icon = item.icon;
@@ -258,8 +253,8 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                       className={`orb-nav-link${active ? " is-active" : ""}`}
                     >
                       <ThemeIcon
+                        size={28}
                         radius="xl"
-                        size={40}
                         variant={active ? "filled" : "light"}
                         color={active ? "red" : "gray"}
                         className="orb-nav-icon"
@@ -279,17 +274,18 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
             <Box className="hero-terminal topbar-terminal">
               <Group gap="xs" justify="space-between" wrap="nowrap">
                 <div className="topbar-terminal-copy">
-                  <Text className="hero-terminal-line topbar-terminal-label">$ workspace</Text>
+                  <Text className="hero-terminal-line topbar-terminal-label">$ {t("topbar.workspace", "workspace")}</Text>
                   <Text className="hero-terminal-line topbar-terminal-value">{meta.terminalSection}</Text>
                 </div>
                 <Group gap={8} wrap="nowrap">
+                  <LanguageSelector />
                   <ActionIcon
                     size={32}
                     radius="xl"
                     variant="light"
                     color={colorScheme === "dark" ? "yellow" : "dark"}
                     onClick={onToggleColorScheme}
-                    aria-label={colorScheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                    aria-label={colorScheme === "dark" ? t("topbar.switchToLight", "Switch to light mode") : t("topbar.switchToDark", "Switch to dark mode")}
                     className="theme-toggle-button"
                   >
                     {colorScheme === "dark" ? <IconSun size={18} /> : <IconMoonStars size={18} />}
@@ -348,7 +344,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                         </UnstyledButton>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        <Menu.Label>Signed in as</Menu.Label>
+                        <Menu.Label>{t("topbar.signedInAs", "Signed in as")}</Menu.Label>
                         <Menu.Item disabled leftSection={<IconUser size={14} />}>
                           <Text size="xs" fw={600} truncate style={{ maxWidth: 170 }}>
                             {user.email || user.username}
@@ -360,7 +356,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                           leftSection={<IconLogout size={14} />}
                           onClick={logout}
                         >
-                          Sign out
+                          {t("topbar.signOut", "Sign out")}
                         </Menu.Item>
                       </Menu.Dropdown>
                     </Menu>

@@ -35,6 +35,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import lindeployLogoDark from "../assets/darkmodeLogo.png";
 import { useAuth } from "../context/AuthContext";
+import LanguageSelector from "../components/common/LanguageSelector";
 
 type SignUpPageProps = {
   colorScheme: "dark" | "light";
@@ -188,6 +189,7 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
         </Group>
 
         <Group gap="sm">
+          <LanguageSelector />
           <Tooltip label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}>
             <ActionIcon
               variant="default"

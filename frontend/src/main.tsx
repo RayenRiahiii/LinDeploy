@@ -8,6 +8,7 @@ import App from "./App";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import "./index.css";
+import "./i18n";
 
 const theme = createTheme({
   primaryColor: "red",

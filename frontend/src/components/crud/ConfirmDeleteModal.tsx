@@ -1,4 +1,5 @@
 import { Alert, Button, Group, Modal, Stack, Text } from "@mantine/core";
+import { useTranslation } from "react-i18next";
 
 type ConfirmDeleteModalProps = {
   opened: boolean;
@@ -25,6 +26,8 @@ export default function ConfirmDeleteModal({
   onClose,
   onConfirm,
 }: ConfirmDeleteModalProps) {
+  const { t } = useTranslation();
+
   return (
     <Modal
       opened={opened}
@@ -36,7 +39,7 @@ export default function ConfirmDeleteModal({
     >
       <Stack gap="md">
         <Text>
-          Delete <Text span fw={700}>{itemName}</Text> from the {inventoryLabel}?
+          {t("common.delete", "Delete")} <Text span fw={700}>{itemName}</Text> {t("common.from", "from")} {inventoryLabel}?
         </Text>
 
         <Text size="sm" c="dimmed">{description}</Text>
@@ -49,10 +52,10 @@ export default function ConfirmDeleteModal({
 
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose} disabled={loading}>
-            No
+            {t("common.cancel", "No")}
           </Button>
           <Button color="red" onClick={onConfirm} loading={loading}>
-            Yes, Delete
+            {t("common.delete", "Yes, Delete")}
           </Button>
         </Group>
       </Stack>

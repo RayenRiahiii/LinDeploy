@@ -32,6 +32,7 @@ import {
 import PageHeader from "../common/PageHeader";
 import ConfirmDeleteModal from "../crud/ConfirmDeleteModal";
 import { formatApiError, parseApiPayload } from "../../lib/api";
+import { useTranslation } from "react-i18next";
 
 type Credential = {
   id: number;
@@ -88,6 +89,7 @@ function maskSecret(value: string) {
 }
 
 export default function CredentialsList() {
+  const { t } = useTranslation();
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [formData, setFormData] = useState<CredentialFormData>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -306,20 +308,20 @@ export default function CredentialsList() {
       <Stack gap="lg">
         <PageHeader
           icon={<IconKey size={22} />}
-          badge="Access Management"
+          badge={t("sections.credentials.badge", "Access Management")}
           badgeColor="red"
-          title="Credentials Vault"
-          description="Manage SSH usernames, password-based access, and key-based credentials used by your targets."
+          title={t("credentials.title", "Credentials Vault")}
+          description={t("credentials.description", "Manage SSH usernames, password-based access, and key-based credentials used by your targets.")}
           badges={
             <>
               <Badge color="red" variant="light" size="sm">
-                Total: {credentials.length}
+                {t("common.total", "Total")}: {credentials.length}
               </Badge>
               <Badge color="teal" variant="light" size="sm">
-                Password: {passwordAuthCount}
+                {t("credentials.passwordAuth", "Password")}: {passwordAuthCount}
               </Badge>
               <Badge color="gray" variant="outline" size="sm">
-                SSH Key: {sshKeyAuthCount}
+                {t("credentials.sshKeyAuth", "SSH Key")}: {sshKeyAuthCount}
               </Badge>
             </>
           }
@@ -331,17 +333,17 @@ export default function CredentialsList() {
                 onClick={fetchCredentials}
                 loading={loadingCredentials}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button leftSection={<IconPlus size={16} />} onClick={openCreateModal}>
-                Add Credential
+                {t("credentials.addCredential", "Add Credential")}
               </Button>
             </>
           }
         />
 
         {error && (
-          <Alert color="red" title="Request failed" variant="light">
+          <Alert color="red" title={t("common.error", "Request failed")} variant="light">
             {error}
           </Alert>
         )}
@@ -350,9 +352,9 @@ export default function CredentialsList() {
           <Stack gap="md">
             <Group justify="space-between">
               <div>
-                <Title order={3}>Credential Entries</Title>
+                <Title order={3}>{t("credentials.entriesTitle", "Credential Entries")}</Title>
                 <Text c="dimmed" size="sm">
-                  Review the SSH identity used by hosts. Secrets stay masked in the list and are only editable in the modal.
+                  {t("credentials.entriesSubtitle", "Review the SSH identity used by hosts. Secrets stay masked in the list and are only editable in the modal.")}
                 </Text>
               </div>
               <Badge color="red" variant="dot">
@@ -362,15 +364,15 @@ export default function CredentialsList() {
 
             <TextInput
               leftSection={<IconSearch size={16} />}
-              placeholder="Search by credential name, username, or auth type"
+              placeholder={t("credentials.searchPlaceholder", "Search by credential name, username, or auth type")}
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
             />
 
             {loadingCredentials ? (
-              <Text c="dimmed">Loading credentials...</Text>
+              <Text c="dimmed">{t("credentials.loadingCredentials", "Loading credentials...")}</Text>
             ) : filteredCredentials.length === 0 ? (
-              <Text c="dimmed">No credentials found.</Text>
+              <Text c="dimmed">{t("credentials.noCredentialsFound", "No credentials found.")}</Text>
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 {filteredCredentials.map((credential) => (
@@ -428,14 +430,14 @@ export default function CredentialsList() {
                           leftSection={<IconEye size={16} />}
                           onClick={() => openDetailsModal(credential)}
                         >
-                          Info
+                          {t("common.info", "Info")}
                         </Button>
                         <Button
                           variant="light"
                           leftSection={<IconEdit size={16} />}
                           onClick={() => openEditModal(credential)}
                         >
-                          Edit
+                          {t("common.edit", "Edit")}
                         </Button>
                         <Button
                           color="red"
@@ -444,7 +446,7 @@ export default function CredentialsList() {
                           onClick={() => openDeleteModal(credential)}
                           loading={deletingId === credential.id}
                         >
-                          Delete
+                          {t("common.delete", "Delete")}
                         </Button>
                       </Group>
                     </Stack>
@@ -459,7 +461,7 @@ export default function CredentialsList() {
       <Modal
         opened={editorOpened}
         onClose={resetEditor}
-        title={editingId === null ? "Create Credential" : "Edit Credential"}
+        title={editingId === null ? t("credentials.addCredential", "Add Credential") : t("credentials.editCredential", "Edit Credential")}
         centered
         size="lg"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -548,10 +550,10 @@ export default function CredentialsList() {
 
             <Group justify="flex-end">
               <Button variant="default" onClick={resetEditor}>
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
               <Button type="submit" loading={saving} leftSection={<IconEdit size={16} />}>
-                {editingId === null ? "Create Credential" : "Save Changes"}
+                {editingId === null ? t("credentials.addCredential", "Create Credential") : t("common.save", "Save Changes")}
               </Button>
             </Group>
           </Stack>
@@ -561,7 +563,7 @@ export default function CredentialsList() {
       <Modal
         opened={detailsOpened}
         onClose={() => setDetailsOpened(false)}
-        title={selectedCredential ? `Credential Info: ${selectedCredential.name}` : "Credential Info"}
+        title={selectedCredential ? `${t("credentials.credentialDetails", "Credential Details")}: ${selectedCredential.name}` : t("credentials.credentialDetails", "Credential Details")}
         centered
         size="md"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -580,27 +582,27 @@ export default function CredentialsList() {
             <Table>
               <Table.Tbody>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Name</Table.Td>
+                  <Table.Td c="dimmed">{t("common.name", "Name")}</Table.Td>
                   <Table.Td>{selectedCredential.name}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Username</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.username", "Username")}</Table.Td>
                   <Table.Td>{selectedCredential.username}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Auth Type</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.authType", "Auth Type")}</Table.Td>
                   <Table.Td>{selectedCredential.auth_type}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Private Key</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.privateKey", "Private Key")}</Table.Td>
                   <Table.Td>{selectedCredential.private_key ? "stored" : "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Password</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.password", "Password")}</Table.Td>
                   <Table.Td>{maskSecret(selectedCredential.password)}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Become Password</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.becomePassword", "Become Password")}</Table.Td>
                   <Table.Td>{maskSecret(selectedCredential.become_password)}</Table.Td>
                 </Table.Tr>
               </Table.Tbody>
@@ -615,7 +617,7 @@ export default function CredentialsList() {
                   openEditModal(selectedCredential);
                 }}
               >
-                Edit
+                {t("common.edit", "Edit")}
               </Button>
             </Group>
           </Stack>
@@ -624,12 +626,12 @@ export default function CredentialsList() {
 
       <ConfirmDeleteModal
         opened={credentialPendingDelete !== null}
-        title="Delete Credential"
+        title={t("credentials.deleteConfirmTitle", "Delete Credential")}
         itemName={credentialPendingDelete?.name || "this credential"}
-        inventoryLabel="credentials inventory"
-        description="This removes the saved SSH credential from LinDeploy. Hosts linked to it may need another credential before execution."
+        inventoryLabel={t("credentials.entriesTitle", "credentials inventory")}
+        description={t("credentials.deleteConfirmMessage", { name: credentialPendingDelete?.name || "", defaultValue: `Are you sure you want to delete credential '${credentialPendingDelete?.name}'?` })}
         error={deleteError}
-        errorTitle="Unable to delete credential"
+        errorTitle={t("common.error", "Unable to delete credential")}
         loading={deletingId !== null}
         onClose={closeDeleteModal}
         onConfirm={() => void handleDelete()}

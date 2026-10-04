@@ -8,28 +8,30 @@ import {
 } from "@mantine/core";
 import { IconArrowRight, IconBinaryTree2 } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import PageHeader from "../components/common/PageHeader";
 import InstallerLabel from "../components/installers/InstallerLabel";
 import { installerOptions } from "../features/installers/catalog";
 
 export default function InstallersPage() {
+  const { t } = useTranslation();
   const availableCount = installerOptions.filter((i) => i.availability === "available").length;
 
   return (
     <Stack gap="lg">
       <PageHeader
         icon={<IconBinaryTree2 size={22} />}
-        badge="Platform Engines"
+        badge={t("installers.engines", "Platform Engines")}
         badgeColor="red"
-        title="Installer Catalog"
-        subtitle="Open a dedicated workflow page for each supported platform. Shared execution monitoring stays separate in the Execution Center."
+        title={t("installers.title", "Installer Catalog")}
+        subtitle={t("installers.subtitle", "Open a dedicated workflow page for each supported platform. Shared execution monitoring stays separate in the Execution Center.")}
         stats={
           <>
             <Badge color="red" variant="light">
-              Total: {installerOptions.length}
+              {t("common.total", "Total")}: {installerOptions.length}
             </Badge>
             <Badge color="teal" variant="light">
-              Available: {availableCount}
+              {t("installers.available", "Available")}: {availableCount}
             </Badge>
           </>
         }
@@ -54,13 +56,13 @@ export default function InstallersPage() {
                   </Text>
                 </div>
                 <Badge color={isAvailable ? "teal" : "gray"} variant="light">
-                  {isAvailable ? "available" : "coming soon"}
+                  {isAvailable ? t("installers.available", "available") : t("installers.comingSoon", "coming soon")}
                 </Badge>
               </Group>
 
               {isAvailable && (
                 <div className="installer-card-action" style={{ marginTop: "auto" }}>
-                  <span>Open workflow page</span>
+                  <span>{t("installers.openWorkflow", "Open workflow page")}</span>
                   <IconArrowRight size={14} className="installer-card-action-icon" />
                 </div>
               )}

@@ -34,6 +34,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import lindeployLogoDark from "../assets/darkmodeLogo.png";
 import { useAuth } from "../context/AuthContext";
+import LanguageSelector from "../components/common/LanguageSelector";
 
 declare global {
   interface Window {
@@ -209,6 +210,7 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
         </Group>
 
         <Group gap="sm">
+          <LanguageSelector />
           <Tooltip label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}>
             <ActionIcon
               variant="default"

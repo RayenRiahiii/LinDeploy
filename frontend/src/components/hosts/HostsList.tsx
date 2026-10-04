@@ -31,6 +31,7 @@ import {
 import PageHeader from "../common/PageHeader";
 import ConfirmDeleteModal from "../crud/ConfirmDeleteModal";
 import { formatApiError, parseApiPayload } from "../../lib/api";
+import { useTranslation } from "react-i18next";
 
 type Host = {
   id: number;
@@ -130,6 +131,7 @@ const emptyForm: HostFormData = {
 };
 
 export default function HostsList() {
+  const { t } = useTranslation();
   const [hosts, setHosts] = useState<Host[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [formData, setFormData] = useState<HostFormData>(emptyForm);
@@ -371,23 +373,23 @@ export default function HostsList() {
       <Stack gap="lg">
         <PageHeader
           icon={<IconServer size={22} />}
-          badge="Infrastructure Inventory"
+          badge={t("sections.hosts.badge", "Infrastructure Inventory")}
           badgeColor="red"
-          title="Hosts Registry"
-          description="Register targets, inspect connection health, and manage machine properties from a centralized operator view."
+          title={t("hosts.title", "Hosts Registry")}
+          description={t("hosts.description", "Register targets, inspect connection health, and manage machine properties from a centralized operator view.")}
           badges={
             <>
               <Badge color="red" variant="light" size="sm">
-                Total: {hosts.length}
+                {t("hosts.total", "Total")}: {hosts.length}
               </Badge>
               <Badge color="teal" variant="light" size="sm">
-                Enabled: {enabledHostsCount}
+                {t("hosts.enabled", "Enabled")}: {enabledHostsCount}
               </Badge>
               <Badge color="grape" variant="light" size="sm">
-                Roles: {new Set(hosts.map((host) => host.node_role)).size}
+                {t("hosts.roles", "Roles")}: {new Set(hosts.map((host) => host.node_role)).size}
               </Badge>
               <Badge color="gray" variant="outline" size="sm">
-                Credentials: {credentials.length}
+                {t("hosts.credentials", "Credentials")}: {credentials.length}
               </Badge>
             </>
           }
@@ -399,17 +401,17 @@ export default function HostsList() {
                 onClick={fetchHosts}
                 loading={loadingHosts}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button leftSection={<IconPlus size={16} />} onClick={openCreateModal}>
-                Add Host
+                {t("hosts.addHost", "Add Host")}
               </Button>
             </>
           }
         />
 
         {error && (
-          <Alert color="red" title="Request failed" variant="light">
+          <Alert color="red" title={t("common.error", "Request failed")} variant="light">
             {error}
           </Alert>
         )}
@@ -418,9 +420,9 @@ export default function HostsList() {
           <Stack gap="md">
             <Group justify="space-between">
               <div>
-                <Title order={3}>Inventory</Title>
+                <Title order={3}>{t("hosts.inventoryTitle", "Inventory")}</Title>
                 <Text c="dimmed" size="sm">
-                  Click Info to inspect a host or Edit to change its properties in a modal window.
+                  {t("hosts.inventorySubtitle", "Click Info to inspect a host or Edit to change its properties in a modal window.")}
                 </Text>
               </div>
               <Badge color="red" variant="dot">
@@ -430,15 +432,15 @@ export default function HostsList() {
 
             <TextInput
               leftSection={<IconSearch size={16} />}
-              placeholder="Search by name, IP, hostname, role, or credential"
+              placeholder={t("hosts.searchPlaceholder", "Search by name, IP, hostname, role, or credential")}
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
             />
 
             {loadingHosts ? (
-              <Text c="dimmed">Loading hosts...</Text>
+              <Text c="dimmed">{t("hosts.loadingHosts", "Loading hosts...")}</Text>
             ) : filteredHosts.length === 0 ? (
-              <Text c="dimmed">No hosts found.</Text>
+              <Text c="dimmed">{t("hosts.noHostsFound", "No hosts found.")}</Text>
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 {filteredHosts.map((host) => (
@@ -496,14 +498,14 @@ export default function HostsList() {
                           leftSection={<IconEye size={16} />}
                           onClick={() => openDetailsModal(host)}
                         >
-                          Info
+                          {t("common.info", "Info")}
                         </Button>
                         <Button
                           variant="light"
                           leftSection={<IconEdit size={16} />}
                           onClick={() => openEditModal(host)}
                         >
-                          Edit
+                          {t("common.edit", "Edit")}
                         </Button>
                         <Button
                           color="red"
@@ -512,7 +514,7 @@ export default function HostsList() {
                           onClick={() => openDeleteModal(host)}
                           loading={deletingId === host.id}
                         >
-                          Delete
+                          {t("common.delete", "Delete")}
                         </Button>
                       </Group>
                     </Stack>
@@ -527,7 +529,7 @@ export default function HostsList() {
       <Modal
         opened={editorOpened}
         onClose={resetEditor}
-        title={editingId === null ? "Create Host" : "Edit Host"}
+        title={editingId === null ? t("hosts.addHost", "Add Host") : t("hosts.editHost", "Edit Host")}
         centered
         size="lg"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -645,10 +647,10 @@ export default function HostsList() {
 
             <Group justify="flex-end">
               <Button variant="default" onClick={resetEditor}>
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
               <Button type="submit" loading={loading} leftSection={<IconEdit size={16} />}>
-                {editingId === null ? "Create Host" : "Save Changes"}
+                {editingId === null ? t("hosts.addHost", "Create Host") : t("common.save", "Save Changes")}
               </Button>
             </Group>
           </Stack>
@@ -658,7 +660,7 @@ export default function HostsList() {
       <Modal
         opened={detailsOpened}
         onClose={() => setDetailsOpened(false)}
-        title={selectedHost ? `Host Info: ${selectedHost.name}` : "Host Info"}
+        title={selectedHost ? `${t("hosts.hostDetails", "Host Details")}: ${selectedHost.name}` : t("hosts.hostDetails", "Host Details")}
         centered
         size="md"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -677,38 +679,38 @@ export default function HostsList() {
             <Table>
               <Table.Tbody>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Name</Table.Td>
+                  <Table.Td c="dimmed">{t("common.name", "Name")}</Table.Td>
                   <Table.Td>{selectedHost.name}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Hostname</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.hostname", "Hostname")}</Table.Td>
                   <Table.Td>{selectedHost.hostname || "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">IP Address</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.ipAddress", "IP Address")}</Table.Td>
                   <Table.Td>{selectedHost.ip_address}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">SSH Port</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.sshPort", "SSH Port")}</Table.Td>
                   <Table.Td>{selectedHost.ssh_port}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">OS Type</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.osType", "OS Type")}</Table.Td>
                   <Table.Td>{selectedHost.os_type || "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Node Role</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.nodeRole", "Node Role")}</Table.Td>
                   <Table.Td>{selectedHost.node_role}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Credential</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.credential", "Credential")}</Table.Td>
                   <Table.Td>{selectedHost.credential_name || "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Status</Table.Td>
+                  <Table.Td c="dimmed">{t("common.status", "Status")}</Table.Td>
                   <Table.Td>
                     <Badge color={selectedHost.enabled ? "teal" : "gray"} variant="light">
-                      {selectedHost.enabled ? "enabled" : "disabled"}
+                      {selectedHost.enabled ? t("common.enabled", "enabled") : t("common.disabled", "disabled")}
                     </Badge>
                   </Table.Td>
                 </Table.Tr>
@@ -724,7 +726,7 @@ export default function HostsList() {
                   openEditModal(selectedHost);
                 }}
               >
-                Edit
+                {t("common.edit", "Edit")}
               </Button>
             </Group>
           </Stack>
@@ -733,12 +735,12 @@ export default function HostsList() {
 
       <ConfirmDeleteModal
         opened={hostPendingDelete !== null}
-        title="Delete Host"
+        title={t("hosts.deleteConfirmTitle", "Delete Host")}
         itemName={hostPendingDelete?.name || "this host"}
-        inventoryLabel="hosts inventory"
-        description="This removes the host definition from LinDeploy. It does not uninstall anything from the remote machine."
+        inventoryLabel={t("hosts.inventoryTitle", "hosts inventory")}
+        description={t("hosts.deleteConfirmMessage", { name: hostPendingDelete?.name || "", defaultValue: `Are you sure you want to delete host '${hostPendingDelete?.name}'?` })}
         error={deleteError}
-        errorTitle="Unable to delete host"
+        errorTitle={t("common.error", "Unable to delete host")}
         loading={deletingId !== null}
         onClose={closeDeleteModal}
         onConfirm={() => void handleDelete()}
