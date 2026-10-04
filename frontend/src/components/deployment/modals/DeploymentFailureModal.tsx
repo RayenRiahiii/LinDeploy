@@ -60,13 +60,14 @@ export default function DeploymentFailureModal({
   onRetryFailedTargets,
   onOpenOpenShiftRetryDialog,
 }: DeploymentFailureModalProps) {
-  const presentation = getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel);
+  const isResetExecution = (result?.template_name || "").toLowerCase().includes("reset");
+  const presentation = getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution);
 
   return (
     <Modal
       opened={opened}
       onClose={onClose}
-      title={isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
+      title={isResetExecution ? "Reset Report" : isCleanupExecution ? "Cleanup Report" : result?.status === "cancelled" ? "Cancelled Execution Report" : "Deployment Report"}
       size="78rem"
       centered
       classNames={{ content: "failure-modal-content", header: "terminal-modal-header" }}
@@ -76,7 +77,7 @@ export default function DeploymentFailureModal({
           <ThemeIcon
             size={72}
             radius={18}
-            color={result?.status === "partial_success" ? "yellow" : "red"}
+            color={result?.status === "cancelled" ? "yellow" : result?.status === "partial_success" ? "yellow" : "red"}
             variant="light"
           >
             <IconAlertCircle size={42} />

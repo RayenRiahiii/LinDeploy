@@ -37,7 +37,9 @@ import {
   IconServer,
   IconTerminal2,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
+import { notifications } from "@mantine/notifications";
 import { Link, useNavigate } from "react-router-dom";
 import PageHeader from "../components/common/PageHeader";
 import DeploymentMonitor from "../components/deployment/DeploymentMonitor";
@@ -513,8 +515,45 @@ function getLiveExecutionHeading(
 function getExecutionPresentation(
   status?: string | null,
   isCleanupExecution?: boolean,
-  installerLabel?: string
+  installerLabel?: string,
+  isResetExecution?: boolean
 ) {
+  const actionLabel = isResetExecution ? "Cluster reset" : isCleanupExecution ? "Cleanup" : "Installation";
+
+  if (status === "cancelled") {
+    return {
+      title: `${actionLabel} cancelled`,
+      summary: `${actionLabel} was stopped before completing. Selected hosts were released.`,
+      recommendation: isCleanupExecution
+        ? "Review host state and rerun cleanup if needed before starting a new deployment."
+        : "Run cluster cleanup or reset before initiating another installation on these hosts.",
+    };
+  }
+
+  if (isResetExecution && status === "failed") {
+    return {
+      title: "Cluster reset failed",
+      summary: "The cluster reset playbook encountered errors before clearing state on all targets.",
+      recommendation: "Inspect host logs, resolve blocking resources or locks, then retry the reset.",
+    };
+  }
+
+  if (isResetExecution && status === "partial_success") {
+    return {
+      title: "Cluster reset completed with issues",
+      summary: "Cluster reset succeeded on some hosts, but others could not be cleared.",
+      recommendation: "Review the failed hosts and retry reset only on affected targets.",
+    };
+  }
+
+  if (isResetExecution) {
+    return {
+      title: "Cluster reset completed successfully",
+      summary: "Cluster state and CNI artifacts were removed. System packages are preserved for faster reinstall.",
+      recommendation: "Hosts are ready for a clean deployment of the same platform.",
+    };
+  }
+
   if (isCleanupExecution && status === "failed") {
     return {
       title: "Cleanup failed",
@@ -645,18 +684,26 @@ function buildResultFromInstallation(installation: InstallationDetailResponse): 
     })
     .join("\n\n");
 
+  const isReset = (installation.template_name || "").toLowerCase().includes("reset");
+  const isCleanup = installation.deployment_type === "cleanup" || isReset;
+  const actionLabel = isReset ? "Cluster reset" : isCleanup ? "Cleanup" : "Installation";
+
   return {
     installation_id: installation.id,
     status: installation.status,
     message:
       installation.summary_message ||
       (installation.status === "success"
-        ? "Playbook executed successfully."
+        ? (isReset
+            ? "Cluster reset executed successfully."
+            : isCleanup
+              ? "Cleanup executed successfully."
+              : "Playbook executed successfully.")
         : installation.status === "partial_success"
-          ? "Playbook completed with issues on one or more targets."
-        : installation.status === "cancelled"
-          ? "Installation cancelled by user."
-          : "Playbook execution failed."),
+          ? `${actionLabel} completed with issues on one or more targets.`
+          : installation.status === "cancelled"
+            ? `${actionLabel} cancelled by user.`
+            : `${actionLabel} execution failed.`),
     template_name: installation.template_name,
     template_system_type: installation.template_system_type,
     deployment_type: installation.deployment_type,
@@ -1126,11 +1173,15 @@ export default function RunDeployment({
     return explicitWorkers;
   }, [clusterSelectedHosts, clusterControlPlaneCount, clusterTargetHosts, result]);
 
-  const isCleanupExecution = result?.deployment_type === "cleanup";
+  const isResetExecution = (result?.template_name || "").toLowerCase().includes("reset");
+  const isCleanupExecution = result?.deployment_type === "cleanup" || isResetExecution;
 
   const clusterTopologyLabel = useMemo(() => {
+    if (isResetExecution) {
+      return "Cluster state and CNI artifacts reset on selected hosts";
+    }
     if (result?.deployment_type === "cleanup") {
-      return "Cluster state removed from the selected host";
+      return "Cluster state and platform packages removed from selected hosts";
     }
     if (result?.deployment_type === "single_node") {
       return activeInstallerSystem === "k3s"
@@ -1138,7 +1189,7 @@ export default function RunDeployment({
         : "Single-node control plane with workload scheduling enabled";
     }
     return "Multi-node topology";
-  }, [activeInstallerSystem, result]);
+  }, [activeInstallerSystem, isResetExecution, result]);
 
   const postInstallChecks = useMemo(
     () => {
@@ -1391,7 +1442,7 @@ export default function RunDeployment({
         } else {
           const installation = await parseJsonResponse<InstallationDetailResponse>(response);
 
-          if (isInstallationActive(installation) || mode === "execution") {
+          if (isInstallationActive(installation)) {
             candidateToResume = installation;
           } else {
             persistActiveInstallationId(null);
@@ -1419,9 +1470,6 @@ export default function RunDeployment({
         if (dismissedId !== String(candidateToResume.id)) {
           setResumeCandidate(candidateToResume);
         }
-      } else if (mode === "execution" && operationalData.installationsData.length > 0) {
-        const latest = operationalData.installationsData[0];
-        setResult(buildResultFromInstallation(latest));
       }
     }
 
@@ -1822,9 +1870,14 @@ export default function RunDeployment({
     setError("");
     setResult(null);
     setLiveStatus("pending");
-    setLivePhase("queued");
+    const isResetLaunch = (effectiveTemplate?.name || "").toLowerCase().includes("reset");
+    const isCleanupLaunch = executionKind === "cleanup" || isResetLaunch;
     setLiveSummaryMessage(
-      executionKind === "cleanup" ? "Cleanup queued successfully." : "Installation queued successfully."
+      isResetLaunch
+        ? "Cluster reset queued successfully."
+        : isCleanupLaunch
+          ? "Cleanup queued successfully."
+          : "Installation queued successfully."
     );
     setLiveCurrentPlay("");
     setLiveCurrentRole("");
@@ -2320,6 +2373,17 @@ export default function RunDeployment({
       persistDismissedInstallationId(null);
       clearLiveInstallationState();
       await refreshOperationalData();
+
+      const isReset = (data.installation.template_name || "").toLowerCase().includes("reset");
+      const isCleanup = data.installation.deployment_type === "cleanup" || isReset;
+      const actionLabel = isReset ? "Cluster Reset" : isCleanup ? "Cleanup" : "Installation";
+
+      notifications.show({
+        title: `${actionLabel} Cancelled`,
+        message: data.message || `${actionLabel} was stopped.`,
+        color: "yellow",
+        icon: <IconAlertCircle size={18} />,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Cancellation failed.");
     }
@@ -2708,14 +2772,25 @@ export default function RunDeployment({
         )}
 
         {showResumeAlert && resumeCandidate && !loading && (
-          <Alert color="yellow" title="Active installation detected" variant="light" icon={<IconClockHour4 size={16} />}>
+          <Alert
+            color="yellow"
+            title={
+              (resumeCandidate.template_name || "").toLowerCase().includes("reset")
+                ? "Active cluster reset detected"
+                : resumeCandidate.deployment_type === "cleanup"
+                  ? "Active cleanup detected"
+                  : "Active installation detected"
+            }
+            variant="light"
+            icon={<IconClockHour4 size={16} />}
+          >
             <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
               <div>
                 <Text fw={600}>
                   {resumeCandidate.template_name} is still marked {resumeCandidate.status} on the backend.
                 </Text>
                 <Text size="sm" c="dimmed" mt={4}>
-                  Phase: {formatPhaseLabel(resumeCandidate.phase)} | installation #{resumeCandidate.id}
+                  Phase: {formatPhaseLabel(resumeCandidate.phase)} | run #{resumeCandidate.id}
                   {resumeCandidate.updated_at ? ` | updated ${new Date(resumeCandidate.updated_at).toLocaleString()}` : ""}
                 </Text>
               </div>
@@ -3204,7 +3279,11 @@ export default function RunDeployment({
                       onClick={() => void handleCancelInstallation()}
                       leftSection={<IconPlayerStop size={16} />}
                     >
-                      Cancel Installation
+                      {liveExecutionTitle.toLowerCase().includes("reset")
+                        ? "Cancel Reset"
+                        : liveExecutionTitle.toLowerCase().includes("cleanup")
+                          ? "Cancel Cleanup"
+                          : "Cancel Installation"}
                     </Button>
                   )}
                 </Group>
@@ -3252,7 +3331,7 @@ export default function RunDeployment({
                 : undefined
             }
             actions={
-              showGuidedInstaller && result && !loading ? (
+              result && !loading ? (
                 <Group gap="xs">
                   {canRetryFailedTargets && (
                     <Button size="xs" variant="light" onClick={() => void handleRetryFailedTargets()}>
@@ -3261,11 +3340,24 @@ export default function RunDeployment({
                   )}
                   {canCleanupResult && (
                     <Button size="xs" color="orange" variant="light" onClick={() => void handleResultCleanupLaunch()}>
-                      Cleanup Cluster
+                      {isResetExecution ? "Reset Cluster" : "Cleanup Cluster"}
                     </Button>
                   )}
-                  <Button size="xs" leftSection={<IconRefresh size={14} />} onClick={handleStartAnotherInstallation}>
-                    Start Another Installation
+                  {showGuidedInstaller && (
+                    <Button size="xs" leftSection={<IconRefresh size={14} />} onClick={handleStartAnotherInstallation}>
+                      Start Another Installation
+                    </Button>
+                  )}
+                  <Button
+                    size="xs"
+                    variant="default"
+                    leftSection={<IconX size={14} />}
+                    onClick={() => {
+                      setResult(null);
+                      persistDismissedInstallationId(result.installation_id);
+                    }}
+                  >
+                    Dismiss
                   </Button>
                 </Group>
               ) : undefined
@@ -3277,14 +3369,34 @@ export default function RunDeployment({
           <Card className="console-panel" padding="lg">
             <Stack gap="sm">
               <Group justify="space-between" align="center">
-                <Title order={3}>Execution Result</Title>
-                <Badge
-                  color={getStatusColor(result.status)}
-                  variant="filled"
-                  size="lg"
-                >
-                  {result.status}
-                </Badge>
+                <Title order={3}>
+                  {isResetExecution
+                    ? "Reset Result"
+                    : isCleanupExecution
+                      ? "Cleanup Result"
+                      : "Execution Result"}
+                </Title>
+                <Group gap="xs">
+                  <Badge
+                    color={getStatusColor(result.status)}
+                    variant="filled"
+                    size="lg"
+                  >
+                    {result.status}
+                  </Badge>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    leftSection={<IconX size={14} />}
+                    onClick={() => {
+                      setResult(null);
+                      persistDismissedInstallationId(result.installation_id);
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                </Group>
               </Group>
 
               <Text c="dimmed" size="sm">
@@ -3781,7 +3893,7 @@ export default function RunDeployment({
         <Modal
           opened={showSuccessModal}
           onClose={() => setShowSuccessModal(false)}
-          title={isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
+          title={isResetExecution ? "Reset Report" : isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
           size="78rem"
           centered
           classNames={{ content: "success-modal-content", header: "terminal-modal-header" }}
@@ -3796,7 +3908,7 @@ export default function RunDeployment({
                 />
               </div>
               <div>
-                <Title order={2}>{getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel).title}</Title>
+                <Title order={2}>{getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution).title}</Title>
                 <Text c="dimmed" size="sm" mt={4}>
                   {isCleanupExecution ? (
                     <>
@@ -3983,7 +4095,7 @@ export default function RunDeployment({
         <Modal
           opened={showFailureModal}
           onClose={() => setShowFailureModal(false)}
-          title={isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
+          title={isResetExecution ? "Reset Report" : isCleanupExecution ? "Cleanup Report" : result?.status === "cancelled" ? "Cancelled Execution Report" : "Deployment Report"}
           size="78rem"
           centered
           classNames={{ content: "failure-modal-content", header: "terminal-modal-header" }}
@@ -3993,17 +4105,17 @@ export default function RunDeployment({
               <ThemeIcon
                 size={72}
                 radius={18}
-                color={result?.status === "partial_success" ? "yellow" : "red"}
+                color={result?.status === "cancelled" ? "yellow" : result?.status === "partial_success" ? "yellow" : "red"}
                 variant="light"
               >
                 <IconAlertCircle size={42} />
               </ThemeIcon>
               <div>
                 <Title order={2}>
-                  {getExecutionPresentation(result?.status, false, activeInstallerLabel).title}
+                  {getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution).title}
                 </Title>
                 <Text c="dimmed" size="sm" mt={4}>
-                  {getExecutionPresentation(result?.status, false, activeInstallerLabel).summary}
+                  {getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution).summary}
                 </Text>
               </div>
             </Stack>

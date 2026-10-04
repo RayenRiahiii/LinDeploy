@@ -55,13 +55,14 @@ export default function DeploymentSuccessModal({
   canCleanupResult,
   onLaunchCleanup,
 }: DeploymentSuccessModalProps) {
-  const presentation = getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel);
+  const isResetExecution = (result?.template_name || "").toLowerCase().includes("reset");
+  const presentation = getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution);
 
   return (
     <Modal
       opened={opened}
       onClose={onClose}
-      title={isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
+      title={isResetExecution ? "Reset Report" : isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
       size="78rem"
       centered
       classNames={{ content: "success-modal-content", header: "terminal-modal-header" }}

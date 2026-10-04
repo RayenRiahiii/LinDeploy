@@ -94,8 +94,45 @@ export function getLiveExecutionHeading(
 export function getExecutionPresentation(
   status?: string | null,
   isCleanupExecution?: boolean,
-  installerLabel?: string
+  installerLabel?: string,
+  isResetExecution?: boolean
 ) {
+  const actionLabel = isResetExecution ? "Cluster reset" : isCleanupExecution ? "Cleanup" : "Installation";
+
+  if (status === "cancelled") {
+    return {
+      title: `${actionLabel} cancelled`,
+      summary: `${actionLabel} was stopped before completing. Selected hosts were released.`,
+      recommendation: isCleanupExecution
+        ? "Review host state and rerun cleanup if needed before starting a new deployment."
+        : "Run cluster cleanup or reset before initiating another installation on these hosts.",
+    };
+  }
+
+  if (isResetExecution && status === "failed") {
+    return {
+      title: "Cluster reset failed",
+      summary: "The cluster reset playbook encountered errors before clearing state on all targets.",
+      recommendation: "Inspect host logs, resolve blocking resources or locks, then retry the reset.",
+    };
+  }
+
+  if (isResetExecution && status === "partial_success") {
+    return {
+      title: "Cluster reset completed with issues",
+      summary: "Cluster reset succeeded on some hosts, but others could not be cleared.",
+      recommendation: "Review the failed hosts and retry reset only on affected targets.",
+    };
+  }
+
+  if (isResetExecution) {
+    return {
+      title: "Cluster reset completed successfully",
+      summary: "Cluster state and CNI artifacts were removed. System packages are preserved for faster reinstall.",
+      recommendation: "Hosts are ready for a clean deployment of the same platform.",
+    };
+  }
+
   if (isCleanupExecution && status === "failed") {
     return {
       title: "Cleanup failed",
@@ -233,18 +270,26 @@ export function buildResultFromInstallation(installation: InstallationDetailResp
     })
     .join("\n\n");
 
+  const isReset = (installation.template_name || "").toLowerCase().includes("reset");
+  const isCleanup = installation.deployment_type === "cleanup" || isReset;
+  const actionLabel = isReset ? "Cluster reset" : isCleanup ? "Cleanup" : "Installation";
+
   return {
     installation_id: installation.id,
     status: installation.status,
     message:
       installation.summary_message ||
       (installation.status === "success"
-        ? "Playbook executed successfully."
+        ? (isReset
+            ? "Cluster reset executed successfully."
+            : isCleanup
+              ? "Cleanup executed successfully."
+              : "Playbook executed successfully.")
         : installation.status === "partial_success"
-          ? "Playbook completed with issues on one or more targets."
-        : installation.status === "cancelled"
-          ? "Installation cancelled by user."
-          : "Playbook execution failed."),
+          ? `${actionLabel} completed with issues on one or more targets.`
+          : installation.status === "cancelled"
+            ? `${actionLabel} cancelled by user.`
+            : `${actionLabel} execution failed.`),
     template_name: installation.template_name,
     template_system_type: installation.template_system_type,
     deployment_type: installation.deployment_type,
@@ -316,15 +361,17 @@ export function extractTargetDiagnostics(target: InstallationTarget): string {
 }
 
 export function getCleanupMode(template: Template): CleanupMode {
+  if (template.system_type === "k3s" && template.deployment_type === "cleanup") {
+    return "full_uninstall";
+  }
+
   const normalizedName = template.name.toLowerCase();
   const normalizedPath = template.playbook_path.toLowerCase();
 
   if (
     normalizedName.includes("full-uninstall") ||
     normalizedName.includes("full uninstall") ||
-    normalizedPath.includes("full_uninstall") ||
-    normalizedName.includes("multi-node-cleanup") ||
-    normalizedPath.includes("multi_node_cleanup")
+    normalizedPath.includes("full_uninstall")
   ) {
     return "full_uninstall";
   }

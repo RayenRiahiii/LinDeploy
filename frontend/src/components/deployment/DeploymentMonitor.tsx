@@ -299,14 +299,28 @@ export default function DeploymentMonitor({
     prevFilteredCountRef.current = filteredLines.length;
   }, [detailsOpen, filteredLines.length, autoScroll]);
 
+  const isReset =
+    (live.title || "").toLowerCase().includes("reset") ||
+    (result?.message || "").toLowerCase().includes("reset");
+  const isCleanup =
+    isReset ||
+    (live.title || "").toLowerCase().includes("cleanup") ||
+    (result?.message || "").toLowerCase().includes("cleanup");
+  const actionNoun = isReset ? "Cluster Reset" : isCleanup ? "Cleanup" : "Deployment";
+  const cancelLabel = isReset ? "Cancel Reset" : isCleanup ? "Cancel Cleanup" : "Cancel Installation";
+
   return (
     <Card className="console-panel" padding="lg">
       <Stack gap="lg">
         <Group justify="space-between" align="center">
           <div>
-            <Title order={3}>Deployment Monitor</Title>
+            <Title order={3}>{actionNoun} Monitor</Title>
             <Text size="sm" c="dimmed" mt={4}>
-              Live progress and pipeline status for the current installer run.
+              {isReset
+                ? "Live progress and pipeline status for the cluster reset run."
+                : isCleanup
+                  ? "Live progress and pipeline status for the cluster cleanup / uninstallation run."
+                  : "Live progress and pipeline status for the current installer run."}
             </Text>
           </div>
           <Group className="monitor-header-actions" gap="sm" justify="flex-end">
@@ -321,7 +335,7 @@ export default function DeploymentMonitor({
                 onClick={onCancel}
                 leftSection={<IconPlayerStop size={14} />}
               >
-                Cancel Installation
+                {cancelLabel}
               </Button>
             )}
             {!loading && actions}
@@ -355,10 +369,20 @@ export default function DeploymentMonitor({
                   {loading
                     ? activeStage.detail
                     : result?.status === "success"
-                      ? "The installer completed and the target cluster is ready for validation."
+                      ? (isReset
+                          ? "The cluster reset completed and artifacts were cleared."
+                          : isCleanup
+                            ? "The cleanup workflow completed and target resources were removed."
+                            : "The installer completed and the target cluster is ready for validation.")
                       : result?.status === "failed"
-                        ? "The installer stopped before cluster validation completed."
-                        : "Launch a playbook to start tracking pipeline execution."}
+                        ? (isReset
+                            ? "The cluster reset stopped before all targets were cleared."
+                            : isCleanup
+                              ? "The cleanup workflow stopped before all target state was removed."
+                              : "The installer stopped before cluster validation completed.")
+                        : result?.status === "cancelled"
+                          ? `${actionNoun} was cancelled by user.`
+                          : "Launch a playbook to start tracking pipeline execution."}
                 </Text>
 
                 {loading && live.summaryMessage && <Text size="sm" mt={6}>{live.summaryMessage}</Text>}

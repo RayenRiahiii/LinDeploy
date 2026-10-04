@@ -34,6 +34,7 @@ interface TargetExecutionStepProps {
   hasCleanupOption: boolean;
   activeInstallationId: number | null;
   showGuidedInstaller: boolean;
+  cancelLabel?: string;
   onVerifySsh: () => void | Promise<void>;
   onLaunch: () => void | Promise<void>;
   onCleanupLaunch: () => void | Promise<void>;
@@ -55,6 +56,7 @@ export default function TargetExecutionStep({
   hasCleanupOption,
   activeInstallationId,
   showGuidedInstaller,
+  cancelLabel,
   onVerifySsh,
   onLaunch,
   onCleanupLaunch,
@@ -230,7 +232,7 @@ export default function TargetExecutionStep({
               onClick={() => void onCancelInstallation()}
               leftSection={<IconPlayerStop size={16} />}
             >
-              Cancel Installation
+              {cancelLabel || "Cancel Installation"}
             </Button>
           )}
         </Group>

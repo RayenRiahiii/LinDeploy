@@ -1649,6 +1649,13 @@ def request_installation_cancellation(installation):
     current_pid = installation.runner_pid
     was_pending = installation.status == Installation.Status.PENDING
 
+    is_reset = False
+    if installation.template and "reset" in (installation.template.name or "").lower():
+        is_reset = True
+    template_dep_type = getattr(installation.template, "deployment_type", None) if installation.template else None
+    is_cleanup = is_reset or template_dep_type == InstallationTemplate.DeploymentType.CLEANUP
+    action_label = "Cluster reset" if is_reset else "Cleanup" if is_cleanup else "Installation"
+
     update_installation(
         installation,
         status=Installation.Status.CANCELLED,
@@ -1657,9 +1664,9 @@ def request_installation_cancellation(installation):
         cancel_requested=True,
         finished_at=installation.finished_at or timezone.now(),
         summary_message=(
-            "Installation cancelled before worker execution started."
+            f"{action_label} cancelled before worker execution started."
             if was_pending and not current_pid
-            else "Installation cancelled by user. The running process was stopped."
+            else f"{action_label} cancelled by user. The running process was stopped."
         ),
     )
 

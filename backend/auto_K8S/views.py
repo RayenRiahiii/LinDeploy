@@ -1167,6 +1167,13 @@ def cancel_installation(request, id):
         id=id,
     )
 
+    is_reset = False
+    if installation.template and "reset" in (installation.template.name or "").lower():
+        is_reset = True
+    template_dep_type = getattr(installation.template, "deployment_type", None) if installation.template else None
+    is_cleanup = is_reset or template_dep_type == InstallationTemplate.DeploymentType.CLEANUP
+    action_label = "Cluster reset" if is_reset else "Cleanup" if is_cleanup else "Installation"
+
     if installation.status in (
         Installation.Status.SUCCESS,
         Installation.Status.PARTIAL_SUCCESS,
@@ -1178,7 +1185,7 @@ def cancel_installation(request, id):
         response_data["celery_progress"] = get_celery_progress(installation)
         return Response(
             {
-                "message": "Installation is already finished.",
+                "message": f"{action_label} is already finished.",
                 "installation": response_data,
             },
             status=200,
