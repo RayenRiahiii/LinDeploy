@@ -1,7 +1,13 @@
-import { Badge, Card, Group, SegmentedControl, Stack, Text, ThemeIcon, Title } from "@mantine/core";
+import { Badge, Card, Center, Group, SegmentedControl, Stack, Text, ThemeIcon, Title } from "@mantine/core";
 import {
+  IconBolt,
   IconCheck,
+  IconCrown,
+  IconHammer,
+  IconLayersLinked,
   IconNetwork,
+  IconServer,
+  IconShieldCheck,
   IconTopologyFull,
 } from "@tabler/icons-react";
 
@@ -23,7 +29,7 @@ export default function DeploymentTopologySelector({
   disabled,
 }: DeploymentTopologySelectorProps) {
   const isMultiNode = topology === "multi_node";
-  const multiNodeDisabled = installerId === "k3s";
+  const multiNodeDisabled = installerId === "openshift_sno";
 
   const topologyOptions = [
     {
@@ -32,7 +38,37 @@ export default function DeploymentTopologySelector({
       badge: "Independent clusters",
       summary: `Every selected host becomes a complete, independent ${installerLabel} cluster.`,
       bestFor: "Labs, isolated workloads, edge sites, and independent test environments.",
-      points: ["Control plane and workloads share one host", "A failure affects only that host's cluster"],
+      rolePills: (
+        <Group gap={6} mt={6} wrap="wrap">
+          <Badge leftSection={<IconCrown size={11} />} color="blue" variant="light" size="xs">
+            Master (Control Plane)
+          </Badge>
+          <Text size="xs" c="dimmed" fw={700}>+</Text>
+          <Badge leftSection={<IconHammer size={11} />} color="teal" variant="light" size="xs">
+            Worker
+          </Badge>
+          <Badge color="gray" variant="outline" size="xs">
+            Co-located on single host
+          </Badge>
+        </Group>
+      ),
+      featurePoints: [
+        {
+          icon: IconServer,
+          color: "#339af0",
+          text: "Master & Worker combined: runs control plane and user workloads together on each machine",
+        },
+        {
+          icon: IconShieldCheck,
+          color: "#20c997",
+          text: "Isolated failure domains: host failure only impacts that specific machine's cluster",
+        },
+        {
+          icon: IconCheck,
+          color: "#fa5252",
+          text: "Zero cross-node networking: fastest deployment for standalone edge & test nodes",
+        },
+      ],
       isOptionDisabled: false,
     },
     {
@@ -41,13 +77,54 @@ export default function DeploymentTopologySelector({
       badge: multiNodeDisabled ? "In Development" : "Shared cluster",
       summary: multiNodeDisabled
         ? `Multi-node clustering for ${installerLabel} is currently in development. Single-node mode is fully supported.`
-        : `Selected hosts work together as one ${installerLabel} cluster with assigned roles.`,
+        : `Selected hosts work together as one shared ${installerLabel} cluster with assigned Master and Worker roles.`,
       bestFor: multiNodeDisabled
-        ? "Worker/agent join automation for K3s is scheduled for an upcoming release."
-        : "Shared services, production-like environments, and scalable workloads.",
-      points: multiNodeDisabled
-        ? ["Single-node mode is fully ready for use", "Multi-node join playbook coming soon"]
-        : ["One bootstrap control-plane initializes the cluster", "Workers join the shared control plane"],
+        ? "Worker/agent join automation for OpenShift SNO is scheduled for an upcoming release."
+        : "Shared services, production clusters, high availability, and scalable container workloads.",
+      rolePills: (
+        <Group gap={6} mt={6} wrap="wrap">
+          <Badge leftSection={<IconCrown size={11} />} color="blue" variant="filled" size="xs">
+            Master (Control Plane)
+          </Badge>
+          <Text size="xs" c="dimmed" fw={700}>&rarr;</Text>
+          <Badge leftSection={<IconHammer size={11} />} color="teal" variant="filled" size="xs">
+            Worker Nodes
+          </Badge>
+          <Badge color="teal" variant="light" size="xs">
+            Distributed cluster
+          </Badge>
+        </Group>
+      ),
+      featurePoints: multiNodeDisabled
+        ? [
+            {
+              icon: IconCheck,
+              color: "#20c997",
+              text: "Single-node mode is fully ready for production use",
+            },
+            {
+              icon: IconLayersLinked,
+              color: "#339af0",
+              text: "Multi-node join playbook coming in an upcoming release",
+            },
+          ]
+        : [
+            {
+              icon: IconCrown,
+              color: "#339af0",
+              text: "Master (Control Plane): coordinates kube-apiserver, scheduler, controllers, and etcd database",
+            },
+            {
+              icon: IconBolt,
+              color: "#fab005",
+              text: "Bootstrap Master: initializes the cluster token and first control-plane node",
+            },
+            {
+              icon: IconHammer,
+              color: "#20c997",
+              text: "Worker Nodes: join the master via secure token to run containerized pods and services",
+            },
+          ],
       isOptionDisabled: multiNodeDisabled,
     },
   ];
@@ -68,7 +145,7 @@ export default function DeploymentTopologySelector({
             </div>
           </Group>
           <Badge color={isMultiNode ? "teal" : "red"} variant="light">
-            {isMultiNode ? "shared cluster" : "independent clusters"}
+            {isMultiNode ? "shared cluster (master + workers)" : "independent clusters (all-in-one)"}
           </Badge>
         </Group>
 
@@ -78,9 +155,22 @@ export default function DeploymentTopologySelector({
           disabled={disabled}
           fullWidth
           data={[
-            { label: "Single-node per target", value: "single_node" },
             {
-              label: multiNodeDisabled ? "Multi-node (Coming Soon)" : "Multi-node cluster",
+              label: (
+                <Center style={{ gap: 8 }}>
+                  <IconServer size={15} />
+                  <span>Single-node (All-in-One)</span>
+                </Center>
+              ),
+              value: "single_node",
+            },
+            {
+              label: (
+                <Center style={{ gap: 8 }}>
+                  <IconLayersLinked size={15} />
+                  <span>{multiNodeDisabled ? "Multi-node (Coming Soon)" : "Multi-node (Master + Workers)"}</span>
+                </Center>
+              ),
               value: "multi_node",
               disabled: multiNodeDisabled,
             },
@@ -122,16 +212,21 @@ export default function DeploymentTopologySelector({
                   </ThemeIcon>
                 </div>
 
+                {option.rolePills}
+
                 <Text size="sm" fw={600} mt="md">{option.summary}</Text>
                 <Text size="xs" c="dimmed" mt={5}>{option.bestFor}</Text>
 
-                <div className="topology-feature-list">
-                  {option.points.map((point) => (
-                    <span key={point}>
-                      <IconCheck size={14} />
-                      {point}
-                    </span>
-                  ))}
+                <div className="topology-feature-list" style={{ marginTop: 12 }}>
+                  {option.featurePoints.map((point) => {
+                    const PointIcon = point.icon;
+                    return (
+                      <span key={point.text} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: "0.8rem", lineHeight: 1.4 }}>
+                        <PointIcon size={15} style={{ flexShrink: 0, marginTop: 2, color: point.color }} />
+                        <span>{point.text}</span>
+                      </span>
+                    );
+                  })}
                 </div>
               </button>
             );
@@ -139,7 +234,7 @@ export default function DeploymentTopologySelector({
         </div>
 
         <Text size="xs" c="dimmed">
-          You can change this choice before execution. LinDeploy will adapt the next step to host selection or role assignment.
+          You can change this choice before execution. LinDeploy will adapt the next step to host selection or Master/Worker role assignment.
         </Text>
       </Stack>
     </Card>

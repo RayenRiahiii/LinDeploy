@@ -2,7 +2,9 @@ import {
   Badge,
   Button,
   Card,
+  Center,
   Group,
+  Paper,
   Radio,
   SegmentedControl,
   Stack,
@@ -14,7 +16,14 @@ import {
 import {
   IconArrowLeft,
   IconArrowRight,
+  IconBolt,
+  IconCheck,
+  IconCircleMinus,
+  IconCrown,
+  IconHammer,
   IconPlugConnected,
+  IconServer,
+  IconServer2,
 } from "@tabler/icons-react";
 import { type DeploymentTopology } from "../../installers/DeploymentTopologySelector";
 import { type InstallerId } from "../../../features/installers/catalog";
@@ -80,17 +89,17 @@ export default function TargetHostsStep({
             </ThemeIcon>
             <div>
               <Title order={3}>
-                {topology === "multi_node" ? "Assign Host Roles" : "Select Hosts"}
+                {topology === "multi_node" ? "Assign Master & Worker Roles" : "Select Hosts"}
               </Title>
               <Text size="sm" c="dimmed" mt={4}>
                 {topology === "multi_node"
-                  ? "Assign each machine to the control-plane or worker group, then choose the control-plane host that initializes the cluster."
-                  : "Choose one or more enabled targets from the inventory. SSH user and port are taken directly from the host record."}
+                  ? "Assign each machine as Master (Control Plane) or Worker, then choose the bootstrap host that initializes the cluster."
+                  : "Choose one or more enabled targets from the inventory. Each host runs both master and worker roles independently."}
               </Text>
             </div>
           </Group>
-          <Badge color="gray" variant="light">
-            {topology === "multi_node" ? "role assignment" : "hosts inventory"}
+          <Badge color={topology === "multi_node" ? "teal" : "gray"} variant="light">
+            {topology === "multi_node" ? "master & worker assignment" : "hosts inventory"}
           </Badge>
         </Group>
 
@@ -103,6 +112,66 @@ export default function TargetHostsStep({
             onChange={(event) => onSetClusterConfigName(event.currentTarget.value)}
             disabled={loading}
           />
+        )}
+
+        {topology === "multi_node" && (
+          <Paper
+            p="sm"
+            radius="md"
+            withBorder
+            style={{
+              backgroundColor: "rgba(255, 255, 255, 0.02)",
+            }}
+          >
+            <Group justify="space-between" align="center" wrap="wrap" gap="md">
+              <Group gap="lg">
+                <Group gap={6}>
+                  <ThemeIcon size={22} radius="xl" color="blue" variant="filled">
+                    <IconCrown size={13} />
+                  </ThemeIcon>
+                  <div>
+                    <Text size="xs" fw={700}>
+                      Master (Control Plane)
+                    </Text>
+                    <Text size="10px" c="dimmed">
+                      API server, etcd, scheduler
+                    </Text>
+                  </div>
+                  <Badge size="xs" color="blue" variant="light" ml={4}>
+                    {controlPlaneHostIds.length} assigned
+                  </Badge>
+                </Group>
+
+                <Group gap={6}>
+                  <ThemeIcon size={22} radius="xl" color="teal" variant="filled">
+                    <IconHammer size={13} />
+                  </ThemeIcon>
+                  <div>
+                    <Text size="xs" fw={700}>
+                      Worker Nodes
+                    </Text>
+                    <Text size="10px" c="dimmed">
+                      Runs container pods
+                    </Text>
+                  </div>
+                  <Badge size="xs" color="teal" variant="light" ml={4}>
+                    {workerHostIds.length} assigned
+                  </Badge>
+                </Group>
+              </Group>
+
+              <Badge
+                color={controlPlaneHostIds.length >= 1 ? "teal" : "red"}
+                variant="light"
+                size="sm"
+                leftSection={controlPlaneHostIds.length >= 1 ? <IconCheck size={12} /> : undefined}
+              >
+                {controlPlaneHostIds.length >= 1
+                  ? "At least 1 Master configured"
+                  : "Requires at least 1 Master"}
+              </Badge>
+            </Group>
+          </Paper>
         )}
 
         {enabledHosts.length === 0 ? (
@@ -145,26 +214,77 @@ export default function TargetHostsStep({
                   }}
                 >
                   <Group justify="space-between" align="flex-start">
-                    <div>
-                      <Text fw={700}>{host.name}</Text>
-                      <Text size="sm" c="dimmed" mt={4}>
-                        {host.ip_address}
-                      </Text>
-                    </div>
+                    <Group gap="sm" align="center">
+                      <ThemeIcon
+                        size={32}
+                        radius="md"
+                        color={
+                          isControlPlane
+                            ? "blue"
+                            : isWorker
+                              ? "teal"
+                              : isSelected
+                                ? "red"
+                                : "gray"
+                        }
+                        variant={isSelected ? "light" : "subtle"}
+                      >
+                        {isControlPlane ? (
+                          <IconCrown size={18} />
+                        ) : isWorker ? (
+                          <IconHammer size={18} />
+                        ) : topology === "single_node" && isSelected ? (
+                          <IconServer size={18} />
+                        ) : (
+                          <IconServer2 size={18} />
+                        )}
+                      </ThemeIcon>
+                      <div>
+                        <Text fw={700}>{host.name}</Text>
+                        <Text size="xs" c="dimmed">
+                          {host.ip_address}
+                        </Text>
+                      </div>
+                    </Group>
                     <Badge
                       color={
-                        isControlPlane ? "blue" : isWorker ? "teal" : isSelected ? "red" : "gray"
+                        isControlPlane
+                          ? bootstrapHostId === host.id
+                            ? "indigo"
+                            : "blue"
+                          : isWorker
+                            ? "teal"
+                            : isSelected
+                              ? "red"
+                              : "gray"
                       }
                       variant={isSelected ? "filled" : "light"}
+                      leftSection={
+                        topology === "multi_node" ? (
+                          isControlPlane ? (
+                            bootstrapHostId === host.id ? <IconBolt size={12} /> : <IconCrown size={12} />
+                          ) : isWorker ? (
+                            <IconHammer size={12} />
+                          ) : (
+                            <IconCircleMinus size={12} />
+                          )
+                        ) : isSelected ? (
+                          <IconServer size={12} />
+                        ) : (
+                          <IconPlugConnected size={12} />
+                        )
+                      }
                     >
                       {topology === "multi_node"
                         ? isControlPlane
-                          ? "control plane"
+                          ? bootstrapHostId === host.id
+                            ? "bootstrap master"
+                            : "master"
                           : isWorker
                             ? "worker"
                             : "available"
                         : isSelected
-                          ? "selected"
+                          ? "all-in-one"
                           : "available"}
                     </Badge>
                   </Group>
@@ -179,6 +299,32 @@ export default function TargetHostsStep({
                       <Text fw={700}>{host.ssh_port}</Text>
                     </div>
                   </div>
+
+                  {topology === "single_node" && isSelected && (
+                    <Paper
+                      p="xs"
+                      radius="sm"
+                      mt="xs"
+                      style={{
+                        backgroundColor: "rgba(238, 0, 0, 0.06)",
+                        border: "1px solid rgba(238, 0, 0, 0.18)",
+                      }}
+                    >
+                      <Group gap="xs" align="flex-start" wrap="nowrap">
+                        <ThemeIcon color="red" variant="light" size="sm" radius="sm">
+                          <IconServer size={13} />
+                        </ThemeIcon>
+                        <div style={{ flex: 1 }}>
+                          <Text size="xs" fw={700} c="red.4">
+                            All-in-One Target (Master + Worker)
+                          </Text>
+                          <Text size="11px" c="dimmed" mt={2} style={{ lineHeight: 1.3 }}>
+                            Runs both the control-plane and container workloads as an independent cluster on this machine.
+                          </Text>
+                        </div>
+                      </Group>
+                    </Paper>
+                  )}
 
                   {isSelected && (
                     <Stack
@@ -213,9 +359,9 @@ export default function TargetHostsStep({
                   )}
 
                   {topology === "multi_node" && (
-                    <div className="host-role-control">
+                    <div className="host-role-control" style={{ marginTop: 12 }}>
                       <Text size="xs" fw={700} c="dimmed" mb={8}>
-                        Cluster role
+                        Cluster Role
                       </Text>
                       <SegmentedControl
                         value={assignedRole}
@@ -229,22 +375,101 @@ export default function TargetHostsStep({
                         size="xs"
                         disabled={loading}
                         data={[
-                          { label: "Unused", value: "unassigned" },
-                          { label: "Control", value: "control_plane" },
-                          { label: "Worker", value: "worker" },
+                          {
+                            label: (
+                              <Center style={{ gap: 6 }}>
+                                <IconCircleMinus size={13} />
+                                <span>Unused</span>
+                              </Center>
+                            ),
+                            value: "unassigned",
+                          },
+                          {
+                            label: (
+                              <Center style={{ gap: 6 }}>
+                                <IconCrown size={13} color="#339af0" />
+                                <span>Master</span>
+                              </Center>
+                            ),
+                            value: "control_plane",
+                          },
+                          {
+                            label: (
+                              <Center style={{ gap: 6 }}>
+                                <IconHammer size={13} color="#20c997" />
+                                <span>Worker</span>
+                              </Center>
+                            ),
+                            value: "worker",
+                          },
                         ]}
                         aria-label={`Cluster role for ${host.name}`}
                       />
 
                       {isControlPlane && (
-                        <Radio
-                          mt="md"
-                          checked={bootstrapHostId === host.id}
-                          onChange={() => onSetBootstrapHostId(host.id)}
-                          disabled={loading}
-                          label="Use this host to initialize the cluster"
-                          description="Bootstrap control-plane host"
-                        />
+                        <Paper
+                          p="xs"
+                          radius="sm"
+                          mt="xs"
+                          style={{
+                            backgroundColor: "rgba(51, 154, 240, 0.08)",
+                            border: "1px solid rgba(51, 154, 240, 0.22)",
+                          }}
+                        >
+                          <Group gap="xs" align="flex-start" wrap="nowrap">
+                            <ThemeIcon color="blue" variant="light" size="sm" radius="sm">
+                              <IconCrown size={13} />
+                            </ThemeIcon>
+                            <div style={{ flex: 1 }}>
+                              <Text size="xs" fw={700} c="blue.4">
+                                Master / Control Plane Node
+                              </Text>
+                              <Text size="11px" c="dimmed" mt={2} style={{ lineHeight: 1.3 }}>
+                                Manages the cluster: runs API server, controller manager, scheduler, and etcd.
+                              </Text>
+                            </div>
+                          </Group>
+
+                          <Radio
+                            mt="xs"
+                            checked={bootstrapHostId === host.id}
+                            onChange={() => onSetBootstrapHostId(host.id)}
+                            disabled={loading}
+                            label={
+                              <Group gap={6} align="center">
+                                <IconBolt size={13} color="#fab005" />
+                                <Text size="xs" fw={700}>Bootstrap Master</Text>
+                              </Group>
+                            }
+                            description="Initializes etcd and generates the join token for all subsequent nodes."
+                          />
+                        </Paper>
+                      )}
+
+                      {isWorker && (
+                        <Paper
+                          p="xs"
+                          radius="sm"
+                          mt="xs"
+                          style={{
+                            backgroundColor: "rgba(32, 201, 151, 0.08)",
+                            border: "1px solid rgba(32, 201, 151, 0.22)",
+                          }}
+                        >
+                          <Group gap="xs" align="flex-start" wrap="nowrap">
+                            <ThemeIcon color="teal" variant="light" size="sm" radius="sm">
+                              <IconHammer size={13} />
+                            </ThemeIcon>
+                            <div style={{ flex: 1 }}>
+                              <Text size="xs" fw={700} c="teal.4">
+                                Worker Node
+                              </Text>
+                              <Text size="11px" c="dimmed" mt={2} style={{ lineHeight: 1.3 }}>
+                                Executes application workloads: joins the master and runs pods, services & containers.
+                              </Text>
+                            </div>
+                          </Group>
+                        </Paper>
                       )}
                     </div>
                   )}
