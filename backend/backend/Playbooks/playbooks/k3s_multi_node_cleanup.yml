@@ -1,0 +1,123 @@
+---
+- name: Validate K3s multi-node cleanup inventory
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Validate selected hosts
+      assert:
+        that:
+          - groups.get('selected_hosts', []) | length >= 1
+        fail_msg: "At least one host must be selected for K3s multi-node cleanup."
+
+- name: Prepare K3s multi-node cleanup targets
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+
+  pre_tasks:
+    - name: Gather minimal facts required for K3s cleanup
+      setup:
+        gather_subset:
+          - "!all"
+          - min
+          - network
+        filter:
+          - ansible_os_family
+          - ansible_default_ipv4
+          - ansible_default_ipv6
+
+  roles:
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: validate_cleanup
+
+- name: Gracefully unregister worker nodes from cluster API
+  hosts: bootstrap
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  tasks:
+    - name: Check if bootstrap K3s API server is reachable
+      wait_for:
+        host: 127.0.0.1
+        port: 6443
+        timeout: 5
+      register: k3s_multi_cleanup_apiserver_check
+      failed_when: false
+
+    - name: Cordon and delete worker nodes from cluster API
+      shell: |
+        timeout 10s /usr/local/bin/k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml delete node {{ hostvars[item].lindeploy_node_name | default(item) }} --ignore-not-found --timeout=5s </dev/null >/dev/null 2>&1 || true
+      loop: "{{ groups.get('workers', []) }}"
+      when:
+        - k3s_multi_cleanup_apiserver_check is succeeded
+        - groups.get('workers', []) | length > 0
+      failed_when: false
+      changed_when: false
+
+- name: Cleanup K3s worker nodes
+  hosts: workers
+  become: true
+  gather_facts: false
+  strategy: free
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - role: k3s_cleanup
+      when: lindeploy_cleanup_required | default(true) | bool
+
+- name: Cleanup K3s additional control plane nodes
+  hosts: "control_plane:!bootstrap"
+  become: true
+  gather_facts: false
+  strategy: free
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - role: k3s_cleanup
+      when: lindeploy_cleanup_required | default(true) | bool
+
+- name: Cleanup K3s bootstrap server
+  hosts: bootstrap
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - role: k3s_cleanup
+      when: lindeploy_cleanup_required | default(true) | bool
+
+- name: Fallback cleanup for ungrouped selected hosts
+  hosts: "selected_hosts:!workers:!control_plane:!bootstrap"
+  become: true
+  gather_facts: false
+  strategy: free
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - role: k3s_cleanup
+      when: lindeploy_cleanup_required | default(true) | bool
+
+- name: Finalize verified K3s multi-node cleanup
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: finalize_cleanup
+

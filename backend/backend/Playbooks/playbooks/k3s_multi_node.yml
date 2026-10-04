@@ -1,0 +1,239 @@
+---
+- name: Validate K3s multi-node inventory
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Validate required multi-node groups
+      assert:
+        that:
+          - groups.get('bootstrap', []) | length == 1
+          - groups.get('control_plane', []) | length >= 1
+          - groups.get('workers', []) | length >= 1
+          - groups['bootstrap'][0] in groups['control_plane']
+        fail_msg: >-
+          Invalid K3s multi-node inventory. Select at least one server (control plane),
+          at least one agent (worker), and exactly one bootstrap host that also
+          belongs to the control-plane group.
+
+- name: Prepare K3s multi-node hosts
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  vars:
+    common_selinux_mode: enforcing
+    common_firewalld_enabled: true
+    common_firewalld_state: started
+    common_firewalld_ports:
+      - 6443/tcp
+      - 10250/tcp
+      - 2379/tcp
+      - 2380/tcp
+      - 8472/udp
+      - 51820/udp
+    common_firewalld_sources: >-
+      {{
+        [k3s_cluster_cidr | default('10.42.0.0/16'), k3s_service_cidr | default('10.43.0.0/16')]
+        + (groups.get('selected_hosts', []) | map('extract', hostvars, 'ansible_host') | list)
+      }}
+
+  pre_tasks:
+    - name: Probe conflicting Kubernetes installation artifacts
+      command:
+        argv:
+          - /bin/sh
+          - -c
+          - |
+            for path; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                printf '%s\n' "$path"
+              fi
+            done
+          - k8s-conflict-check
+          - /etc/kubernetes/admin.conf
+          - /etc/kubernetes/manifests/kube-apiserver.yaml
+          - /etc/kubernetes/manifests/kube-controller-manager.yaml
+          - /etc/kubernetes/manifests/kube-scheduler.yaml
+          - /etc/kubernetes/manifests/etcd.yaml
+          - /var/lib/kubelet/kubeadm-flags.env
+          - /var/lib/etcd/member
+          - /etc/cni/net.d/10-calico.conflist
+      register: k3s_k8s_conflict_artifacts
+      changed_when: false
+
+    - name: Refuse K3s installation while Kubernetes is present
+      fail:
+        msg: >-
+          K3s cannot be installed on {{ inventory_hostname }} because Kubernetes
+          installation artifacts are still present. Run the Kubernetes cleanup
+          workflow for this target and retry. Detected artifacts:
+          {{ k3s_k8s_conflict_artifacts.stdout_lines | join(', ') }}.
+          No K3s system changes were applied.
+      when: k3s_k8s_conflict_artifacts.stdout_lines | length > 0
+
+    - name: Gather minimal installation facts
+      setup:
+        gather_subset:
+          - "!all"
+          - min
+          - network
+          - hardware
+        filter:
+          - ansible_os_family
+          - ansible_default_ipv4
+          - ansible_default_ipv6
+          - ansible_architecture
+          - ansible_distribution
+          - ansible_distribution_release
+          - ansible_distribution_major_version
+          - ansible_hostname
+          - ansible_fqdn
+          - ansible_swaptotal_mb
+          - ansible_selinux
+
+  roles:
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: prepare
+    - common
+
+  post_tasks:
+    - name: Configure NetworkManager to ignore K3s and Flannel interfaces
+      copy:
+        dest: /etc/NetworkManager/conf.d/k3s.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [keyfile]
+          unmanaged-devices=interface-name:cni0;interface-name:flannel*;interface-name:veth*
+      register: k3s_nm_unmanaged_config
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+
+    - name: Reload NetworkManager configuration
+      command: nmcli general reload
+      changed_when: false
+      failed_when: false
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - k3s_nm_unmanaged_config.changed | default(false)
+
+    - name: Install k3s-selinux package on RedHat hosts when SELinux is active
+      dnf:
+        name: k3s-selinux
+        state: present
+        disable_gpg_check: false
+        lock_timeout: "{{ common_redhat_lock_timeout | default(120) }}"
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - ansible_facts.get('selinux', {}).get('status', 'disabled') != 'disabled'
+      failed_when: false
+
+    - name: Download K3s install script
+      get_url:
+        url: "{{ k3s_effective_install_script_url | default(k3s_install_script_url | default('https://get.k3s.io')) }}"
+        dest: /usr/local/bin/k3s-install.sh
+        owner: root
+        group: root
+        mode: "0755"
+        timeout: 120
+        checksum: "{{ k3s_install_script_checksum if k3s_install_script_checksum | default('') | length > 0 else omit }}"
+      register: k3s_install_script_dl
+      until: k3s_install_script_dl is succeeded
+      retries: 3
+      delay: 5
+
+    - name: Mark K3s host preparation complete
+      set_fact:
+        lindeploy_k3s_preparation_complete: true
+
+- name: Validate K3s host preparation checkpoint
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure every selected host completed preparation
+      assert:
+        that:
+          - hostvars[item].lindeploy_k3s_preparation_complete | default(false) | bool
+        fail_msg: >-
+          K3s host preparation did not complete on {{ item }}.
+          The host became unreachable or a preparation task failed.
+      loop: "{{ groups.get('selected_hosts', []) }}"
+
+- name: Initialize K3s multi-node bootstrap server
+  hosts: bootstrap
+  become: true
+  gather_facts: false
+  serial: 1
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - k3s_multi_bootstrap
+
+- name: Validate K3s bootstrap checkpoint
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure bootstrap server completed initialization
+      assert:
+        that:
+          - hostvars[groups['bootstrap'][0]].lindeploy_k3s_bootstrap_ready | default(false) | bool
+        fail_msg: >-
+          The K3s bootstrap server did not complete initialization.
+          Worker and additional server joins are blocked to protect cluster consistency.
+
+- name: Join additional K3s control planes
+  hosts: "control_plane:!bootstrap"
+  become: true
+  gather_facts: false
+  serial: 1
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  vars:
+    k3s_multi_join_role: control_plane
+  roles:
+    - k3s_multi_join
+
+- name: Join K3s workers
+  hosts: workers
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  vars:
+    k3s_multi_join_role: worker
+  roles:
+    - k3s_multi_join
+
+- name: Validate K3s multi-node cluster
+  hosts: bootstrap
+  become: true
+  gather_facts: false
+  serial: 1
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - k3s_multi_validate
+
+- name: Activate verified K3s multi-node ownership
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  roles:
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: activate

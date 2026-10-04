@@ -1,0 +1,461 @@
+---
+# ==================================================
+# 1. Preconditions and Target Verification
+# ==================================================
+
+- name: Validate requested K3s node role
+  assert:
+    that:
+      - k3s_multi_join_role in ['control_plane', 'worker']
+      - groups.get('bootstrap', []) | length == 1
+      - k3s_multi_join_node_name | length > 0
+    fail_msg: "Invalid node role, node name, or bootstrap inventory configuration."
+
+- name: Resolve bootstrap host identity and endpoint
+  set_fact:
+    k3s_multi_join_bootstrap_host: "{{ groups['bootstrap'][0] }}"
+    k3s_multi_join_bootstrap_ip: >-
+      {{
+        hostvars[groups['bootstrap'][0]]['ansible_host']
+        | default(hostvars[groups['bootstrap'][0]]['ansible_default_ipv4']['address'])
+      }}
+
+- name: Resolve bootstrap cluster token and server URL
+  set_fact:
+    k3s_multi_join_server_url: "https://{{ k3s_multi_join_bootstrap_ip }}:6443"
+    k3s_multi_join_token: "{{ hostvars[k3s_multi_join_bootstrap_host]['k3s_cluster_token'] | default('') }}"
+  no_log: true
+
+- name: Validate bootstrap cluster join token
+  assert:
+    that:
+      - k3s_multi_join_token | length > 0
+    fail_msg: "Bootstrap host did not provide a valid K3s cluster join token."
+  no_log: true
+
+- name: Wait for K3s API server reachability on bootstrap host
+  wait_for:
+    host: "{{ k3s_multi_join_bootstrap_ip }}"
+    port: 6443
+    timeout: "{{ k3s_multi_join_api_timeout }}"
+    delay: 2
+
+- name: Compute effective SELinux setting for joining node
+  set_fact:
+    k3s_multi_join_effective_selinux: >-
+      {{
+        ansible_facts.get('selinux', {}).get('status', 'disabled') != 'disabled'
+      }}
+
+- name: Ensure K3s config directory exists
+  file:
+    path: "{{ k3s_multi_join_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ==================================================
+# 2. Join as Worker (Agent)
+# ==================================================
+
+- name: Configure and join K3s worker agent
+  block:
+    - name: Build K3s agent configuration
+      set_fact:
+        k3s_multi_agent_config: >-
+          {{
+            {
+              'server': k3s_multi_join_server_url,
+              'token': k3s_multi_join_token,
+              'node-name': k3s_multi_join_node_name,
+              'node-ip': k3s_multi_join_advertise_address
+            }
+            | combine({'selinux': true} if (k3s_multi_join_effective_selinux | bool) else {})
+          }}
+      no_log: true
+
+    - name: Write K3s agent configuration
+      copy:
+        dest: "{{ k3s_multi_join_config_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ k3s_multi_agent_config | to_nice_yaml(indent=2) }}"
+      no_log: true
+
+    - name: Install K3s agent on worker host
+      command: "{{ k3s_multi_join_install_script_path }}"
+      environment: >-
+        {{
+          {
+            'INSTALL_K3S_EXEC': 'agent',
+            'INSTALL_K3S_SKIP_ENABLE': 'true',
+            'INSTALL_K3S_SKIP_START': 'true',
+            'INSTALL_K3S_SKIP_SELINUX_RPM': 'true'
+          }
+          | combine({'INSTALL_K3S_VERSION': k3s_version} if (k3s_version | default('') | length > 0) else {})
+          | combine(
+              {'INSTALL_K3S_ARTIFACT_URL': k3s_install_artifact_url}
+              if (k3s_install_artifact_url | default('') | length > 0) else {}
+            )
+        }}
+      changed_when: true
+
+    - name: Restore K3s agent binary and service SELinux contexts
+      command:
+        argv:
+          - restorecon
+          - -F
+          - -v
+          - "{{ k3s_multi_join_binary_path }}"
+          - /usr/local/bin/k3s-killall.sh
+          - /usr/local/bin/k3s-agent-uninstall.sh
+          - /usr/local/bin/k3s-uninstall.sh
+          - /usr/local/bin/kubectl
+          - /usr/local/bin/crictl
+          - /usr/local/bin/ctr
+          - "/etc/systemd/system/{{ k3s_multi_join_agent_service }}.service"
+          - "{{ k3s_multi_join_config_dir }}"
+      register: k3s_multi_agent_restorecon
+      changed_when: k3s_multi_agent_restorecon.stdout | trim | length > 0
+      failed_when: false
+      when: k3s_multi_join_effective_selinux | bool
+
+    - name: Reload systemd units for agent
+      command: systemctl daemon-reload
+      changed_when: false
+
+    - name: Enable and start K3s agent service
+      systemd_service:
+        name: "{{ k3s_multi_join_agent_service }}"
+        enabled: true
+        state: started
+
+    - name: Wait for K3s agent service to become active
+      command: "systemctl is-active {{ k3s_multi_join_agent_service }}"
+      register: k3s_multi_agent_status
+      changed_when: false
+      retries: "{{ k3s_multi_join_startup_retries }}"
+      delay: "{{ k3s_multi_join_startup_delay }}"
+      until: k3s_multi_agent_status.stdout == "active"
+  rescue:
+    - name: Capture K3s agent status on failure
+      command: "systemctl status {{ k3s_multi_join_agent_service }} --no-pager -l"
+      register: k3s_multi_agent_status_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Capture K3s agent journal on failure
+      command: "journalctl -u {{ k3s_multi_join_agent_service }} --no-pager -n 150"
+      register: k3s_multi_agent_journal_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Persist worker join diagnostics file
+      copy:
+        dest: "{{ k3s_multi_join_diagnostics_log_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          K3s agent startup failed on {{ inventory_hostname }}.
+          Server URL: {{ k3s_multi_join_server_url }}
+          Status:
+          {{ k3s_multi_agent_status_fail.stdout | default('not collected') }}
+          Journal:
+          {{ k3s_multi_agent_journal_fail.stdout | default('not collected') }}
+
+    - name: Fail with worker join diagnostics
+      fail:
+        msg: |
+          K3s agent failed to join cluster on {{ inventory_hostname }}.
+          Journal:
+          {{ k3s_multi_agent_journal_fail.stdout | default('not collected') }}
+  when: k3s_multi_join_role == 'worker'
+
+# ==================================================
+# 3. Join as Additional Control Plane (Server)
+# ==================================================
+
+- name: Configure and join additional K3s control plane
+  block:
+    - name: Build additional server TLS SAN list
+      set_fact:
+        k3s_multi_join_tls_sans: >-
+          {{
+            [
+              k3s_multi_join_advertise_address,
+              ansible_facts.get('default_ipv4', {}).get('address', ''),
+              ansible_facts.get('hostname', ''),
+              ansible_facts.get('fqdn', ''),
+              '127.0.0.1'
+            ]
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+
+    - name: Build K3s additional server configuration
+      set_fact:
+        k3s_multi_server_config: >-
+          {{
+            {
+              'server': k3s_multi_join_server_url,
+              'token': k3s_multi_join_token,
+              'write-kubeconfig-mode': '0600',
+              'node-name': k3s_multi_join_node_name,
+              'node-ip': k3s_multi_join_advertise_address,
+              'tls-san': k3s_multi_join_tls_sans
+            }
+            | combine({'selinux': true} if (k3s_multi_join_effective_selinux | bool) else {})
+          }}
+      no_log: true
+
+    - name: Write K3s additional server configuration
+      copy:
+        dest: "{{ k3s_multi_join_config_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ k3s_multi_server_config | to_nice_yaml(indent=2) }}"
+      no_log: true
+
+    - name: Install K3s server on additional control-plane host
+      command: "{{ k3s_multi_join_install_script_path }}"
+      environment: >-
+        {{
+          {
+            'INSTALL_K3S_EXEC': 'server',
+            'INSTALL_K3S_SKIP_ENABLE': 'true',
+            'INSTALL_K3S_SKIP_START': 'true',
+            'INSTALL_K3S_SKIP_SELINUX_RPM': 'true'
+          }
+          | combine({'INSTALL_K3S_VERSION': k3s_version} if (k3s_version | default('') | length > 0) else {})
+          | combine(
+              {'INSTALL_K3S_ARTIFACT_URL': k3s_install_artifact_url}
+              if (k3s_install_artifact_url | default('') | length > 0) else {}
+            )
+        }}
+      changed_when: true
+
+    - name: Restore K3s server binary and service SELinux contexts
+      command:
+        argv:
+          - restorecon
+          - -F
+          - -v
+          - "{{ k3s_multi_join_binary_path }}"
+          - /usr/local/bin/k3s-killall.sh
+          - /usr/local/bin/k3s-uninstall.sh
+          - /usr/local/bin/kubectl
+          - /usr/local/bin/crictl
+          - /usr/local/bin/ctr
+          - "/etc/systemd/system/{{ k3s_multi_join_server_service }}.service"
+          - "{{ k3s_multi_join_config_dir }}"
+      register: k3s_multi_server_restorecon
+      changed_when: k3s_multi_server_restorecon.stdout | trim | length > 0
+      failed_when: false
+      when: k3s_multi_join_effective_selinux | bool
+
+    - name: Reload systemd units for server
+      command: systemctl daemon-reload
+      changed_when: false
+
+    - name: Enable and start K3s server service
+      systemd_service:
+        name: "{{ k3s_multi_join_server_service }}"
+        enabled: true
+        state: started
+
+    - name: Wait for additional K3s server service to become active
+      command: "systemctl is-active {{ k3s_multi_join_server_service }}"
+      register: k3s_multi_server_status
+      changed_when: false
+      retries: "{{ k3s_multi_join_startup_retries }}"
+      delay: "{{ k3s_multi_join_startup_delay }}"
+      until: k3s_multi_server_status.stdout == "active"
+
+    - name: Wait for additional server API readyz probe
+      command: >-
+        {{ k3s_multi_join_binary_path }} kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml
+        --request-timeout=10s get --raw=/readyz
+      register: k3s_multi_join_readyz
+      changed_when: false
+      retries: "{{ k3s_multi_join_startup_retries }}"
+      delay: "{{ k3s_multi_join_startup_delay }}"
+      until: k3s_multi_join_readyz.rc == 0 and 'ok' in k3s_multi_join_readyz.stdout
+  rescue:
+    - name: Capture K3s server status on failure
+      command: "systemctl status {{ k3s_multi_join_server_service }} --no-pager -l"
+      register: k3s_multi_server_status_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Capture K3s server journal on failure
+      command: "journalctl -u {{ k3s_multi_join_server_service }} --no-pager -n 150"
+      register: k3s_multi_server_journal_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Persist control-plane join diagnostics file
+      copy:
+        dest: "{{ k3s_multi_join_diagnostics_log_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          K3s control-plane join failed on {{ inventory_hostname }}.
+          Server URL: {{ k3s_multi_join_server_url }}
+          Status:
+          {{ k3s_multi_server_status_fail.stdout | default('not collected') }}
+          Journal:
+          {{ k3s_multi_server_journal_fail.stdout | default('not collected') }}
+
+    - name: Fail with control-plane join diagnostics
+      fail:
+        msg: |
+          K3s control-plane server failed to join cluster on {{ inventory_hostname }}.
+          Journal:
+          {{ k3s_multi_server_journal_fail.stdout | default('not collected') }}
+  when: k3s_multi_join_role == 'control_plane'
+
+# ==================================================
+# 4. Verify Node Registration on Bootstrap Node
+# ==================================================
+
+- name: Verify joining node is registered in Kubernetes API
+  command: >-
+    {{ k3s_multi_join_binary_path }} kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml
+    get node {{ k3s_multi_join_node_name }}
+  delegate_to: "{{ k3s_multi_join_bootstrap_host }}"
+  register: k3s_multi_join_registered
+  changed_when: false
+  retries: 30
+  delay: 4
+  until: k3s_multi_join_registered.rc == 0
+
+- name: Mark K3s node join complete
+  set_fact:
+    lindeploy_k3s_node_joined: true
+
+# ==================================================
+# 5. Configure Kubectl Access on Joined Node
+# ==================================================
+
+- name: Retrieve cluster kubeconfig from bootstrap server
+  slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  delegate_to: "{{ k3s_multi_join_bootstrap_host }}"
+  register: k3s_multi_join_bootstrap_kubeconfig_slurp
+  no_log: true
+
+- name: Prepare client kubeconfig with bootstrap endpoint
+  set_fact:
+    k3s_multi_join_client_kubeconfig: >-
+      {{
+        k3s_multi_join_bootstrap_kubeconfig_slurp.content
+        | b64decode
+        | regex_replace('server:\s+https://127\.0\.0\.1:6443', 'server: ' ~ k3s_multi_join_server_url)
+      }}
+  no_log: true
+
+- name: Ensure root kubeconfig directory exists on joined node
+  file:
+    path: /root/.kube
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Write cluster kubeconfig to root on joined node
+  copy:
+    dest: /root/.kube/config
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ k3s_multi_join_client_kubeconfig }}"
+  no_log: true
+
+- name: Install kubectl wrapper on joined node
+  copy:
+    dest: /usr/local/bin/kubectl
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      export K3S_CONFIG_FILE=/dev/null
+
+      if [ -z "${KUBECONFIG:-}" ]; then
+        if [ -r "$HOME/.kube/config" ]; then
+          export KUBECONFIG="$HOME/.kube/config"
+        elif [ -r "/etc/rancher/k3s/k3s.yaml" ]; then
+          export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+        elif [ -r "/root/.kube/config" ]; then
+          export KUBECONFIG="/root/.kube/config"
+        fi
+      fi
+
+      exec "{{ k3s_multi_join_binary_path }}" kubectl "$@"
+
+- name: Ensure kubectl symlink in /usr/bin for sudo secure_path compatibility on joined node
+  file:
+    src: /usr/local/bin/kubectl
+    dest: /usr/bin/kubectl
+    state: link
+    force: true
+
+- name: Configure system-wide K3s environment in profile.d on joined node
+  copy:
+    dest: /etc/profile.d/k3s.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      export K3S_CONFIG_FILE=/dev/null
+      if [ -z "${KUBECONFIG:-}" ] && [ -r "$HOME/.kube/config" ]; then
+        export KUBECONFIG="$HOME/.kube/config"
+      fi
+
+- name: Query remote user account on joined node
+  getent:
+    database: passwd
+    key: "{{ ansible_user }}"
+  when: ansible_user != "root"
+
+- name: Configure kubectl access for remote user on joined node
+  block:
+    - name: Extract remote user home directory
+      set_fact:
+        k3s_multi_join_remote_user_home: "{{ ansible_facts.getent_passwd[ansible_user][-2] }}"
+
+    - name: Ensure remote user kubeconfig directory exists
+      file:
+        path: "{{ k3s_multi_join_remote_user_home }}/.kube"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0700"
+
+    - name: Write cluster kubeconfig for remote user
+      copy:
+        dest: "{{ k3s_multi_join_remote_user_home }}/.kube/config"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+        content: "{{ k3s_multi_join_client_kubeconfig }}"
+      no_log: true
+
+    - name: Configure KUBECONFIG shell variable in remote user rc
+      blockinfile:
+        path: "{{ k3s_multi_join_remote_user_home }}/.bashrc"
+        create: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - K3S KUBECTL ENV"
+        block: |
+          export K3S_CONFIG_FILE=/dev/null
+          export KUBECONFIG="$HOME/.kube/config"
+  when: ansible_user != "root"

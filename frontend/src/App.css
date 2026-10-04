@@ -376,6 +376,15 @@
   align-self: center;
 }
 
+.user-profile-button:hover {
+  background: var(--hover-bg) !important;
+  border-color: rgba(255, 75, 75, 0.4) !important;
+}
+
+.user-profile-button:active {
+  transform: scale(0.98);
+}
+
 .brand-title {
   font-size: clamp(1rem, 1.1vw, 1.32rem);
   letter-spacing: 0;

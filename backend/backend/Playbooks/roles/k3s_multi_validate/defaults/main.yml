@@ -1,0 +1,9 @@
+---
+k3s_multi_validate_kubeconfig: /etc/rancher/k3s/k3s.yaml
+k3s_multi_validate_binary: /usr/local/bin/k3s
+k3s_multi_validate_timeout: 300s
+k3s_multi_validate_request_timeout: 30s
+k3s_multi_validate_coredns: true
+k3s_multi_validate_local_path_provisioner: true
+k3s_multi_validate_metrics_server: true
+k3s_multi_validate_traefik: true

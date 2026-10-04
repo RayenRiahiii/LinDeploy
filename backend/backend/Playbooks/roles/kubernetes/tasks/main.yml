@@ -153,12 +153,22 @@
     state: present
     update_cache: "{{ kubernetes_redhat_update_cache }}"
     disable_excludes: "{{ kubernetes_repo_name }}"
+    allow_downgrade: true
   when: ansible_facts["os_family"] == "RedHat"
+
+- name: Unhold Kubernetes packages before installing on Debian family
+  command:
+    argv: "{{ ['apt-mark', 'unhold'] + kubernetes_packages }}"
+  failed_when: false
+  changed_when: false
+  when: ansible_facts["os_family"] == "Debian"
 
 - name: Install Kubernetes packages on Debian family
   apt:
     name: "{{ kubernetes_packages_debian }}"
     state: present
+    allow_downgrade: true
+    allow_change_held_packages: true
     lock_timeout: "{{ kubernetes_apt_lock_timeout }}"
     update_cache: false
   when: ansible_facts["os_family"] == "Debian"

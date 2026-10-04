@@ -316,17 +316,15 @@ export function extractTargetDiagnostics(target: InstallationTarget): string {
 }
 
 export function getCleanupMode(template: Template): CleanupMode {
-  if (template.system_type === "k3s" && template.deployment_type === "cleanup") {
-    return "full_uninstall";
-  }
-
   const normalizedName = template.name.toLowerCase();
   const normalizedPath = template.playbook_path.toLowerCase();
 
   if (
     normalizedName.includes("full-uninstall") ||
     normalizedName.includes("full uninstall") ||
-    normalizedPath.includes("full_uninstall")
+    normalizedPath.includes("full_uninstall") ||
+    normalizedName.includes("multi-node-cleanup") ||
+    normalizedPath.includes("multi_node_cleanup")
   ) {
     return "full_uninstall";
   }

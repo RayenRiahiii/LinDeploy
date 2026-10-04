@@ -28,6 +28,9 @@ class InstallationCancelled(Exception):
 AUTO_FULL_PLAYBOOK_PATH = "playbooks/k8s_single_node.yml"
 AUTO_PREPARED_PLAYBOOK_PATH = "playbooks/k8s_single_node.yml"
 AUTO_K3S_SINGLE_NODE_PLAYBOOK_PATH = "playbooks/k3s_single_node.yml"
+AUTO_K3S_MULTI_NODE_PLAYBOOK_PATH = "playbooks/k3s_multi_node.yml"
+AUTO_K3S_MULTI_NODE_CLEANUP_PLAYBOOK_PATH = "playbooks/k3s_multi_node_cleanup.yml"
+
 LIVE_OUTPUT_LINE_LIMIT = 5000
 
 SECRET_PATTERNS = [
@@ -1333,9 +1336,13 @@ def select_installation_template(
         )
         if (
             normalized_topology == Installation.Topology.MULTI_NODE
-            and template.deployment_type != InstallationTemplate.DeploymentType.MULTI_NODE
+            and template.deployment_type not in {
+                InstallationTemplate.DeploymentType.MULTI_NODE,
+                InstallationTemplate.DeploymentType.CLEANUP,
+            }
         ):
             raise ValueError("The selected template is not a multi-node installation template.")
+
         return {
             "template": template,
             "strategy": "manual",

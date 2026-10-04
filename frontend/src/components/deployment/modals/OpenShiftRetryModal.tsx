@@ -61,6 +61,7 @@ export default function OpenShiftRetryModal({
         <Textarea
           label="Red Hat pull secret"
           description="Paste the complete pull-secret JSON. It is encrypted and consumed once."
+          placeholder='{"auths":{"cloud.openshift.com":{"auth":"..."}}}'
           required
           minRows={5}
           autosize
@@ -70,6 +71,7 @@ export default function OpenShiftRetryModal({
         <Textarea
           label="SSH public key"
           description="Enter only a public key, never a private key."
+          placeholder="ssh-ed25519 AAAAC3... operator@workstation"
           required
           minRows={2}
           autosize
@@ -79,6 +81,7 @@ export default function OpenShiftRetryModal({
         <Textarea
           label="Additional trust bundle"
           description="Optional. Re-enter it only when the original connected installation required a custom CA."
+          placeholder="-----BEGIN CERTIFICATE-----"
           minRows={3}
           autosize
           value={openShiftRetryTrustBundle}

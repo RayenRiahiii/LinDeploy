@@ -1,0 +1,17 @@
+---
+k3s_multi_join_role: worker  # 'control_plane' or 'worker'
+k3s_multi_join_node_name: "{{ lindeploy_node_name | default(ansible_facts['hostname'] | lower) }}"
+k3s_multi_join_advertise_address: "{{ lindeploy_advertise_address | default(ansible_facts['default_ipv4']['address']) }}"
+
+k3s_multi_join_binary_path: /usr/local/bin/k3s
+k3s_multi_join_install_script_path: /usr/local/bin/k3s-install.sh
+k3s_multi_join_config_dir: /etc/rancher/k3s
+k3s_multi_join_config_path: /etc/rancher/k3s/config.yaml
+
+k3s_multi_join_server_service: k3s
+k3s_multi_join_agent_service: k3s-agent
+
+k3s_multi_join_api_timeout: 120
+k3s_multi_join_startup_retries: 40
+k3s_multi_join_startup_delay: 3
+k3s_multi_join_diagnostics_log_path: /tmp/k3s-multi-join-diagnostics.log

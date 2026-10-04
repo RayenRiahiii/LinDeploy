@@ -3,6 +3,7 @@ import {
   Badge,
   Box,
   Group,
+  Menu,
   Paper,
   Stack,
   Text,
@@ -13,14 +14,18 @@ import {
   IconHistory,
   IconKey,
   IconLayoutDashboard,
+  IconLogout,
   IconMoonStars,
   IconPlayerPlay,
   IconServer,
   IconSun,
   IconTerminal2,
+  IconUser,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import lindeployWordmark from "../assets/logo.png";
 import lindeployWordmarkDark from "../assets/darkmodeLogo.png";
 
@@ -201,6 +206,7 @@ type AppShellLayoutProps = {
 
 export default function AppShellLayout({ colorScheme, onToggleColorScheme }: AppShellLayoutProps) {
   const location = useLocation();
+  const { user, logout } = useAuth();
   const meta = getSectionMeta(location.pathname);
   const brandLogo = colorScheme === "dark" ? lindeployWordmarkDark : lindeployWordmark;
   const [topbarHidden, setTopbarHidden] = useState(false);
@@ -281,17 +287,90 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                   <Text className="hero-terminal-line topbar-terminal-label">$ workspace</Text>
                   <Text className="hero-terminal-line topbar-terminal-value">{meta.terminalSection}</Text>
                 </div>
-                <ActionIcon
-                  size={32}
-                  radius="xl"
-                  variant="light"
-                  color={colorScheme === "dark" ? "yellow" : "dark"}
-                  onClick={onToggleColorScheme}
-                  aria-label={colorScheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                  className="theme-toggle-button"
-                >
-                  {colorScheme === "dark" ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-                </ActionIcon>
+                <Group gap={8} wrap="nowrap">
+                  <ActionIcon
+                    size={32}
+                    radius="xl"
+                    variant="light"
+                    color={colorScheme === "dark" ? "yellow" : "dark"}
+                    onClick={onToggleColorScheme}
+                    aria-label={colorScheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                    className="theme-toggle-button"
+                  >
+                    {colorScheme === "dark" ? <IconSun size={18} /> : <IconMoonStars size={18} />}
+                  </ActionIcon>
+                  {user && (
+                    <Menu shadow="md" width={220} position="bottom-end">
+                      <Menu.Target>
+                        <UnstyledButton
+                          className="user-profile-button"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 7,
+                            height: 32,
+                            padding: "0 10px 0 4px",
+                            borderRadius: 999,
+                            background: colorScheme === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
+                            border: colorScheme === "dark" ? "1px solid rgba(255, 255, 255, 0.12)" : "1px solid rgba(0, 0, 0, 0.1)",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                          }}
+                          aria-label="User profile and session options"
+                        >
+                          <Box
+                            style={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: "50%",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              background: colorScheme === "dark"
+                                ? "linear-gradient(135deg, rgba(255, 59, 59, 0.3) 0%, rgba(200, 30, 30, 0.5) 100%)"
+                                : "linear-gradient(135deg, rgba(224, 49, 49, 0.15) 0%, rgba(200, 30, 30, 0.25) 100%)",
+                              border: colorScheme === "dark" ? "1px solid rgba(255, 80, 80, 0.45)" : "1px solid rgba(224, 49, 49, 0.3)",
+                              color: colorScheme === "dark" ? "#ff6b6b" : "#d63333",
+                              boxShadow: colorScheme === "dark" ? "0 0 8px rgba(255, 59, 59, 0.25)" : "none",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <IconUser size={13} stroke={2} />
+                          </Box>
+                          <Text
+                            size="xs"
+                            fw={600}
+                            truncate
+                            style={{
+                              maxWidth: 85,
+                              color: "var(--text-primary)",
+                              letterSpacing: "0.2px",
+                            }}
+                          >
+                            {user.first_name || user.username}
+                          </Text>
+                          <IconChevronDown size={11} stroke={2} style={{ opacity: 0.5, marginLeft: -2 }} />
+                        </UnstyledButton>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Label>Signed in as</Menu.Label>
+                        <Menu.Item disabled leftSection={<IconUser size={14} />}>
+                          <Text size="xs" fw={600} truncate style={{ maxWidth: 170 }}>
+                            {user.email || user.username}
+                          </Text>
+                        </Menu.Item>
+                        <Menu.Divider />
+                        <Menu.Item
+                          color="red"
+                          leftSection={<IconLogout size={14} />}
+                          onClick={logout}
+                        >
+                          Sign out
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
+                </Group>
               </Group>
             </Box>
           </div>

@@ -206,9 +206,19 @@ export function useDeploymentPolling({
       void pollInstallation();
     }, 1000);
 
+    const handleWakeup = () => {
+      if (document.visibilityState === "visible") {
+        void pollInstallation();
+      }
+    };
+    document.addEventListener("visibilitychange", handleWakeup);
+    window.addEventListener("focus", handleWakeup);
+
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleWakeup);
+      window.removeEventListener("focus", handleWakeup);
     };
   }, [loading, activeInstallationId, baseUrl, clearLiveInstallationState, onError, onExecutionCompleted]);
 

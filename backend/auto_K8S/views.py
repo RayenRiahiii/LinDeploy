@@ -401,12 +401,20 @@ def templates_list(request):
 
 @api_view(["GET"])
 def installations_list(request):
-    limit = min(int(request.query_params.get("limit", 20)), 100)
+    limit_param = request.query_params.get("limit")
     installations = (
         Installation.objects.select_related("template")
         .prefetch_related("targets__host")
-        .order_by("-created_at")[:limit]
+        .order_by("-created_at")
     )
+    if limit_param and limit_param.lower() not in ("all", "none", "0", "-1"):
+        try:
+            limit = int(limit_param)
+            if limit > 0:
+                installations = installations[:limit]
+        except ValueError:
+            pass
+
     serializer = InstallationSerializer(installations, many=True)
     return Response(serializer.data)
 

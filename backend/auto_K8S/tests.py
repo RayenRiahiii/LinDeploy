@@ -30,6 +30,7 @@ from .services import (
     read_live_output_lines,
     read_live_output_chunk,
     reset_live_output,
+    select_installation_template,
 )
 
 
@@ -1250,11 +1251,13 @@ class LaunchInstallationAutoModeTests(TestCase):
         select_template_mock,
         run_task_mock,
     ):
-        k3s_template = InstallationTemplate.objects.create(
-            name="k3s-multi-node-template",
+        k3s_template, _ = InstallationTemplate.objects.get_or_create(
             system_type=InstallationTemplate.SystemType.K3S,
             playbook_path="playbooks/k3s_multi_node.yml",
-            deployment_type=InstallationTemplate.DeploymentType.MULTI_NODE,
+            defaults={
+                "name": "k3s-multi-node-template",
+                "deployment_type": InstallationTemplate.DeploymentType.MULTI_NODE,
+            },
         )
         select_template_mock.return_value = {
             "template": k3s_template,
@@ -1282,6 +1285,17 @@ class LaunchInstallationAutoModeTests(TestCase):
         }
         self.assertEqual(roles_by_host_id[self.host.id], "server")
         self.assertEqual(roles_by_host_id[self.host_two.id], "agent")
+
+    def test_select_installation_template_resolves_k3s_multi_node(self):
+        result = select_installation_template(
+            [self.host, self.host_two],
+            system_type="k3s",
+            topology="multi_node",
+        )
+        self.assertEqual(result["template"].playbook_path, "playbooks/k3s_multi_node.yml")
+        self.assertEqual(result["template"].system_type, "k3s")
+        self.assertEqual(result["template"].deployment_type, "multi_node")
+        self.assertEqual(result["strategy"], "multi_node")
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
@@ -1459,6 +1473,49 @@ class LaunchInstallationAutoModeTests(TestCase):
             "playbooks/test_launch_k3s_cleanup.yml",
         )
         self.assertEqual(installation.targets.count(), 2)
+
+    @patch("auto_K8S.views.run_installation_task")
+    def test_launch_accepts_k3s_multi_node_cleanup(self, run_task_mock):
+        cleanup_template, _ = InstallationTemplate.objects.get_or_create(
+            system_type=InstallationTemplate.SystemType.K3S,
+            playbook_path="playbooks/k3s_multi_node_cleanup.yml",
+            defaults={
+                "name": "k3s-multi-node-cleanup",
+                "deployment_type": InstallationTemplate.DeploymentType.CLEANUP,
+            },
+        )
+        run_task_mock.delay.return_value = Mock(id="celery-task-k3s-multi-cleanup")
+
+        response = self.client.post(
+            "/api/installations/launch/",
+            {
+                "topology": "multi_node",
+                "deployment_mode": "manual",
+                "template_id": cleanup_template.id,
+                "system_type": "k3s",
+                "control_plane_host_ids": [self.host.id],
+                "worker_host_ids": [self.host_two.id],
+                "bootstrap_host_id": self.host.id,
+                "cluster_config": {
+                    "target_modification_approved": True,
+                    "cleanup_confirmation": "CLEAN k3s-cluster-01 ON "
+                    + ",".join(
+                        sorted((str(self.host.stable_id), str(self.host_two.stable_id)))
+                    ),
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202, response.json())
+        installation = Installation.objects.get(pk=response.json()["installation_id"])
+        self.assertEqual(
+            installation.template.playbook_path,
+            "playbooks/k3s_multi_node_cleanup.yml",
+        )
+        self.assertEqual(installation.targets.count(), 2)
+        self.assertEqual(installation.topology, Installation.Topology.MULTI_NODE)
+
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")

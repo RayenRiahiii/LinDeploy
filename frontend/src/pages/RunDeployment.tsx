@@ -780,11 +780,13 @@ type RunDeploymentMode = "full" | "installer" | "execution" | "history";
 type RunDeploymentProps = {
   forcedInstaller?: InstallerId;
   mode?: RunDeploymentMode;
+  targetInstallationId?: number;
 };
 
 export default function RunDeployment({
   forcedInstaller,
   mode = "full",
+  targetInstallationId,
 }: RunDeploymentProps) {
   const navigate = useNavigate();
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -845,7 +847,7 @@ export default function RunDeployment({
   const [wizardStep, setWizardStep] = useState<DeploymentWizardStep>(0);
   const loadingStartedAtRef = useRef<number | null>(null);
   const showDashboardSummary = mode === "full" || mode === "execution";
-  const showResumeAlert = mode !== "history";
+  const showResumeAlert = mode !== "history" && mode !== "execution";
   const showInstallerChooser = mode === "full";
   const showInstallerConfiguration = mode === "full" || mode === "installer";
   const showExecutionMonitoring = mode !== "history";
@@ -1259,7 +1261,7 @@ export default function RunDeployment({
   }
 
   async function fetchInstallations() {
-    const response = await fetch(`${BASE_URL}/api/installations/?limit=50`);
+    const response = await fetch(`${BASE_URL}/api/installations/?limit=all`);
     if (!response.ok) {
       throw new Error("Failed to load installation history.");
     }
@@ -1321,6 +1323,14 @@ export default function RunDeployment({
     }
 
     if (data.status === "pending" || data.status === "running") {
+      setResult(null);
+      setLiveExecutionTitle(
+        getLiveExecutionHeading(
+          data.deployment_type === "cleanup" ? "cleanup" : "install",
+          data.deployment_type,
+          data.template_name
+        )
+      );
       setWizardStep(3);
       setResumeCandidate(null);
       setLoading(true);
@@ -1363,8 +1373,15 @@ export default function RunDeployment({
         refreshOperationalData(),
       ]);
 
+      if (targetInstallationId) {
+        await resumeInstallationMonitoring(targetInstallationId);
+        return;
+      }
+
       const persistedId = window.localStorage.getItem(ACTIVE_INSTALLATION_STORAGE_KEY);
       const dismissedId = window.localStorage.getItem(DISMISSED_INSTALLATION_STORAGE_KEY);
+
+      let candidateToResume: InstallationDetailResponse | null = null;
 
       if (persistedId) {
         const response = await fetch(`${BASE_URL}/api/installations/${persistedId}/`);
@@ -1374,30 +1391,66 @@ export default function RunDeployment({
         } else {
           const installation = await parseJsonResponse<InstallationDetailResponse>(response);
 
-          if (isInstallationActive(installation)) {
-            if (dismissedId !== String(installation.id)) {
-              setResumeCandidate(installation);
-            }
-            return;
+          if (isInstallationActive(installation) || mode === "execution") {
+            candidateToResume = installation;
+          } else {
+            persistActiveInstallationId(null);
           }
-
-          persistActiveInstallationId(null);
         }
       }
 
-      const latestActiveInstallation = operationalData.installationsData.find(
-        (installation) => isInstallationActive(installation)
-      );
+      if (!candidateToResume) {
+        const latestActiveInstallation = operationalData.installationsData.find(
+          (installation) => isInstallationActive(installation)
+        );
 
-      if (latestActiveInstallation && dismissedId !== String(latestActiveInstallation.id)) {
-        setResumeCandidate(latestActiveInstallation);
+        if (latestActiveInstallation) {
+          candidateToResume = latestActiveInstallation;
+        }
+      }
+
+      if (candidateToResume) {
+        if (mode === "execution") {
+          persistDismissedInstallationId(null);
+          await resumeInstallationMonitoring(candidateToResume.id);
+          return;
+        }
+
+        if (dismissedId !== String(candidateToResume.id)) {
+          setResumeCandidate(candidateToResume);
+        }
+      } else if (mode === "execution" && operationalData.installationsData.length > 0) {
+        const latest = operationalData.installationsData[0];
+        setResult(buildResultFromInstallation(latest));
       }
     }
 
     void initializePage().catch((err) =>
       setError(err instanceof Error ? err.message : "Failed to initialize page.")
     );
-  }, []);
+  }, [mode, targetInstallationId]);
+
+  useEffect(() => {
+    if (mode !== "execution" || loading) {
+      return;
+    }
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const { installationsData } = await refreshOperationalData();
+        const active = installationsData.find((installation) => isInstallationActive(installation));
+        if (active && active.id !== activeInstallationId) {
+          await resumeInstallationMonitoring(active.id);
+        }
+      } catch {
+        // ignore background poll errors
+      }
+    }, 2500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [mode, loading, activeInstallationId]);
 
   useEffect(() => {
     if (!forcedInstaller || selectedInstaller === forcedInstaller) {
@@ -4220,6 +4273,7 @@ export default function RunDeployment({
               <Textarea
                 label="Red Hat pull secret"
                 description="Paste the complete pull-secret JSON. It is encrypted and consumed once."
+                placeholder='{"auths":{"cloud.openshift.com":{"auth":"..."}}}'
                 required
                 minRows={5}
                 autosize
@@ -4229,6 +4283,7 @@ export default function RunDeployment({
               <Textarea
                 label="SSH public key"
                 description="Enter only a public key, never a private key."
+                placeholder="ssh-ed25519 AAAAC3... operator@workstation"
                 required
                 minRows={2}
                 autosize
@@ -4238,6 +4293,7 @@ export default function RunDeployment({
               <Textarea
                 label="Additional trust bundle"
                 description="Optional. Re-enter it only when the original connected installation required a custom CA."
+                placeholder="-----BEGIN CERTIFICATE-----"
                 minRows={3}
                 autosize
                 value={openShiftRetryTrustBundle}
