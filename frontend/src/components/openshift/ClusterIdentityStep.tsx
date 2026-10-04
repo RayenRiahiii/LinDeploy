@@ -1,5 +1,5 @@
-import { Alert, Badge, Grid, Select, Stack, Switch, Textarea, TextInput } from "@mantine/core";
-import { IconFingerprint, IconShieldCheck } from "@tabler/icons-react";
+import { Alert, Badge, Grid, Select, Stack, TextInput } from "@mantine/core";
+import { IconFingerprint } from "@tabler/icons-react";
 import OpenShiftFormSection from "./OpenShiftFormSection";
 import type { OpenShiftFieldErrors, OpenShiftSNOFormValues } from "./types";
 
@@ -36,11 +36,6 @@ export default function ClusterIdentityStep({ values, errors, update }: Props) {
             <Select label="CPU architecture" description="The current LinDeploy libvirt adapter supports x86_64 only." required data={[{ value: "amd64", label: "x86_64 / amd64" }]} value={values.architecture} onChange={(value) => update("architecture", (value || "amd64") as OpenShiftSNOFormValues["architecture"])} />
           </Grid.Col>
         </Grid>
-      </OpenShiftFormSection>
-
-      <OpenShiftFormSection icon={IconShieldCheck} title="Installation policy" description="The Agent-based Assisted Installer creates and monitors the discovery ISO and final SNO installation.">
-        <Switch label="Enable FIPS mode" description="Leave disabled unless your organization requires FIPS and all planned Operators and workloads support it." checked={values.fips} onChange={(event) => update("fips", event.currentTarget.checked)} />
-        <Textarea label="Description" description="Optional note saved with this installation request." placeholder="SNO cluster for the platform workshop" minRows={3} value={values.description} onChange={(event) => update("description", event.currentTarget.value)} />
       </OpenShiftFormSection>
     </Stack>
   );
