@@ -4,7 +4,6 @@ import {
   Card,
   Center,
   Group,
-  Paper,
   Radio,
   SegmentedControl,
   Stack,
@@ -16,14 +15,11 @@ import {
 import {
   IconArrowLeft,
   IconArrowRight,
-  IconBolt,
-  IconCheck,
   IconCircleMinus,
   IconCrown,
   IconHammer,
   IconPlugConnected,
   IconServer,
-  IconServer2,
 } from "@tabler/icons-react";
 import { type DeploymentTopology } from "../../installers/DeploymentTopologySelector";
 import { type InstallerId } from "../../../features/installers/catalog";
@@ -48,19 +44,26 @@ interface TargetHostsStepProps {
   showGuidedInstaller: boolean;
   topologyReady: boolean;
   onToggleHost: (hostId: number, isSelected: boolean) => void;
-  onSetClusterConfigName: (name: string) => void;
-  onUpdateHostIdentity: (hostId: number, field: "node_name" | "cluster_name", value: string) => void;
-  onSetMultiNodeHostRole: (hostId: number, role: "unassigned" | "control_plane" | "worker") => void;
+  onSetMultiNodeHostRole: (
+    hostId: number,
+    role: "unassigned" | "control_plane" | "worker"
+  ) => void;
   onSetBootstrapHostId: (hostId: number) => void;
-  onBack?: () => void;
-  onNext?: () => void;
+  onUpdateHostIdentity: (
+    hostId: number,
+    field: "cluster_name" | "node_name",
+    value: string
+  ) => void;
+  onClusterConfigChange: (updater: (prev: ClusterConfig) => ClusterConfig) => void;
+  onBackToTopology?: () => void;
+  onContinueToInstallation?: () => void;
 }
 
 export default function TargetHostsStep({
   hosts,
   selectedHostIds,
   controlPlaneHostIds,
-  workerHostIds,
+  workerHostIds: _workerHostIds,
   bootstrapHostId,
   hostOverrides,
   topology,
@@ -70,12 +73,12 @@ export default function TargetHostsStep({
   showGuidedInstaller,
   topologyReady,
   onToggleHost,
-  onSetClusterConfigName,
-  onUpdateHostIdentity,
   onSetMultiNodeHostRole,
   onSetBootstrapHostId,
-  onBack,
-  onNext,
+  onUpdateHostIdentity,
+  onClusterConfigChange,
+  onBackToTopology,
+  onContinueToInstallation,
 }: TargetHostsStepProps) {
   const enabledHosts = hosts.filter((host) => host.enabled);
 
@@ -89,17 +92,17 @@ export default function TargetHostsStep({
             </ThemeIcon>
             <div>
               <Title order={3}>
-                {topology === "multi_node" ? "Assign Master & Worker Roles" : "Select Hosts"}
+                {topology === "multi_node" ? "Assign Host Roles" : "Select Hosts"}
               </Title>
               <Text size="sm" c="dimmed" mt={4}>
                 {topology === "multi_node"
-                  ? "Assign each machine as Master (Control Plane) or Worker, then choose the bootstrap host that initializes the cluster."
-                  : "Choose one or more enabled targets from the inventory. Each host runs both master and worker roles independently."}
+                  ? "Assign each machine to the Master or Worker role, then select the initialization host."
+                  : "Choose one or more enabled targets from the inventory. SSH user and port are taken directly from the host record."}
               </Text>
             </div>
           </Group>
-          <Badge color={topology === "multi_node" ? "teal" : "gray"} variant="light">
-            {topology === "multi_node" ? "master & worker assignment" : "hosts inventory"}
+          <Badge color="gray" variant="light">
+            {topology === "multi_node" ? "role assignment" : "hosts inventory"}
           </Badge>
         </Group>
 
@@ -109,69 +112,15 @@ export default function TargetHostsStep({
             description="Optional shared name. Changing it on an existing cluster requires Reset Cluster first."
             placeholder={`${selectedInstaller}-production`}
             value={clusterConfig.cluster_name}
-            onChange={(event) => onSetClusterConfigName(event.currentTarget.value)}
+            onChange={(event) => {
+              const clusterName = event.currentTarget.value;
+              onClusterConfigChange((current) => ({
+                ...current,
+                cluster_name: clusterName,
+              }));
+            }}
             disabled={loading}
           />
-        )}
-
-        {topology === "multi_node" && (
-          <Paper
-            p="sm"
-            radius="md"
-            withBorder
-            style={{
-              backgroundColor: "rgba(255, 255, 255, 0.02)",
-            }}
-          >
-            <Group justify="space-between" align="center" wrap="wrap" gap="md">
-              <Group gap="lg">
-                <Group gap={6}>
-                  <ThemeIcon size={22} radius="xl" color="blue" variant="filled">
-                    <IconCrown size={13} />
-                  </ThemeIcon>
-                  <div>
-                    <Text size="xs" fw={700}>
-                      Master (Control Plane)
-                    </Text>
-                    <Text size="10px" c="dimmed">
-                      API server, etcd, scheduler
-                    </Text>
-                  </div>
-                  <Badge size="xs" color="blue" variant="light" ml={4}>
-                    {controlPlaneHostIds.length} assigned
-                  </Badge>
-                </Group>
-
-                <Group gap={6}>
-                  <ThemeIcon size={22} radius="xl" color="teal" variant="filled">
-                    <IconHammer size={13} />
-                  </ThemeIcon>
-                  <div>
-                    <Text size="xs" fw={700}>
-                      Worker Nodes
-                    </Text>
-                    <Text size="10px" c="dimmed">
-                      Runs container pods
-                    </Text>
-                  </div>
-                  <Badge size="xs" color="teal" variant="light" ml={4}>
-                    {workerHostIds.length} assigned
-                  </Badge>
-                </Group>
-              </Group>
-
-              <Badge
-                color={controlPlaneHostIds.length >= 1 ? "teal" : "red"}
-                variant="light"
-                size="sm"
-                leftSection={controlPlaneHostIds.length >= 1 ? <IconCheck size={12} /> : undefined}
-              >
-                {controlPlaneHostIds.length >= 1
-                  ? "At least 1 Master configured"
-                  : "Requires at least 1 Master"}
-              </Badge>
-            </Group>
-          </Paper>
         )}
 
         {enabledHosts.length === 0 ? (
@@ -183,7 +132,7 @@ export default function TargetHostsStep({
             {enabledHosts.map((host) => {
               const isSelected = selectedHostIds.includes(host.id);
               const isControlPlane = controlPlaneHostIds.includes(host.id);
-              const isWorker = workerHostIds.includes(host.id);
+              const isWorker = _workerHostIds.includes(host.id);
               const assignedRole = isControlPlane
                 ? "control_plane"
                 : isWorker
@@ -227,16 +176,14 @@ export default function TargetHostsStep({
                                 ? "red"
                                 : "gray"
                         }
-                        variant={isSelected ? "light" : "subtle"}
+                        variant="light"
                       >
                         {isControlPlane ? (
-                          <IconCrown size={18} />
+                          <IconCrown size={16} />
                         ) : isWorker ? (
-                          <IconHammer size={18} />
-                        ) : topology === "single_node" && isSelected ? (
-                          <IconServer size={18} />
+                          <IconHammer size={16} />
                         ) : (
-                          <IconServer2 size={18} />
+                          <IconServer size={16} />
                         )}
                       </ThemeIcon>
                       <div>
@@ -249,43 +196,27 @@ export default function TargetHostsStep({
                     <Badge
                       color={
                         isControlPlane
-                          ? bootstrapHostId === host.id
-                            ? "indigo"
-                            : "blue"
+                          ? "blue"
                           : isWorker
                             ? "teal"
                             : isSelected
                               ? "red"
                               : "gray"
                       }
-                      variant={isSelected ? "filled" : "light"}
-                      leftSection={
-                        topology === "multi_node" ? (
-                          isControlPlane ? (
-                            bootstrapHostId === host.id ? <IconBolt size={12} /> : <IconCrown size={12} />
-                          ) : isWorker ? (
-                            <IconHammer size={12} />
-                          ) : (
-                            <IconCircleMinus size={12} />
-                          )
-                        ) : isSelected ? (
-                          <IconServer size={12} />
-                        ) : (
-                          <IconPlugConnected size={12} />
-                        )
-                      }
+                      variant="light"
+                      size="sm"
                     >
                       {topology === "multi_node"
                         ? isControlPlane
                           ? bootstrapHostId === host.id
-                            ? "bootstrap master"
-                            : "master"
+                            ? "Bootstrap Master"
+                            : "Master"
                           : isWorker
-                            ? "worker"
-                            : "available"
+                            ? "Worker"
+                            : "Available"
                         : isSelected
-                          ? "all-in-one"
-                          : "available"}
+                          ? "Selected"
+                          : "Available"}
                     </Badge>
                   </Group>
 
@@ -299,32 +230,6 @@ export default function TargetHostsStep({
                       <Text fw={700}>{host.ssh_port}</Text>
                     </div>
                   </div>
-
-                  {topology === "single_node" && isSelected && (
-                    <Paper
-                      p="xs"
-                      radius="sm"
-                      mt="xs"
-                      style={{
-                        backgroundColor: "rgba(238, 0, 0, 0.06)",
-                        border: "1px solid rgba(238, 0, 0, 0.18)",
-                      }}
-                    >
-                      <Group gap="xs" align="flex-start" wrap="nowrap">
-                        <ThemeIcon color="red" variant="light" size="sm" radius="sm">
-                          <IconServer size={13} />
-                        </ThemeIcon>
-                        <div style={{ flex: 1 }}>
-                          <Text size="xs" fw={700} c="red.4">
-                            All-in-One Target (Master + Worker)
-                          </Text>
-                          <Text size="11px" c="dimmed" mt={2} style={{ lineHeight: 1.3 }}>
-                            Runs both the control-plane and container workloads as an independent cluster on this machine.
-                          </Text>
-                        </div>
-                      </Group>
-                    </Paper>
-                  )}
 
                   {isSelected && (
                     <Stack
@@ -387,7 +292,7 @@ export default function TargetHostsStep({
                           {
                             label: (
                               <Center style={{ gap: 6 }}>
-                                <IconCrown size={13} color="#339af0" />
+                                <IconCrown size={13} />
                                 <span>Master</span>
                               </Center>
                             ),
@@ -396,7 +301,7 @@ export default function TargetHostsStep({
                           {
                             label: (
                               <Center style={{ gap: 6 }}>
-                                <IconHammer size={13} color="#20c997" />
+                                <IconHammer size={13} />
                                 <span>Worker</span>
                               </Center>
                             ),
@@ -407,69 +312,14 @@ export default function TargetHostsStep({
                       />
 
                       {isControlPlane && (
-                        <Paper
-                          p="xs"
-                          radius="sm"
+                        <Radio
                           mt="xs"
-                          style={{
-                            backgroundColor: "rgba(51, 154, 240, 0.08)",
-                            border: "1px solid rgba(51, 154, 240, 0.22)",
-                          }}
-                        >
-                          <Group gap="xs" align="flex-start" wrap="nowrap">
-                            <ThemeIcon color="blue" variant="light" size="sm" radius="sm">
-                              <IconCrown size={13} />
-                            </ThemeIcon>
-                            <div style={{ flex: 1 }}>
-                              <Text size="xs" fw={700} c="blue.4">
-                                Master / Control Plane Node
-                              </Text>
-                              <Text size="11px" c="dimmed" mt={2} style={{ lineHeight: 1.3 }}>
-                                Manages the cluster: runs API server, controller manager, scheduler, and etcd.
-                              </Text>
-                            </div>
-                          </Group>
-
-                          <Radio
-                            mt="xs"
-                            checked={bootstrapHostId === host.id}
-                            onChange={() => onSetBootstrapHostId(host.id)}
-                            disabled={loading}
-                            label={
-                              <Group gap={6} align="center">
-                                <IconBolt size={13} color="#fab005" />
-                                <Text size="xs" fw={700}>Bootstrap Master</Text>
-                              </Group>
-                            }
-                            description="Initializes etcd and generates the join token for all subsequent nodes."
-                          />
-                        </Paper>
-                      )}
-
-                      {isWorker && (
-                        <Paper
-                          p="xs"
-                          radius="sm"
-                          mt="xs"
-                          style={{
-                            backgroundColor: "rgba(32, 201, 151, 0.08)",
-                            border: "1px solid rgba(32, 201, 151, 0.22)",
-                          }}
-                        >
-                          <Group gap="xs" align="flex-start" wrap="nowrap">
-                            <ThemeIcon color="teal" variant="light" size="sm" radius="sm">
-                              <IconHammer size={13} />
-                            </ThemeIcon>
-                            <div style={{ flex: 1 }}>
-                              <Text size="xs" fw={700} c="teal.4">
-                                Worker Node
-                              </Text>
-                              <Text size="11px" c="dimmed" mt={2} style={{ lineHeight: 1.3 }}>
-                                Executes application workloads: joins the master and runs pods, services & containers.
-                              </Text>
-                            </div>
-                          </Group>
-                        </Paper>
+                          checked={bootstrapHostId === host.id}
+                          onChange={() => onSetBootstrapHostId(host.id)}
+                          disabled={loading}
+                          label="Bootstrap Master (initializes cluster)"
+                          size="xs"
+                        />
                       )}
                     </div>
                   )}
@@ -483,13 +333,13 @@ export default function TargetHostsStep({
           <Group className="wizard-stage-actions" justify="space-between">
             <Button
               variant="default"
-              onClick={onBack}
+              onClick={onBackToTopology}
               leftSection={<IconArrowLeft size={16} />}
             >
               Back to topology
             </Button>
             <Button
-              onClick={onNext}
+              onClick={onContinueToInstallation}
               disabled={!topologyReady}
               rightSection={<IconArrowRight size={16} />}
             >

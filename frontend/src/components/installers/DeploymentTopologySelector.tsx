@@ -1,13 +1,10 @@
 import { Badge, Card, Center, Group, SegmentedControl, Stack, Text, ThemeIcon, Title } from "@mantine/core";
 import {
-  IconBolt,
   IconCheck,
   IconCrown,
   IconHammer,
-  IconLayersLinked,
   IconNetwork,
   IconServer,
-  IconShieldCheck,
   IconTopologyFull,
 } from "@tabler/icons-react";
 
@@ -38,36 +35,9 @@ export default function DeploymentTopologySelector({
       badge: "Independent clusters",
       summary: `Every selected host becomes a complete, independent ${installerLabel} cluster.`,
       bestFor: "Labs, isolated workloads, edge sites, and independent test environments.",
-      rolePills: (
-        <Group gap={6} mt={6} wrap="wrap">
-          <Badge leftSection={<IconCrown size={11} />} color="blue" variant="light" size="xs">
-            Master (Control Plane)
-          </Badge>
-          <Text size="xs" c="dimmed" fw={700}>+</Text>
-          <Badge leftSection={<IconHammer size={11} />} color="teal" variant="light" size="xs">
-            Worker
-          </Badge>
-          <Badge color="gray" variant="outline" size="xs">
-            Co-located on single host
-          </Badge>
-        </Group>
-      ),
-      featurePoints: [
-        {
-          icon: IconServer,
-          color: "#339af0",
-          text: "Master & Worker combined: runs control plane and user workloads together on each machine",
-        },
-        {
-          icon: IconShieldCheck,
-          color: "#20c997",
-          text: "Isolated failure domains: host failure only impacts that specific machine's cluster",
-        },
-        {
-          icon: IconCheck,
-          color: "#fa5252",
-          text: "Zero cross-node networking: fastest deployment for standalone edge & test nodes",
-        },
+      points: [
+        { icon: IconServer, text: "Control plane and workloads share one host" },
+        { icon: IconCheck, text: "Failure is isolated to that host's cluster" },
       ],
       isOptionDisabled: false,
     },
@@ -77,53 +47,18 @@ export default function DeploymentTopologySelector({
       badge: multiNodeDisabled ? "In Development" : "Shared cluster",
       summary: multiNodeDisabled
         ? `Multi-node clustering for ${installerLabel} is currently in development. Single-node mode is fully supported.`
-        : `Selected hosts work together as one shared ${installerLabel} cluster with assigned Master and Worker roles.`,
+        : `Selected hosts work together as one shared ${installerLabel} cluster with assigned roles.`,
       bestFor: multiNodeDisabled
         ? "Worker/agent join automation for OpenShift SNO is scheduled for an upcoming release."
         : "Shared services, production clusters, high availability, and scalable container workloads.",
-      rolePills: (
-        <Group gap={6} mt={6} wrap="wrap">
-          <Badge leftSection={<IconCrown size={11} />} color="blue" variant="filled" size="xs">
-            Master (Control Plane)
-          </Badge>
-          <Text size="xs" c="dimmed" fw={700}>&rarr;</Text>
-          <Badge leftSection={<IconHammer size={11} />} color="teal" variant="filled" size="xs">
-            Worker Nodes
-          </Badge>
-          <Badge color="teal" variant="light" size="xs">
-            Distributed cluster
-          </Badge>
-        </Group>
-      ),
-      featurePoints: multiNodeDisabled
+      points: multiNodeDisabled
         ? [
-            {
-              icon: IconCheck,
-              color: "#20c997",
-              text: "Single-node mode is fully ready for production use",
-            },
-            {
-              icon: IconLayersLinked,
-              color: "#339af0",
-              text: "Multi-node join playbook coming in an upcoming release",
-            },
+            { icon: IconCheck, text: "Single-node mode is fully supported" },
+            { icon: IconCheck, text: "Multi-node join playbook coming soon" },
           ]
         : [
-            {
-              icon: IconCrown,
-              color: "#339af0",
-              text: "Master (Control Plane): coordinates kube-apiserver, scheduler, controllers, and etcd database",
-            },
-            {
-              icon: IconBolt,
-              color: "#fab005",
-              text: "Bootstrap Master: initializes the cluster token and first control-plane node",
-            },
-            {
-              icon: IconHammer,
-              color: "#20c997",
-              text: "Worker Nodes: join the master via secure token to run containerized pods and services",
-            },
+            { icon: IconCrown, text: "Master host initializes and coordinates the cluster" },
+            { icon: IconHammer, text: "Worker nodes join to execute container workloads" },
           ],
       isOptionDisabled: multiNodeDisabled,
     },
@@ -144,8 +79,8 @@ export default function DeploymentTopologySelector({
               </Text>
             </div>
           </Group>
-          <Badge color={isMultiNode ? "teal" : "red"} variant="light">
-            {isMultiNode ? "shared cluster (master + workers)" : "independent clusters (all-in-one)"}
+          <Badge color={isMultiNode ? "teal" : "gray"} variant="light">
+            {isMultiNode ? "shared cluster" : "independent clusters"}
           </Badge>
         </Group>
 
@@ -159,7 +94,7 @@ export default function DeploymentTopologySelector({
               label: (
                 <Center style={{ gap: 8 }}>
                   <IconServer size={15} />
-                  <span>Single-node (All-in-One)</span>
+                  <span>Single-node per target</span>
                 </Center>
               ),
               value: "single_node",
@@ -167,8 +102,8 @@ export default function DeploymentTopologySelector({
             {
               label: (
                 <Center style={{ gap: 8 }}>
-                  <IconLayersLinked size={15} />
-                  <span>{multiNodeDisabled ? "Multi-node (Coming Soon)" : "Multi-node (Master + Workers)"}</span>
+                  <IconNetwork size={15} />
+                  <span>{multiNodeDisabled ? "Multi-node (Coming Soon)" : "Multi-node cluster"}</span>
                 </Center>
               ),
               value: "multi_node",
@@ -198,8 +133,8 @@ export default function DeploymentTopologySelector({
               >
                 <div className="topology-option-heading">
                   <div>
-                    <Text fw={800}>{option.title}</Text>
-                    <Badge color={option.value === "multi_node" ? "teal" : "blue"} variant="light" mt={6}>
+                    <Text fw={700}>{option.title}</Text>
+                    <Badge color={option.value === "multi_node" ? "teal" : "gray"} variant="light" mt={6} size="xs">
                       {option.badge}
                     </Badge>
                   </div>
@@ -212,18 +147,16 @@ export default function DeploymentTopologySelector({
                   </ThemeIcon>
                 </div>
 
-                {option.rolePills}
+                <Text size="sm" c="dimmed" mt="sm">{option.summary}</Text>
+                <Text size="xs" c="dimmed" mt={4}>{option.bestFor}</Text>
 
-                <Text size="sm" fw={600} mt="md">{option.summary}</Text>
-                <Text size="xs" c="dimmed" mt={5}>{option.bestFor}</Text>
-
-                <div className="topology-feature-list" style={{ marginTop: 12 }}>
-                  {option.featurePoints.map((point) => {
+                <div className="topology-feature-list" style={{ marginTop: 14 }}>
+                  {option.points.map((point) => {
                     const PointIcon = point.icon;
                     return (
-                      <span key={point.text} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: "0.8rem", lineHeight: 1.4 }}>
-                        <PointIcon size={15} style={{ flexShrink: 0, marginTop: 2, color: point.color }} />
-                        <span>{point.text}</span>
+                      <span key={point.text}>
+                        <PointIcon size={14} style={{ opacity: 0.7 }} />
+                        {point.text}
                       </span>
                     );
                   })}
@@ -234,7 +167,7 @@ export default function DeploymentTopologySelector({
         </div>
 
         <Text size="xs" c="dimmed">
-          You can change this choice before execution. LinDeploy will adapt the next step to host selection or Master/Worker role assignment.
+          You can change this choice before execution. LinDeploy will adapt the next step to host selection or role assignment.
         </Text>
       </Stack>
     </Card>
