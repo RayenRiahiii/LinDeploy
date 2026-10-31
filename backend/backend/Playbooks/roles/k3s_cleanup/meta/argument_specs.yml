@@ -1,0 +1,11 @@
+---
+argument_specs:
+  main:
+    short_description: Remove only LinDeploy-owned K3s resources
+    options:
+      k3s_cleanup_remove_remote_user_shell_env:
+        type: bool
+        default: true
+      k3s_cleanup_preserve_selinux_policy:
+        type: bool
+        default: true

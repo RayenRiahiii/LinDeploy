@@ -1,0 +1,31 @@
+---
+k3s_multi_node_name: "{{ lindeploy_node_name | default(ansible_facts['hostname'] | lower) }}"
+k3s_multi_advertise_address: "{{ lindeploy_advertise_address | default(ansible_facts['default_ipv4']['address']) }}"
+k3s_multi_control_plane_endpoint: "{{ control_plane_endpoint | default('') }}"
+k3s_multi_cluster_name: "{{ cluster_name | default('k3s-cluster-01') }}"
+k3s_multi_pod_network_cidr: "{{ pod_cidr | default('10.42.0.0/16') }}"
+k3s_multi_service_cidr: "{{ service_cidr | default('10.43.0.0/16') }}"
+k3s_multi_api_port: 6443
+
+k3s_multi_binary_path: /usr/local/bin/k3s
+k3s_multi_install_script_path: /usr/local/bin/k3s-install.sh
+k3s_multi_service_name: k3s
+k3s_multi_service_unit_path: /etc/systemd/system/k3s.service
+k3s_multi_config_dir: /etc/rancher/k3s
+k3s_multi_config_path: /etc/rancher/k3s/config.yaml
+k3s_multi_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+k3s_multi_node_token_path: /var/lib/rancher/k3s/server/node-token
+
+k3s_multi_root_kubeconfig_dir: /root/.kube
+k3s_multi_root_kubeconfig_path: /root/.kube/config
+k3s_multi_copy_kubeconfig_to_remote_user: true
+k3s_multi_manage_kubectl_wrapper: true
+k3s_multi_kubectl_wrapper_path: /usr/local/bin/kubectl
+k3s_multi_remote_user_shell_rc_path: .bashrc
+
+k3s_multi_startup_retries: 40
+k3s_multi_startup_delay: 3
+k3s_multi_wait_for_kubeconfig_timeout: 120
+k3s_multi_wait_for_apiserver_timeout: 120
+k3s_multi_kubectl_request_timeout: 10s
+k3s_multi_diagnostics_log_path: /tmp/k3s-multi-bootstrap-diagnostics.log

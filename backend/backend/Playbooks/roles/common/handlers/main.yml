@@ -4,5 +4,10 @@
   changed_when: false
 
 - name: Reload firewalld
-  command: firewall-cmd --reload
+  command:
+    argv:
+      - timeout
+      - "{{ common_firewalld_command_timeout | string }}"
+      - firewall-cmd
+      - --reload
   changed_when: false

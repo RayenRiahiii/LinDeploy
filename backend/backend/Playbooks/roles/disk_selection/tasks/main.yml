@@ -1,0 +1,32 @@
+---
+- name: Initialize disk-selection state
+  ansible.builtin.set_fact:
+    sno_installation_disk_valid: false
+    sno_installation_disk_configured: false
+
+- name: Report disk selection pending because no host exists
+  ansible.builtin.debug:
+    msg:
+      - No discovered host is available for disk inspection.
+      - "Requested disk: {{ installation_disk_path }}"
+      - Disk selection is pending.
+      - No disk was selected or erased.
+  when: not (sno_host_discovered | default(false) | bool)
+
+- name: Report disk selection blocked by validations
+  ansible.builtin.debug:
+    msg:
+      - The discovered host is not ready for installation.
+      - Resolve the reported Assisted Installer validations first.
+      - "Requested disk: {{ installation_disk_path }}"
+      - No disk was selected or erased.
+  when:
+    - sno_host_discovered | default(false) | bool
+    - not (sno_installation_ready | default(false) | bool)
+
+- name: Inspect the requested installation disk
+  ansible.builtin.include_tasks:
+    file: select.yml
+  when:
+    - sno_host_discovered | default(false) | bool
+    - sno_installation_ready | default(false) | bool

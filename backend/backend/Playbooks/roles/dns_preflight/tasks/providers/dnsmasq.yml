@@ -1,0 +1,16 @@
+---
+- name: Report the dnsmasq provider plan
+  ansible.builtin.debug:
+    msg:
+      - "DNS management host: {{ dnsmasq_inventory_host }}"
+      - "Remote configuration: {{ dnsmasq_config_path }}"
+      - "Automation mode: {{ automation_mode }}"
+
+- name: Configure dnsmasq in apply mode
+  ansible.builtin.include_tasks:
+    file: providers/dnsmasq_apply.yml
+  when: automation_mode == 'apply'
+
+- name: Validate the resulting DNS records
+  ansible.builtin.include_tasks:
+    file: providers/existing.yml

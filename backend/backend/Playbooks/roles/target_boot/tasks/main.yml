@@ -1,0 +1,27 @@
+---
+- name: Require supported target boot provider
+  ansible.builtin.assert:
+    that:
+      - target_provider in ['virtualbox', 'libvirt', 'manual_iso', 'redfish']
+    fail_msg: "Unsupported target provider: {{ target_provider }}"
+    quiet: true
+
+- name: Check the discovery ISO
+  ansible.builtin.stat:
+    path: "{{ discovery_iso_path }}"
+  register: target_discovery_iso
+
+- name: Require a valid discovery ISO
+  ansible.builtin.assert:
+    that:
+      - target_discovery_iso.stat.exists
+      - target_discovery_iso.stat.isreg
+      - target_discovery_iso.stat.size > 100000000
+    fail_msg: >-
+      The discovery ISO is missing or unexpectedly small:
+      {{ discovery_iso_path }}
+    quiet: true
+
+- name: Load the selected boot provider
+  ansible.builtin.include_tasks:
+    file: "providers/{{ target_provider }}.yml"

@@ -1,0 +1,17 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure the containerd CRI runtime
+    options:
+      containerd_service_name:
+        type: str
+        default: containerd
+      containerd_config_path:
+        type: path
+        default: /etc/containerd/config.toml
+      lindeploy_mirror_enabled:
+        type: bool
+        default: false
+      lindeploy_registry_mirrors:
+        type: dict
+        default: {}

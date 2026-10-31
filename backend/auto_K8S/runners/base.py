@@ -10,6 +10,15 @@ class BaseRunner:
     def run_playbook(self, repo_root, playbook_relative_path, inventory_path, extra_vars_path=None):
         raise NotImplementedError
 
+    def list_playbook_tasks(
+        self,
+        repo_root,
+        playbook_relative_path,
+        inventory_path,
+        extra_vars_path=None,
+    ):
+        raise NotImplementedError
+
     def run_connectivity_check(self, repo_root, inventory_path):
         raise NotImplementedError
 

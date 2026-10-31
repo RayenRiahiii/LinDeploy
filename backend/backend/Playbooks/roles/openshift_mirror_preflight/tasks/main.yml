@@ -1,0 +1,98 @@
+---
+- name: Validate disconnected mirror request
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.os_family == 'RedHat'
+      - ansible_facts.distribution_major_version | int in [8, 9]
+      - openshift_version is match('^4\.[0-9]+\.[0-9]+$')
+      - cpu_architecture == 'x86_64'
+      - ansible_facts.architecture == 'x86_64'
+      - openshift_mirror_registry is match('^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
+      - mirror_username | default('') | length > 0
+      - mirror_password | default('') | length >= 8
+      - pull_secret | default('') | length > 0
+    fail_msg: >-
+      Mirror preparation currently requires an x86_64 RHEL 8/9 host, an exact
+      OpenShift release, a DNS registry name, registry credentials, and a Red
+      Hat pull secret.
+    quiet: true
+
+- name: Install mirror host prerequisites
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - openssl
+      - tar
+      - gzip
+      - jq
+      - firewalld
+      - python3
+    state: present
+    update_cache: false
+
+- name: Enable firewalld for the mirror service
+  ansible.builtin.systemd_service:
+    name: firewalld
+    enabled: true
+    state: started
+
+- name: Check the permanent OpenShift mirror firewall port
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - "--query-port={{ (openshift_mirror_registry.split(':') | last) if ':' in openshift_mirror_registry else openshift_mirror_registry_port }}/tcp"
+  register: openshift_mirror_firewall_port
+  changed_when: false
+  failed_when: openshift_mirror_firewall_port.rc not in [0, 1]
+
+- name: Open the permanent OpenShift mirror firewall port
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - "--add-port={{ (openshift_mirror_registry.split(':') | last) if ':' in openshift_mirror_registry else openshift_mirror_registry_port }}/tcp"
+  when: openshift_mirror_firewall_port.rc == 1
+
+- name: Reload firewalld after mirror policy change
+  ansible.builtin.command:
+    argv: [firewall-cmd, --reload]
+  when: openshift_mirror_firewall_port.rc == 1
+
+- name: Create protected mirror directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ openshift_mirror_tools_directory }}", mode: "0755" }
+    - { path: "{{ openshift_mirror_workspace }}", mode: "0700" }
+    - { path: "{{ openshift_mirror_state_directory }}", mode: "0700" }
+    - { path: "{{ openshift_mirror_storage_path }}", mode: "0700" }
+
+- name: Read mirror storage capacity
+  ansible.builtin.command:
+    argv: [df, --output=avail, -BG, "{{ openshift_mirror_storage_path }}"]
+  register: openshift_mirror_df
+  changed_when: false
+
+- name: Require enough free mirror storage
+  ansible.builtin.assert:
+    that:
+      - (openshift_mirror_df.stdout_lines | last | regex_replace('[^0-9]', '') | int) >= openshift_mirror_minimum_free_gib
+    fail_msg: >-
+      The mirror filesystem needs at least {{ openshift_mirror_minimum_free_gib }}
+      GiB free before synchronization. Operator catalogs can require more.
+    quiet: true
+
+- name: Resolve the mirror registry DNS name
+  ansible.builtin.command:
+    argv:
+      - getent
+      - ahostsv4
+      - "{{ openshift_mirror_registry.split(':') | first }}"
+  register: openshift_mirror_dns
+  changed_when: false
+  failed_when: openshift_mirror_dns.rc != 0

@@ -1,0 +1,14 @@
+---
+kubeadm_multi_join_role: worker
+kubeadm_multi_join_node_name: "{{ lindeploy_node_name | default(ansible_facts['hostname'] | lower) }}"
+kubeadm_multi_join_advertise_address: "{{ lindeploy_advertise_address | default(ansible_facts['default_ipv4']['address']) }}"
+kubeadm_multi_join_cri_socket: unix:///run/containerd/containerd.sock
+kubeadm_multi_join_kubelet_conf_path: /etc/kubernetes/kubelet.conf
+kubeadm_multi_join_admin_conf_path: /etc/kubernetes/admin.conf
+kubeadm_multi_join_timeout: 420
+kubeadm_multi_join_poll_interval: 5
+kubeadm_multi_join_api_timeout: 180
+kubeadm_multi_join_resolver_candidates:
+  - /run/systemd/resolve/resolv.conf
+  - /etc/resolv.conf
+kubeadm_multi_join_kubelet_config_path: /var/lib/kubelet/config.yaml

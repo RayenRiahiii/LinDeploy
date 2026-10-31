@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Card,
-  Container,
   Divider,
   Group,
   Modal,
@@ -17,7 +16,6 @@ import {
   Text,
   TextInput,
   Textarea,
-  ThemeIcon,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -28,11 +26,13 @@ import {
   IconLockPassword,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconTrash,
-  IconUserShield,
 } from "@tabler/icons-react";
+import PageHeader from "../common/PageHeader";
 import ConfirmDeleteModal from "../crud/ConfirmDeleteModal";
 import { formatApiError, parseApiPayload } from "../../lib/api";
+import { useTranslation } from "react-i18next";
 
 type Credential = {
   id: number;
@@ -55,7 +55,7 @@ type CredentialFormData = {
   become_password: string;
 };
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 
 const emptyForm: CredentialFormData = {
   name: "",
@@ -71,7 +71,7 @@ const credentialApiErrorOptions = {
     name: "Credential name",
     auth_type: "Authentication type",
     username: "Username",
-    private_key: "Private key",
+    private_key: "SSH public key",
     password: "SSH password",
     become_password: "Become password",
   },
@@ -89,6 +89,7 @@ function maskSecret(value: string) {
 }
 
 export default function CredentialsList() {
+  const { t } = useTranslation();
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [formData, setFormData] = useState<CredentialFormData>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -226,11 +227,11 @@ export default function CredentialsList() {
       }
 
       notifications.show({
-        title: editingId === null ? "Credential created" : "Credential updated",
+        title: editingId === null ? t("credentials.createSuccessTitle", "Credential created") : t("credentials.updateSuccessTitle", "Credential updated"),
         message:
           editingId === null
-            ? "The credential was added successfully."
-            : "The credential was updated successfully.",
+            ? t("credentials.createSuccess", "The credential was added successfully.")
+            : t("credentials.updateSuccess", "The credential was updated successfully."),
         color: "teal",
       });
 
@@ -279,8 +280,8 @@ export default function CredentialsList() {
       }
 
       notifications.show({
-        title: "Credential deleted",
-        message: "The credential was removed successfully.",
+        title: t("credentials.deleteSuccess", "Credential deleted"),
+        message: t("credentials.deleteSuccess", "The credential was removed successfully."),
         color: "red",
       });
 
@@ -303,54 +304,46 @@ export default function CredentialsList() {
   }
 
   return (
-    <Container size="xl" py="xl">
+    <>
       <Stack gap="lg">
-        <Card className="console-panel" padding="xl">
-          <Group justify="space-between" align="flex-start" gap="lg">
-            <Stack gap={6}>
-              <Group gap="sm">
-                <ThemeIcon color="red" variant="light" size="lg" radius="md">
-                  <IconUserShield size={18} />
-                </ThemeIcon>
-                <div>
-                  <Title order={2}>Credentials Vault</Title>
-                  <Text c="dimmed" size="sm">
-                    Manage SSH usernames, password-based access, and key-based credentials used by your targets.
-                  </Text>
-                </div>
-              </Group>
-
-              <Group gap="sm">
-                <Badge color="red" variant="light">
-                  Total: {credentials.length}
-                </Badge>
-                <Badge color="teal" variant="light">
-                  Password: {passwordAuthCount}
-                </Badge>
-                <Badge color="gray" variant="outline">
-                  SSH Key: {sshKeyAuthCount}
-                </Badge>
-              </Group>
-            </Stack>
-
-            <Group>
+        <PageHeader
+          icon={<IconKey size={22} />}
+          badge={t("sections.credentials.badge", "Access Management")}
+          badgeColor="red"
+          title={t("credentials.title", "Credentials Vault")}
+          description={t("credentials.description", "Manage SSH usernames, password-based access, and key-based credentials used by your targets.")}
+          badges={
+            <>
+              <Badge color="red" variant="light" size="sm">
+                {t("common.total", "Total")}: {credentials.length}
+              </Badge>
+              <Badge color="teal" variant="light" size="sm">
+                {t("credentials.passwordAuth", "Password")}: {passwordAuthCount}
+              </Badge>
+              <Badge color="gray" variant="outline" size="sm">
+                {t("credentials.sshKeyAuth", "SSH Key")}: {sshKeyAuthCount}
+              </Badge>
+            </>
+          }
+          actions={
+            <>
               <Button
                 variant="default"
                 leftSection={<IconRefresh size={16} />}
                 onClick={fetchCredentials}
                 loading={loadingCredentials}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button leftSection={<IconPlus size={16} />} onClick={openCreateModal}>
-                Add Credential
+                {t("credentials.addCredential", "Add Credential")}
               </Button>
-            </Group>
-          </Group>
-        </Card>
+            </>
+          }
+        />
 
         {error && (
-          <Alert color="red" title="Request failed" variant="light">
+          <Alert color="red" title={t("common.error", "Request failed")} variant="light">
             {error}
           </Alert>
         )}
@@ -359,9 +352,9 @@ export default function CredentialsList() {
           <Stack gap="md">
             <Group justify="space-between">
               <div>
-                <Title order={3}>Credential Entries</Title>
+                <Title order={3}>{t("credentials.entriesTitle", "Credential Entries")}</Title>
                 <Text c="dimmed" size="sm">
-                  Review the SSH identity used by hosts. Secrets stay masked in the list and are only editable in the modal.
+                  {t("credentials.entriesSubtitle", "Review the SSH identity used by hosts. Secrets stay masked in the list and are only editable in the modal.")}
                 </Text>
               </div>
               <Badge color="red" variant="dot">
@@ -370,20 +363,21 @@ export default function CredentialsList() {
             </Group>
 
             <TextInput
-              placeholder="Search by credential name, username, or auth type"
+              leftSection={<IconSearch size={16} />}
+              placeholder={t("credentials.searchPlaceholder", "Search by credential name, username, or auth type")}
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
             />
 
             {loadingCredentials ? (
-              <Text c="dimmed">Loading credentials...</Text>
+              <Text c="dimmed">{t("credentials.loadingCredentials", "Loading credentials...")}</Text>
             ) : filteredCredentials.length === 0 ? (
-              <Text c="dimmed">No credentials found.</Text>
+              <Text c="dimmed">{t("credentials.noCredentialsFound", "No credentials found.")}</Text>
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 {filteredCredentials.map((credential) => (
-                  <Card key={credential.id} className="host-panel" padding="lg">
-                    <Stack gap="sm">
+                  <Card key={credential.id} className="host-panel card-grid-item" padding="lg">
+                    <Stack gap="sm" style={{ height: "100%" }}>
                       <Group justify="space-between" align="flex-start">
                         <div>
                           <Text fw={700} size="lg">
@@ -412,38 +406,38 @@ export default function CredentialsList() {
                       <Table withColumnBorders={false} horizontalSpacing="sm" verticalSpacing="xs">
                         <Table.Tbody>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Auth Type</Table.Td>
-                            <Table.Td>{credential.auth_type}</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.authType", "Auth Type")}</Table.Td>
+                            <Table.Td>{credential.auth_type === "ssh_key" ? t("credentials.sshKeyAuth", "SSH Key") : t("credentials.passwordAuth", "Password")}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Password</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.password", "Password")}</Table.Td>
                             <Table.Td>{maskSecret(credential.password)}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Private Key</Table.Td>
-                            <Table.Td>{credential.private_key ? "stored" : "-"}</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.sshPublicKey", "SSH Public Key")}</Table.Td>
+                            <Table.Td>{credential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Become Password</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.becomePassword", "Become Password")}</Table.Td>
                             <Table.Td>{maskSecret(credential.become_password)}</Table.Td>
                           </Table.Tr>
                         </Table.Tbody>
                       </Table>
 
-                      <Group grow>
+                      <Group grow mt="auto">
                         <Button
                           variant="default"
                           leftSection={<IconEye size={16} />}
                           onClick={() => openDetailsModal(credential)}
                         >
-                          Info
+                          {t("common.info", "Info")}
                         </Button>
                         <Button
                           variant="light"
                           leftSection={<IconEdit size={16} />}
                           onClick={() => openEditModal(credential)}
                         >
-                          Edit
+                          {t("common.edit", "Edit")}
                         </Button>
                         <Button
                           color="red"
@@ -452,7 +446,7 @@ export default function CredentialsList() {
                           onClick={() => openDeleteModal(credential)}
                           loading={deletingId === credential.id}
                         >
-                          Delete
+                          {t("common.delete", "Delete")}
                         </Button>
                       </Group>
                     </Stack>
@@ -467,7 +461,7 @@ export default function CredentialsList() {
       <Modal
         opened={editorOpened}
         onClose={resetEditor}
-        title={editingId === null ? "Create Credential" : "Edit Credential"}
+        title={editingId === null ? t("credentials.addCredential", "Add Credential") : t("credentials.editCredential", "Edit Credential")}
         centered
         size="lg"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -475,14 +469,14 @@ export default function CredentialsList() {
         <form onSubmit={handleSubmit}>
           <Stack gap="md">
             {editorError && (
-              <Alert color="red" title="Unable to save credential" variant="light">
+              <Alert color="red" title={t("common.error", "Unable to save credential")} variant="light">
                 {editorError}
               </Alert>
             )}
 
             <TextInput
-              label="Credential Name"
-              description="Reusable label for this SSH access profile."
+              label={t("credentials.name", "Credential Name")}
+              description={t("credentials.nameDesc", "Reusable label for this SSH access profile.")}
               placeholder="linux-admin-ssh-key"
               value={formData.name}
               onChange={(event) => handleChange("name", event.currentTarget.value)}
@@ -490,8 +484,8 @@ export default function CredentialsList() {
             />
 
             <TextInput
-              label="Username"
-              description="Remote account used to connect over SSH."
+              label={t("credentials.username", "Username")}
+              description={t("credentials.usernameDesc", "Remote account used to connect over SSH.")}
               placeholder="adminuser"
               value={formData.username}
               onChange={(event) => handleChange("username", event.currentTarget.value)}
@@ -499,7 +493,7 @@ export default function CredentialsList() {
             />
 
             <Radio.Group
-              label="Authentication Type"
+              label={t("credentials.authType", "Authentication Type")}
               value={formData.auth_type}
               onChange={(value) => handleChange("auth_type", value as "ssh_key" | "password")}
             >
@@ -509,7 +503,7 @@ export default function CredentialsList() {
                   label={
                     <Group gap={6}>
                       <IconLockPassword size={16} />
-                      <span>Password</span>
+                      <span>{t("credentials.passwordAuth", "Password")}</span>
                     </Group>
                   }
                 />
@@ -518,7 +512,7 @@ export default function CredentialsList() {
                   label={
                     <Group gap={6}>
                       <IconKey size={16} />
-                      <span>SSH Key</span>
+                      <span>{t("credentials.sshKeyAuth", "SSH Key")}</span>
                     </Group>
                   }
                 />
@@ -527,18 +521,18 @@ export default function CredentialsList() {
 
             {formData.auth_type === "password" ? (
               <PasswordInput
-                label="SSH Password"
-                description="Password used for SSH login on the target host."
-                placeholder="Enter the remote user's SSH password"
+                label={t("credentials.password", "SSH Password")}
+                description={t("credentials.passwordDesc", "Password used for SSH login on the target host.")}
+                placeholder={t("credentials.passwordPlaceholder", "Enter the remote user's SSH password")}
                 value={formData.password}
                 onChange={(event) => handleChange("password", event.currentTarget.value)}
                 required
               />
             ) : (
               <Textarea
-                label="Private Key"
-                description="Paste the private key that matches the public key installed on the host."
-                placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
+                label={t("credentials.sshPublicKey", "SSH Public Key")}
+                description={t("credentials.sshPublicKeyDesc", "Paste the SSH public key installed on the host.")}
+                placeholder={t("credentials.sshPublicKeyPlaceholder", "ssh-ed25519 AAAAC3... or ssh-rsa AAAAB3...")}
                 value={formData.private_key}
                 onChange={(event) => handleChange("private_key", event.currentTarget.value)}
                 minRows={6}
@@ -547,19 +541,19 @@ export default function CredentialsList() {
             )}
 
             <PasswordInput
-              label="Become Password"
-              description="Optional sudo or become password if privilege escalation requires it."
-              placeholder="Leave empty if sudo does not require a password"
+              label={t("credentials.becomePassword", "Become Password")}
+              description={t("credentials.becomePasswordDesc", "Optional sudo or become password if privilege escalation requires it.")}
+              placeholder={t("credentials.becomePasswordPlaceholder", "Leave empty if sudo does not require a password")}
               value={formData.become_password}
               onChange={(event) => handleChange("become_password", event.currentTarget.value)}
             />
 
             <Group justify="flex-end">
               <Button variant="default" onClick={resetEditor}>
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
               <Button type="submit" loading={saving} leftSection={<IconEdit size={16} />}>
-                {editingId === null ? "Create Credential" : "Save Changes"}
+                {editingId === null ? t("credentials.addCredential", "Create Credential") : t("common.save", "Save Changes")}
               </Button>
             </Group>
           </Stack>
@@ -569,7 +563,7 @@ export default function CredentialsList() {
       <Modal
         opened={detailsOpened}
         onClose={() => setDetailsOpened(false)}
-        title={selectedCredential ? `Credential Info: ${selectedCredential.name}` : "Credential Info"}
+        title={selectedCredential ? `${t("credentials.credentialDetails", "Credential Details")}: ${selectedCredential.name}` : t("credentials.credentialDetails", "Credential Details")}
         centered
         size="md"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -588,27 +582,27 @@ export default function CredentialsList() {
             <Table>
               <Table.Tbody>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Name</Table.Td>
+                  <Table.Td c="dimmed">{t("common.name", "Name")}</Table.Td>
                   <Table.Td>{selectedCredential.name}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Username</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.username", "Username")}</Table.Td>
                   <Table.Td>{selectedCredential.username}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Auth Type</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.authType", "Auth Type")}</Table.Td>
                   <Table.Td>{selectedCredential.auth_type}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Private Key</Table.Td>
-                  <Table.Td>{selectedCredential.private_key ? "stored" : "-"}</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.sshPublicKey", "SSH Public Key")}</Table.Td>
+                  <Table.Td>{selectedCredential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Password</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.password", "Password")}</Table.Td>
                   <Table.Td>{maskSecret(selectedCredential.password)}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Become Password</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.becomePassword", "Become Password")}</Table.Td>
                   <Table.Td>{maskSecret(selectedCredential.become_password)}</Table.Td>
                 </Table.Tr>
               </Table.Tbody>
@@ -623,7 +617,7 @@ export default function CredentialsList() {
                   openEditModal(selectedCredential);
                 }}
               >
-                Edit
+                {t("common.edit", "Edit")}
               </Button>
             </Group>
           </Stack>
@@ -632,16 +626,16 @@ export default function CredentialsList() {
 
       <ConfirmDeleteModal
         opened={credentialPendingDelete !== null}
-        title="Delete Credential"
+        title={t("credentials.deleteConfirmTitle", "Delete Credential")}
         itemName={credentialPendingDelete?.name || "this credential"}
-        inventoryLabel="credentials inventory"
-        description="This removes the saved SSH credential from LinDeploy. Hosts linked to it may need another credential before execution."
+        inventoryLabel={t("credentials.entriesTitle", "credentials inventory")}
+        description={t("credentials.deleteConfirmMessage", { name: credentialPendingDelete?.name || "", defaultValue: `Are you sure you want to delete credential '${credentialPendingDelete?.name}'?` })}
         error={deleteError}
-        errorTitle="Unable to delete credential"
+        errorTitle={t("common.error", "Unable to delete credential")}
         loading={deletingId !== null}
         onClose={closeDeleteModal}
         onConfirm={() => void handleDelete()}
       />
-    </Container>
+    </>
   );
 }

@@ -1,0 +1,4 @@
+---
+kubeadm_multi_validate_kubeconfig: /etc/kubernetes/admin.conf
+kubeadm_multi_validate_timeout: 300s
+kubeadm_multi_validate_request_timeout: 30s

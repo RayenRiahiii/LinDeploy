@@ -1,0 +1,11 @@
+---
+- name: Preserve cleaned ownership tombstone
+  ansible.builtin.template:
+    src: manifest.json.j2
+    dest: "{{ lindeploy_ownership_manifest_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    lindeploy_ownership_target_state: cleaned
+  when: lindeploy_cleanup_required | default(false) | bool

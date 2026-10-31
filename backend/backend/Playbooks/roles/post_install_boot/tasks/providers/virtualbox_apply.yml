@@ -1,0 +1,208 @@
+---
+- name: Refuse an unsafe post-install action
+  ansible.builtin.assert:
+    that:
+      - sno_post_install_action | trim not in
+        ['blocked-saved-state', 'inspect-required']
+    fail_msg: >-
+      The post-install state could not be handled safely.
+      VM state={{ sno_post_install_vm_state }},
+      boot source={{ sno_post_install_boot_source | trim }},
+      action={{ sno_post_install_action | trim }}.
+      No VM modification was attempted.
+    quiet: true
+
+- name: Request a clean shutdown of the discovery environment
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - "45"
+      - ssh
+      - -o
+      - BatchMode=yes
+      - -o
+      - ConnectTimeout=10
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - "{{ ssh_private_key_path }}"
+      - "core@{{ sno_ip_address }}"
+      - sudo
+      - systemctl
+      - poweroff
+  register: post_install_shutdown_request
+  changed_when: true
+  failed_when: false
+  when:
+    - >-
+      sno_post_install_action | trim
+      == 'shutdown-detach-and-boot-disk'
+
+- name: Wait for the VirtualBox VM to power off
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - showvminfo
+      - "{{ virtualbox_vm_name }}"
+      - --machinereadable
+  register: post_install_poweroff_check
+  changed_when: false
+  until:
+    - "'VMState=\"poweroff\"' in post_install_poweroff_check.stdout"
+  retries: "{{ post_install_poweroff_retries }}"
+  delay: "{{ post_install_poweroff_delay }}"
+  when:
+    - >-
+      sno_post_install_action | trim
+      == 'shutdown-detach-and-boot-disk'
+
+- name: Detach the discovery ISO
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - storageattach
+      - "{{ virtualbox_vm_name }}"
+      - --storagectl
+      - "{{ virtualbox_storage_controller }}"
+      - --port
+      - "{{ virtualbox_iso_port | string }}"
+      - --device
+      - "{{ virtualbox_iso_device | string }}"
+      - --type
+      - dvddrive
+      - --forceunmount
+      - --medium
+      - none
+  when:
+    - >-
+      sno_post_install_action | trim in
+      [
+        'shutdown-detach-and-boot-disk',
+        'detach-and-start-installed-disk',
+        'detach-iso'
+      ]
+
+- name: Start the VM from the installed disk
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - startvm
+      - "{{ virtualbox_vm_name }}"
+      - --type
+      - headless
+  when:
+    - >-
+      sno_post_install_action | trim in
+      [
+        'shutdown-detach-and-boot-disk',
+        'detach-and-start-installed-disk',
+        'start-installed-disk'
+      ]
+
+- name: Wait for SSH on the installed system
+  ansible.builtin.wait_for:
+    host: "{{ sno_ip_address }}"
+    port: 22
+    state: started
+    connect_timeout: "{{ post_install_ssh_connect_timeout }}"
+    timeout: "{{ post_install_ssh_timeout }}"
+    sleep: 10
+
+- name: Verify that the installed disk is running
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - "30"
+      - ssh
+      - -o
+      - BatchMode=yes
+      - -o
+      - ConnectTimeout=10
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - "{{ ssh_private_key_path }}"
+      - "core@{{ sno_ip_address }}"
+      - cat
+      - /proc/cmdline
+  register: post_install_disk_boot_probe
+  changed_when: false
+  failed_when: false
+  until:
+    - post_install_disk_boot_probe.rc == 0
+    - "'coreos.liveiso=' not in post_install_disk_boot_probe.stdout"
+  retries: 30
+  delay: 10
+
+- name: Require an installed-disk boot
+  ansible.builtin.assert:
+    that:
+      - post_install_disk_boot_probe.rc == 0
+      - "'coreos.liveiso=' not in post_install_disk_boot_probe.stdout"
+    fail_msg: >-
+      The target is reachable, but it is not confirmed to be running
+      from the installed disk.
+    quiet: true
+
+- name: Read the final VirtualBox media state
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - showvminfo
+      - "{{ virtualbox_vm_name }}"
+      - --machinereadable
+  register: post_install_final_vm_info
+  changed_when: false
+
+- name: Store the final DVD attachment
+  ansible.builtin.set_fact:
+    post_install_final_dvd_attachment: >-
+      {{
+        post_install_final_vm_info.stdout_lines
+        | select(
+            'match',
+            '^"' ~ virtualbox_storage_controller
+            ~ '-' ~ (virtualbox_iso_port | string)
+            ~ '-' ~ (virtualbox_iso_device | string)
+            ~ '"='
+          )
+        | first
+        | default('')
+      }}
+
+- name: Require the discovery ISO to be detached
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          post_install_final_dvd_attachment
+          | regex_search('="none"$')
+        ) is not none
+    fail_msg: >-
+      The installed disk is running, but the discovery ISO is still
+      attached: {{ post_install_final_dvd_attachment }}
+    quiet: true
+
+- name: Store the completed post-install boot state
+  ansible.builtin.set_fact:
+    sno_post_install_boot_ready: true
+    sno_post_install_action_performed: >-
+      {{ (sno_post_install_action | trim) != 'none' }}
+
+- name: Report successful post-install boot handling
+  ansible.builtin.debug:
+    msg:
+      - "VM: {{ virtualbox_vm_name }}"
+      - Installed-disk boot confirmed.
+      - Discovery ISO detached.
+      - >-
+        Action performed:
+        {{ sno_post_install_action_performed }}
+      - >-
+        Selected action:
+        {{ sno_post_install_action | trim }}
+

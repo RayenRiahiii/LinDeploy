@@ -1,0 +1,134 @@
+---
+- name: Read the post-install libvirt VM state
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", domstate, "{{ libvirt_vm_name }}"]
+  environment:
+    LC_ALL: C
+  register: post_install_libvirt_state
+  changed_when: false
+
+- name: Read post-install libvirt block devices
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", domblklist, "{{ libvirt_vm_name }}", --details]
+  environment:
+    LC_ALL: C
+  register: post_install_libvirt_blocks
+  changed_when: false
+
+- name: Read persistent post-install libvirt block devices
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - domblklist
+      - "{{ libvirt_vm_name }}"
+      - --inactive
+      - --details
+  environment:
+    LC_ALL: C
+  register: post_install_libvirt_persistent_blocks
+  changed_when: false
+
+- name: Store the libvirt post-install state
+  ansible.builtin.set_fact:
+    sno_post_install_vm_state: "{{ post_install_libvirt_state.stdout | trim }}"
+    sno_discovery_iso_live_attached: >-
+      {{ libvirt_iso_runtime_path in post_install_libvirt_blocks.stdout }}
+    sno_discovery_iso_config_attached: >-
+      {{ libvirt_iso_runtime_path in post_install_libvirt_persistent_blocks.stdout }}
+    sno_discovery_iso_attached: >-
+      {{
+        libvirt_iso_runtime_path in post_install_libvirt_blocks.stdout
+        or libvirt_iso_runtime_path in post_install_libvirt_persistent_blocks.stdout
+      }}
+    sno_post_install_boot_source: >-
+      {{
+        'discovery-iso'
+        if libvirt_iso_runtime_path in post_install_libvirt_blocks.stdout
+        else 'installed-disk'
+      }}
+
+- name: Eject the discovery ISO from the running VM
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - change-media
+      - "{{ libvirt_vm_name }}"
+      - "{{ libvirt_iso_target | default('sda') }}"
+      - --eject
+      - --live
+  register: post_install_live_iso_eject
+  changed_when: post_install_live_iso_eject.rc == 0
+  failed_when: false
+  when:
+    - automation_mode == 'apply'
+    - sno_discovery_iso_live_attached | bool
+    - sno_post_install_vm_state == 'running'
+
+- name: Eject the discovery ISO from the persistent VM configuration
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - change-media
+      - "{{ libvirt_vm_name }}"
+      - "{{ libvirt_iso_target | default('sda') }}"
+      - --eject
+      - --config
+  register: post_install_config_iso_eject
+  changed_when: post_install_config_iso_eject.rc == 0
+  failed_when: false
+  when:
+    - automation_mode == 'apply'
+    - sno_discovery_iso_config_attached | bool
+
+- name: Start an installed powered-off VM
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", start, "{{ libvirt_vm_name }}"]
+  when:
+    - automation_mode == 'apply'
+    - sno_post_install_vm_state == 'shut off'
+
+- name: Read final libvirt media state
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", domblklist, "{{ libvirt_vm_name }}", --details]
+  register: final_libvirt_blocks
+  changed_when: false
+
+- name: Read final persistent libvirt media state
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - domblklist
+      - "{{ libvirt_vm_name }}"
+      - --inactive
+      - --details
+  environment:
+    LC_ALL: C
+  register: final_libvirt_persistent_blocks
+  changed_when: false
+
+- name: Require the discovery ISO to be detached
+  ansible.builtin.assert:
+    that:
+      - libvirt_iso_runtime_path not in final_libvirt_blocks.stdout
+      - libvirt_iso_runtime_path not in final_libvirt_persistent_blocks.stdout
+    fail_msg: >-
+      The discovery ISO is still attached to the live or persistent VM
+      configuration after installation.
+    quiet: true
+  when: automation_mode == 'apply'
+
+- name: Report the libvirt post-install state
+  ansible.builtin.debug:
+    msg:
+      - "VM: {{ libvirt_vm_name }}"
+      - "Initial VM state: {{ sno_post_install_vm_state }}"
+      - "Discovery ISO was attached: {{ sno_discovery_iso_attached }}"
+      - "Current boot source: installed-disk"

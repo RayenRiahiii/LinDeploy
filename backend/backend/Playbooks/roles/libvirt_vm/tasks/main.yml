@@ -1,0 +1,209 @@
+---
+- name: Read the requested libvirt domain
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", dumpxml, "{{ libvirt_vm_name }}"]
+  register: libvirt_existing_domain
+  changed_when: false
+  failed_when: false
+
+- name: Read the requested libvirt volume
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", vol-info, --pool, "{{ libvirt_pool_name }}", "{{ libvirt_volume_name }}"]
+  register: libvirt_existing_volume
+  changed_when: false
+  failed_when: false
+
+- name: Inspect the LinDeploy VM ownership marker
+  ansible.builtin.stat:
+    path: "{{ libvirt_ownership_marker_path }}"
+  register: libvirt_ownership_marker
+  when: libvirt_ownership_marker_path | default('') | length > 0
+
+- name: Read the LinDeploy VM ownership marker
+  ansible.builtin.slurp:
+    src: "{{ libvirt_ownership_marker_path }}"
+  register: libvirt_ownership_marker_content
+  when:
+    - libvirt_ownership_marker_path | default('') | length > 0
+    - libvirt_ownership_marker.stat.isreg | default(false)
+
+- name: Decode the LinDeploy VM ownership marker
+  ansible.builtin.set_fact:
+    libvirt_ownership_data: >-
+      {{ libvirt_ownership_marker_content.content | b64decode | from_json }}
+  when:
+    - libvirt_ownership_marker_path | default('') | length > 0
+    - libvirt_ownership_marker.stat.isreg | default(false)
+
+- name: Validate a recovered orphan volume
+  ansible.builtin.assert:
+    that:
+      - libvirt_ownership_marker.stat.isreg | default(false)
+      - libvirt_ownership_data.workshop_id == workshop_id
+      - libvirt_ownership_data.vm_name == libvirt_vm_name
+      - libvirt_ownership_data.pool_name == libvirt_pool_name
+      - libvirt_ownership_data.volume_name == libvirt_volume_name
+    fail_msg: >-
+      Volume {{ libvirt_volume_name }} exists without its domain and without a
+      matching LinDeploy ownership marker. It will not be reused automatically.
+    quiet: true
+  when:
+    - libvirt_ownership_marker_path | default('') | length > 0
+    - libvirt_existing_domain.rc != 0
+    - libvirt_existing_volume.rc == 0
+
+- name: Validate an existing managed domain
+  ansible.builtin.assert:
+    that:
+      - libvirt_volume_path in libvirt_existing_domain.stdout
+      - sno_mac_address | lower in libvirt_existing_domain.stdout | lower
+      - >-
+        libvirt_existing_domain.stdout is search(
+          "<source[^>]+network=['\"]"
+          ~ (libvirt_network_name | regex_escape)
+          ~ "['\"]"
+        )
+      - workshop_id in libvirt_existing_domain.stdout
+      - workshop_id in libvirt_existing_domain.stdout or 'sno-workshop' in libvirt_existing_domain.stdout
+    fail_msg: >-
+      Existing domain {{ libvirt_vm_name }} does not match this workshop.
+      It will not be replaced automatically.
+    quiet: true
+  when: libvirt_existing_domain.rc == 0
+
+- name: Undefine an orphaned domain without its volume in apply mode
+  block:
+    - name: Stop running orphaned domain
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", destroy, "{{ libvirt_vm_name }}"]
+      failed_when: false
+
+    - name: Undefine orphaned domain with nvram
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", undefine, "{{ libvirt_vm_name }}", --nvram]
+      register: libvirt_undefine_orphaned_domain
+      failed_when: false
+
+    - name: Undefine orphaned domain without nvram fallback
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", undefine, "{{ libvirt_vm_name }}"]
+      when: libvirt_undefine_orphaned_domain.rc | default(0) != 0
+      failed_when: false
+
+    - name: Reset domain state to unprovisioned
+      ansible.builtin.set_fact:
+        libvirt_existing_domain:
+          rc: 1
+          stdout: ""
+          stderr: ""
+  when:
+    - automation_mode == 'apply'
+    - target_modification_approved | default(false) | bool
+    - libvirt_existing_domain.rc == 0
+    - libvirt_existing_volume.rc != 0
+
+- name: Refuse a domain without its expected volume
+  ansible.builtin.assert:
+    that:
+      - libvirt_existing_domain.rc != 0 or libvirt_existing_volume.rc == 0
+    fail_msg: Existing domain has no matching managed volume.
+    quiet: true
+  when:
+    - automation_mode != 'apply' or not (target_modification_approved | default(false) | bool)
+
+- name: Report the VM provisioning plan
+  ansible.builtin.debug:
+    msg:
+      - "VM: {{ libvirt_vm_name }}"
+      - "Existing domain: {{ libvirt_existing_domain.rc == 0 }}"
+      - "Existing volume: {{ libvirt_existing_volume.rc == 0 }}"
+      - "CPU/RAM/Disk: {{ libvirt_vm_vcpus }} vCPU / {{ libvirt_vm_memory_mb }} MiB / {{ libvirt_vm_disk_gb }} GiB"
+      - "Network/MAC/IP: {{ libvirt_network_name }} / {{ sno_mac_address }} / {{ sno_ip_address }}"
+      - "Automation mode: {{ automation_mode }}"
+
+- name: Create the VM volume in apply mode
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - vol-create-as
+      - --pool
+      - "{{ libvirt_pool_name }}"
+      - --name
+      - "{{ libvirt_volume_name }}"
+      - --capacity
+      - "{{ libvirt_vm_disk_gb }}G"
+      - --format
+      - qcow2
+  when:
+    - automation_mode == 'apply'
+    - libvirt_existing_volume.rc != 0
+
+- name: Create the protected ownership marker directory
+  ansible.builtin.file:
+    path: "{{ libvirt_ownership_marker_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when:
+    - automation_mode == 'apply'
+    - libvirt_ownership_marker_path | default('') | length > 0
+
+- name: Record LinDeploy ownership of the VM volume
+  ansible.builtin.copy:
+    dest: "{{ libvirt_ownership_marker_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      {
+        "schema": 1,
+        "workshop_id": "{{ workshop_id }}",
+        "vm_name": "{{ libvirt_vm_name }}",
+        "pool_name": "{{ libvirt_pool_name }}",
+        "volume_name": "{{ libvirt_volume_name }}"
+      }
+  when:
+    - automation_mode == 'apply'
+    - libvirt_ownership_marker_path | default('') | length > 0
+
+- name: Define the VM in apply mode
+  when:
+    - automation_mode == 'apply'
+    - libvirt_existing_domain.rc != 0
+  block:
+    - name: Create a temporary domain definition
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .xml
+      register: libvirt_domain_xml_file
+
+    - name: Write the domain definition
+      ansible.builtin.template:
+        src: domain.xml.j2
+        dest: "{{ libvirt_domain_xml_file.path }}"
+        mode: "0600"
+
+    - name: Validate the domain XML
+      ansible.builtin.command:
+        argv: [virt-xml-validate, "{{ libvirt_domain_xml_file.path }}", domain]
+      changed_when: false
+
+    - name: Define the libvirt VM
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", define, "{{ libvirt_domain_xml_file.path }}"]
+  always:
+    - name: Remove the temporary domain definition
+      ansible.builtin.file:
+        path: "{{ libvirt_domain_xml_file.path | default('') }}"
+        state: absent
+      when: libvirt_domain_xml_file.path | default('') | length > 0
+
+- name: Require the VM after apply
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", dominfo, "{{ libvirt_vm_name }}"]
+  register: libvirt_created_domain
+  changed_when: false
+  failed_when: automation_mode == 'apply' and libvirt_created_domain.rc != 0

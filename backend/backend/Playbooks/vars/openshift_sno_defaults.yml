@@ -1,0 +1,106 @@
+---
+# Red Hat services
+assisted_api_url: https://api.openshift.com/api/assisted-install
+redhat_sso_token_url: https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
+
+# Default OpenShift internal networks
+network_type: OVNKubernetes
+cluster_network_cidr: 10.128.0.0/14
+cluster_network_host_prefix: 23
+service_network_cidr: 172.30.0.0/16
+
+# Files and tools located on the Ansible controller
+pull_secret_path: >-
+  {{ lookup('ansible.builtin.env', 'OPENSHIFT_PULL_SECRET_PATH')
+     | default(
+         lookup('ansible.builtin.env', 'HOME')
+         ~ '/.config/openshift/pull-secret.json',
+         true
+       ) }}
+ssh_public_key_path: >-
+  {{ lookup('ansible.builtin.env', 'SNO_SSH_PUBLIC_KEY_PATH')
+     | default(
+         lookup('ansible.builtin.env', 'HOME')
+         ~ '/.ssh/sno_kvm_ed25519.pub',
+         true
+       ) }}
+ssh_private_key_path: >-
+  {{ lookup('ansible.builtin.env', 'SNO_SSH_PRIVATE_KEY_PATH')
+     | default(
+         lookup('ansible.builtin.env', 'HOME')
+         ~ '/.ssh/sno_kvm_ed25519',
+         true
+       ) }}
+oc_binary_path: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/bin/oc"
+assisted_wait_script_path: "{{ playbook_dir }}/../scripts/assisted_wait.py"
+
+# Assisted Installer defaults derived from the target profile
+infra_env_name: "{{ cluster_name }}-infra-env"
+discovery_image_type: full-iso
+
+# Credential filenames are derived from credentials_directory,
+# which must be supplied by the target profile.
+kubeconfig_path: "{{ credentials_directory }}/kubeconfig"
+kubeadmin_password_path: "{{ credentials_directory }}/kubeadmin-password"
+
+# VirtualBox executable on the Ansible controller.
+# VirtualBox target details must be supplied by the target profile.
+virtualbox_manage_path: /mnt/c/Program Files/Oracle/VirtualBox/VBoxManage.exe
+
+# Bounded waiting periods
+cluster_ready_retries: 90
+cluster_ready_delay: 20
+
+installation_wait_retries: 720
+installation_wait_delay: 30
+
+cluster_convergence_retries: 720
+cluster_convergence_delay: 30
+
+# Redfish provider defaults.
+# The target profile must provide redfish_base_url.
+# Credentials must remain in REDFISH_USERNAME and REDFISH_PASSWORD.
+redfish_system_id: System.Embedded.1
+redfish_manager_id: iDRAC.Embedded.1
+redfish_virtual_media_id: CD
+redfish_validate_certs: false
+
+# Workshop and libvirt defaults. Target/workshop profiles can override them.
+workshop_id: sno-workshop
+cluster_count: 1
+cluster_name_prefix: sno
+cluster_name_start: 1
+workshop_base_domain: lab.test
+max_parallel_clusters: 2
+
+libvirt_uri: qemu:///system
+libvirt_network_name: sno-workshop
+libvirt_bridge_name: virbr-sno
+libvirt_network_cidr: 192.168.130.0/24
+libvirt_network_prefix: 192.168.130
+libvirt_gateway: 192.168.130.1
+libvirt_netmask: 255.255.255.0
+libvirt_dhcp_start: 192.168.130.10
+libvirt_dhcp_end: 192.168.130.200
+libvirt_first_cluster_address: 10
+libvirt_mac_prefix: "52:54:00:01:00"
+libvirt_first_mac_suffix: 81
+
+libvirt_pool_name: sno-pool
+libvirt_pool_path: /home/libvirt/images
+libvirt_vm_memory_mb: 24576
+libvirt_vm_vcpus: 8
+libvirt_vm_disk_gb: 150
+libvirt_disk_bus: virtio
+libvirt_network_model: virtio
+libvirt_machine_type: q35
+libvirt_firmware: efi
+libvirt_allow_cpu_overcommit: false
+libvirt_allow_memory_overcommit: false
+libvirt_allow_storage_overcommit: false
+libvirt_host_reserved_memory_mb: 8192
+libvirt_host_reserved_disk_gb: 40
+
+workshop_artifacts_root: >-
+  {{ lookup('ansible.builtin.env', 'SNO_ARTIFACTS_ROOT')
+     | default(playbook_dir ~ '/../../artifacts/workshops', true) }}

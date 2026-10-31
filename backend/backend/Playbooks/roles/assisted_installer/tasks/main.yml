@@ -1,0 +1,259 @@
+---
+- name: Read the Red Hat offline token from the environment
+  ansible.builtin.set_fact:
+    redhat_offline_token: "{{ lookup('ansible.builtin.env', 'REDHAT_OFFLINE_TOKEN') }}"
+  no_log: true
+
+- name: Require the Red Hat offline token
+  ansible.builtin.assert:
+    that:
+      - redhat_offline_token | length > 0
+    fail_msg: >-
+      Set REDHAT_OFFLINE_TOKEN in WSL before running this playbook. Obtain it
+      from the Red Hat OpenShift Cluster Manager API Token page.
+
+- name: Check the pull secret file
+  ansible.builtin.stat:
+    path: "{{ pull_secret_path }}"
+  register: pull_secret_file
+
+- name: Check the SSH public key file
+  ansible.builtin.stat:
+    path: "{{ ssh_public_key_path }}"
+  register: ssh_public_key_file
+
+- name: Require local credential files
+  ansible.builtin.assert:
+    that:
+      - pull_secret_file.stat.exists
+      - pull_secret_file.stat.isreg
+      - ssh_public_key_file.stat.exists
+      - ssh_public_key_file.stat.isreg
+    fail_msg: Check pull_secret_path and ssh_public_key_path in group_vars/all.yml.
+
+- name: Load and validate local credentials
+  ansible.builtin.set_fact:
+    pull_secret: "{{ lookup('ansible.builtin.file', pull_secret_path) | trim }}"
+    ssh_public_key: "{{ lookup('ansible.builtin.file', ssh_public_key_path) | trim }}"
+  no_log: true
+
+- name: Verify that the pull secret is JSON
+  ansible.builtin.set_fact:
+    pull_secret_json: "{{ pull_secret | from_json }}"
+  no_log: true
+
+- name: Exchange the offline token for an API token
+  ansible.builtin.uri:
+    url: "{{ redhat_sso_token_url }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: refresh_token
+      client_id: cloud-services
+      refresh_token: "{{ redhat_offline_token }}"
+    return_content: true
+    status_code: 200
+  register: redhat_auth
+  no_log: true
+
+- name: Save the short-lived API token
+  ansible.builtin.set_fact:
+    assisted_api_token: "{{ redhat_auth.json.access_token }}"
+  no_log: true
+
+- name: Verify Assisted Installer API access
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/component-versions"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: assisted_component_versions
+
+- name: Find existing clusters
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: assisted_clusters
+
+- name: Select clusters with the requested name
+  ansible.builtin.set_fact:
+    matching_clusters: >-
+      {{ assisted_clusters.json
+         | selectattr('name', 'equalto', cluster_name)
+         | list }}
+
+- name: Refuse ambiguous cluster reuse
+  ansible.builtin.assert:
+    that:
+      - matching_clusters | length <= 1
+    fail_msg: >-
+      More than one Assisted Installer cluster is named {{ cluster_name }}.
+      Resolve the duplicate resources before rerunning.
+
+- name: Create the SNO cluster definition
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      name: "{{ cluster_name }}"
+      openshift_version: "{{ openshift_version }}"
+      control_plane_count: 1
+      cpu_architecture: "{{ cpu_architecture }}"
+      base_dns_domain: "{{ base_dns_domain }}"
+      network_type: "{{ network_type }}"
+      cluster_network_cidr: "{{ cluster_network_cidr }}"
+      cluster_network_host_prefix: "{{ cluster_network_host_prefix }}"
+      service_network_cidr: "{{ service_network_cidr }}"
+      user_managed_networking: true
+      schedulable_masters: true
+      ssh_public_key: "{{ ssh_public_key }}"
+      pull_secret: "{{ pull_secret }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  register: created_cluster
+  when: matching_clusters | length == 0
+  no_log: true
+
+- name: Store the cluster identifier
+  ansible.builtin.set_fact:
+    cluster_id: >-
+      {{ (created_cluster.json.id
+          if matching_clusters | length == 0
+          else matching_clusters[0].id) }}
+
+- name: Apply the requested base DNS domain to an existing cluster
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/clusters/{{ cluster_id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      base_dns_domain: "{{ base_dns_domain }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  when:
+    - matching_clusters | length == 1
+    - matching_clusters[0].base_dns_domain | default('') != base_dns_domain
+
+- name: Find infrastructure environments for the cluster
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/infra-envs?cluster_id={{ cluster_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: assisted_infra_envs
+
+- name: Select the requested infrastructure environment
+  ansible.builtin.set_fact:
+    matching_infra_envs: >-
+      {{ assisted_infra_envs.json
+         | selectattr('name', 'equalto', infra_env_name)
+         | list }}
+
+- name: Refuse ambiguous infrastructure environment reuse
+  ansible.builtin.assert:
+    that:
+      - matching_infra_envs | length <= 1
+    fail_msg: >-
+      More than one infrastructure environment is named {{ infra_env_name }}.
+      Resolve the duplicate resources before rerunning.
+
+- name: Create the infrastructure environment
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/infra-envs"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      name: "{{ infra_env_name }}"
+      cluster_id: "{{ cluster_id }}"
+      cpu_architecture: "{{ cpu_architecture }}"
+      image_type: "{{ discovery_image_type }}"
+      ssh_authorized_key: "{{ ssh_public_key }}"
+      pull_secret: "{{ pull_secret }}"
+    status_code: 201
+    return_content: true
+  register: created_infra_env
+  when: matching_infra_envs | length == 0
+  no_log: true
+
+- name: Store the infrastructure environment identifier
+  ansible.builtin.set_fact:
+    infra_env_id: >-
+      {{ (created_infra_env.json.id
+          if matching_infra_envs | length == 0
+          else matching_infra_envs[0].id) }}
+
+- name: Apply the optional static network configuration
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/infra-envs/{{ infra_env_id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      static_network_config:
+        - network_yaml: "{{ lookup('ansible.builtin.template', 'sno-static-network.yml.j2') }}"
+          mac_interface_map:
+            - mac_address: "{{ sno_mac_address }}"
+              logical_nic_name: "{{ sno_interface_name }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  when: sno_static_network_enabled | bool
+
+- name: Wait for the discovery image URL
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/infra-envs/{{ infra_env_id }}/downloads/image-url"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: discovery_image
+  until:
+    - discovery_image.json.url is defined
+    - discovery_image.json.url | length > 0
+  retries: 30
+  delay: 10
+  no_log: true
+
+- name: Create the local artifacts directory
+  ansible.builtin.file:
+    path: "{{ discovery_iso_path | dirname }}"
+    state: directory
+    mode: '0700'
+
+- name: Download the full discovery ISO
+  ansible.builtin.get_url:
+    url: "{{ discovery_image.json.url }}"
+    dest: "{{ discovery_iso_path }}"
+    mode: '0600'
+    timeout: 600
+  no_log: true
+
+- name: Report the prepared installation media
+  ansible.builtin.debug:
+    msg:
+      - "Cluster ID: {{ cluster_id }}"
+      - "InfraEnv ID: {{ infra_env_id }}"
+      - "Discovery ISO: {{ discovery_iso_path }}"
+      - The VM has not been booted and installation has not been started.

@@ -1,0 +1,56 @@
+---
+- name: Exchange the offline token for a short-lived API token
+  ansible.builtin.uri:
+    url: "{{ redhat_sso_token_url }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: refresh_token
+      client_id: cloud-services
+      refresh_token: "{{ redhat_offline_token }}"
+    status_code: 200
+    return_content: true
+  register: redhat_auth_response
+  until:
+    - redhat_auth_response.status | default(0) == 200
+    - redhat_auth_response.json.access_token | default('') | length > 0
+  retries: 4
+  delay: 5
+  no_log: true
+
+- name: Require an API token in the authentication response
+  ansible.builtin.assert:
+    that:
+      - redhat_auth_response.json is defined
+      - redhat_auth_response.json.access_token is defined
+      - redhat_auth_response.json.access_token | length > 0
+    fail_msg: Red Hat authentication did not return an API token.
+    quiet: true
+  no_log: true
+
+- name: Store the short-lived API token
+  ansible.builtin.set_fact:
+    assisted_api_token: "{{ redhat_auth_response.json.access_token }}"
+  no_log: true
+
+- name: Test Assisted Installer API access
+  ansible.builtin.uri:
+    url: "{{ assisted_api_url }}/v2/component-versions"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: assisted_api_test
+  until: assisted_api_test.status | default(0) == 200
+  retries: 4
+  delay: 5
+  no_log: true
+
+- name: Report successful API authentication
+  ansible.builtin.debug:
+    msg:
+      - Red Hat authentication succeeded.
+      - Assisted Installer API is accessible.
+      - A short-lived API token was created only in memory.
+      - No cluster, machine, or disk was modified.

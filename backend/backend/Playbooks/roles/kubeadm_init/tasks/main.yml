@@ -44,6 +44,98 @@
     - kubeadm_admin_conf_server_host is match('^[0-9.]+$')
     - kubeadm_admin_conf_server_host != ansible_facts['default_ipv4']['address']
 
+- name: Read existing single-node cluster identity
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_admin_conf_path }}"
+      - get
+      - configmap
+      - kubeadm-config
+      - --namespace=kube-system
+      - '-o=jsonpath={.data.ClusterConfiguration}'
+  register: kubeadm_existing_cluster_configuration
+  changed_when: false
+  failed_when: false
+  retries: 3
+  delay: 2
+  until: kubeadm_existing_cluster_configuration.rc == 0
+  when:
+    - kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_cluster_name_explicit | bool
+
+- name: Resolve existing single-node cluster name
+  set_fact:
+    kubeadm_existing_cluster_name: >-
+      {{
+        kubeadm_existing_cluster_configuration.stdout
+        | regex_findall('(?m)^clusterName:\s*([a-zA-Z0-9.-]+)\s*$')
+        | first
+        | default('kubernetes')
+      }}
+  when:
+    - kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_cluster_name_explicit | bool
+
+- name: Verify existing single-node cluster name
+  assert:
+    that:
+      - kubeadm_existing_cluster_configuration.rc == 0
+      - kubeadm_existing_cluster_name == kubeadm_cluster_name
+    fail_msg: >-
+      Existing Kubernetes cluster identity does not match the requested
+      configuration. The cluster is named '{{ kubeadm_existing_cluster_name }}',
+      but LinDeploy requested '{{ kubeadm_cluster_name }}'. Kubernetes cluster and
+      node names cannot be renamed safely in place. Run Reset Cluster on this target,
+      then launch the installation with the new names.
+  when:
+    - kubeadm_admin_conf_stat.stat.exists
+    - kubeadm_cluster_name_explicit | bool
+
+- name: Read existing single-node identity
+  command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ kubeadm_admin_conf_path }}"
+      - get
+      - nodes
+      - '-o=jsonpath={range .items[*]}{.metadata.name}{"="}{range .status.addresses[?(@.type=="InternalIP")]}{.address}{end}{"\n"}{end}'
+  register: kubeadm_existing_node_identities
+  changed_when: false
+  failed_when: false
+  retries: 3
+  delay: 2
+  until: kubeadm_existing_node_identities.rc == 0
+  when: kubeadm_admin_conf_stat.stat.exists
+
+- name: Resolve existing single-node name by internal address
+  set_fact:
+    kubeadm_existing_node_identity_lines: >-
+      {{
+        kubeadm_existing_node_identities.stdout_lines
+        | default([])
+        | select('match', '^.+=' ~ (ansible_facts['default_ipv4']['address'] | regex_escape) ~ '$')
+        | list
+      }}
+  when: kubeadm_admin_conf_stat.stat.exists
+
+- name: Verify existing single-node name
+  assert:
+    that:
+      - kubeadm_existing_node_identities.rc == 0
+      - kubeadm_existing_node_identity_lines | length == 1
+      - >-
+        (kubeadm_existing_node_identity_lines | first).split('=', 1)[0]
+        == kubernetes_node_name
+    fail_msg: >-
+      Existing Kubernetes cluster identity does not match the requested
+      configuration. The node at {{ ansible_facts['default_ipv4']['address'] }} is
+      registered as '{{ ((kubeadm_existing_node_identity_lines | first | default('=' )).split('=', 1)[0]) }}',
+      but LinDeploy requested '{{ kubernetes_node_name }}'. Kubernetes node names
+      cannot be renamed safely in place. Run Reset Cluster on this target, then
+      launch the installation with the new names.
+  when: kubeadm_admin_conf_stat.stat.exists
+
 # ==================================================
 # 3. Create kubeadm init configuration
 # ==================================================
@@ -70,6 +162,7 @@
       ---
       apiVersion: kubeadm.k8s.io/v1beta4
       kind: ClusterConfiguration
+      clusterName: "{{ kubeadm_cluster_name }}"
       {% if kubeadm_kubernetes_version | length > 0 %}
       kubernetesVersion: "{{ kubeadm_kubernetes_version }}"
       {% endif %}
@@ -109,10 +202,24 @@
   when: not kubeadm_admin_conf_stat.stat.exists
 
 - name: Pre-pull missing Kubernetes control-plane images
-  command: "ctr -n k8s.io images pull {{ item }}"
+  command:
+    argv: >-
+      {{
+        ['ctr', '-n', 'k8s.io', 'images', 'pull']
+        + (
+          (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled | default(false)) | bool)
+          | ternary(
+              ['--hosts-dir', containerd_registry_config_dir | default('/etc/containerd/certs.d')],
+              []
+            )
+        )
+        + [item]
+      }}
   loop: "{{ kubeadm_images_to_pull | default([]) }}"
   register: kubeadm_image_pull_results
   changed_when: true
+  async: "{{ kubeadm_image_pull_timeout }}"
+  poll: "{{ kubeadm_image_pull_poll_interval }}"
   retries: "{{ kubeadm_images_pull_retries }}"
   delay: "{{ kubeadm_images_pull_retry_delay }}"
   until: kubeadm_image_pull_results.rc == 0
@@ -229,6 +336,11 @@
     path: "{{ kubeadm_kubectl_binary_path }}"
   register: kubeadm_kubectl_binary_stat
 
+- name: Verify packaged kubectl binary exists
+  fail:
+    msg: "Kubectl binary is missing at {{ kubeadm_kubectl_binary_path }}. Package installation may have been incomplete."
+  when: not (kubeadm_kubectl_binary_stat.stat.exists | default(false))
+
 - name: Ensure kubectl compatibility symlink exists
   file:
     src: "{{ kubeadm_kubectl_binary_path }}"
@@ -238,3 +350,16 @@
   when:
     - kubeadm_manage_kubectl_compat_symlink | bool
     - kubeadm_kubectl_binary_stat.stat.exists
+
+# ==================================================
+# 8. Verify Kubernetes API server readiness
+# ==================================================
+- name: Wait for Kubernetes API server readiness
+  command: >-
+    kubectl --kubeconfig={{ kubeadm_admin_conf_path }} get --raw=/readyz
+    {{ kubeadm_kubectl_binary_path }} --kubeconfig={{ kubeadm_admin_conf_path }} get --raw=/readyz
+  register: kubeadm_readyz_probe
+  changed_when: false
+  retries: 30
+  delay: 5
+  until: kubeadm_readyz_probe.rc == 0 and 'ok' in kubeadm_readyz_probe.stdout

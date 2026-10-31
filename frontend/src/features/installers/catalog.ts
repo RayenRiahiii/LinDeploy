@@ -1,5 +1,6 @@
 import kubernetesLogo from "../../assets/kubernetes-logo.svg";
 import k3sLogo from "../../assets/k3s-logo.png";
+import openshiftLogo from "../../assets/openshift-logo.svg";
 
 export type InstallerId = "kubernetes" | "k3s" | "openshift_sno";
 
@@ -29,8 +30,8 @@ export const installerOptions: InstallerOption[] = [
   {
     id: "openshift_sno",
     label: "OpenShift SNO",
-    description: "Single Node OpenShift workflow for edge and compact control-plane use cases.",
-    availability: "coming_soon",
+    description: "Agent-based Single Node OpenShift workflow for a KVM/libvirt virtual machine.",
+    availability: "available",
     route: "/installers/openshift-sno",
   },
 ];
@@ -38,6 +39,10 @@ export const installerOptions: InstallerOption[] = [
 export function getInstallerLogo(installerId?: InstallerId | null) {
   if (installerId === "k3s") {
     return k3sLogo;
+  }
+
+  if (installerId === "openshift_sno") {
+    return openshiftLogo;
   }
 
   return kubernetesLogo;

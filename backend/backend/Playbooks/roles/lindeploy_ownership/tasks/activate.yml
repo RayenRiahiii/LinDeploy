@@ -1,0 +1,19 @@
+---
+- name: Require prepared ownership before activation
+  ansible.builtin.assert:
+    that:
+      - lindeploy_ownership_manifest_stat.stat.exists
+      - lindeploy_ownership_existing.state in ['prepared', 'active']
+    fail_msg: >-
+      LinDeploy cannot activate {{ lindeploy_ownership_platform }} ownership because
+      the prepared manifest is missing or invalid.
+
+- name: Mark verified installation ownership as active
+  ansible.builtin.template:
+    src: manifest.json.j2
+    dest: "{{ lindeploy_ownership_manifest_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    lindeploy_ownership_target_state: active

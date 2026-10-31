@@ -1,0 +1,362 @@
+---
+# ==================================================
+# 1. Preconditions and Cluster Configuration
+# ==================================================
+
+- name: Validate bootstrap preconditions
+  assert:
+    that:
+      - groups.get('bootstrap', []) | length == 1
+      - inventory_hostname == groups['bootstrap'][0]
+      - k3s_multi_node_name | length > 0
+      - k3s_multi_advertise_address | length > 0
+    fail_msg: "Bootstrap host preconditions or network settings are invalid."
+
+- name: Compute whether multi-server embedded etcd is required
+  set_fact:
+    k3s_multi_cluster_init: "{{ groups.get('control_plane', []) | length > 1 }}"
+
+- name: Compute effective SELinux setting
+  set_fact:
+    k3s_multi_effective_selinux: >-
+      {{
+        ansible_facts.get('selinux', {}).get('status', 'disabled') != 'disabled'
+      }}
+
+- name: Build bootstrap TLS SAN list
+  set_fact:
+    k3s_multi_tls_sans: >-
+      {{
+        (
+          [
+            k3s_multi_advertise_address,
+            ansible_facts.get('default_ipv4', {}).get('address', ''),
+            ansible_facts.get('hostname', ''),
+            ansible_facts.get('fqdn', ''),
+            '127.0.0.1'
+          ]
+          + ([control_plane_endpoint | regex_replace(':[0-9]+$', '')] if control_plane_endpoint | default('') | length > 0 else [])
+        )
+        | reject('equalto', '')
+        | unique
+        | list
+      }}
+
+- name: Ensure K3s config directory exists
+  file:
+    path: "{{ k3s_multi_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Build K3s bootstrap server configuration
+  set_fact:
+    k3s_multi_bootstrap_config: >-
+      {{
+        {
+          'write-kubeconfig-mode': '0600',
+          'node-name': k3s_multi_node_name,
+          'cluster-cidr': k3s_multi_pod_network_cidr,
+          'service-cidr': k3s_multi_service_cidr,
+          'tls-san': k3s_multi_tls_sans
+        }
+        | combine({'cluster-init': true} if (k3s_multi_cluster_init | bool) else {})
+        | combine({'selinux': true} if (k3s_multi_effective_selinux | bool) else {})
+      }}
+
+- name: Write K3s bootstrap server configuration
+  copy:
+    dest: "{{ k3s_multi_config_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ k3s_multi_bootstrap_config | to_nice_yaml(indent=2) }}"
+
+# ==================================================
+# 2. Service Installation and Startup
+# ==================================================
+
+- name: Install K3s server on bootstrap node
+  command: "{{ k3s_multi_install_script_path }}"
+  environment: >-
+    {{
+      {
+        'INSTALL_K3S_EXEC': 'server',
+        'INSTALL_K3S_SKIP_ENABLE': 'true',
+        'INSTALL_K3S_SKIP_START': 'true',
+        'INSTALL_K3S_SKIP_SELINUX_RPM': 'true'
+      }
+      | combine({'INSTALL_K3S_VERSION': k3s_version} if (k3s_version | default('') | length > 0) else {})
+      | combine(
+          {'INSTALL_K3S_ARTIFACT_URL': k3s_install_artifact_url}
+          if (k3s_install_artifact_url | default('') | length > 0) else {}
+        )
+    }}
+  changed_when: true
+
+- name: Restore K3s binary and service SELinux contexts
+  command:
+    argv:
+      - restorecon
+      - -F
+      - -v
+      - "{{ k3s_multi_binary_path }}"
+      - /usr/local/bin/k3s-killall.sh
+      - /usr/local/bin/k3s-uninstall.sh
+      - /usr/local/bin/kubectl
+      - /usr/local/bin/crictl
+      - /usr/local/bin/ctr
+      - "{{ k3s_multi_service_unit_path | default('/etc/systemd/system/k3s.service') }}"
+      - "{{ k3s_multi_config_dir }}"
+  register: k3s_multi_bootstrap_restorecon
+  changed_when: k3s_multi_bootstrap_restorecon.stdout | trim | length > 0
+  failed_when: false
+  when: k3s_multi_effective_selinux | bool
+
+- name: Reload systemd units
+  command: systemctl daemon-reload
+  changed_when: false
+
+- name: Enable and start K3s server service
+  block:
+    - name: Start K3s server systemd unit
+      systemd_service:
+        name: "{{ k3s_multi_service_name }}"
+        enabled: true
+        state: started
+  rescue:
+    - name: Capture K3s service status on startup failure
+      command: "systemctl status {{ k3s_multi_service_name }} --no-pager -l"
+      register: k3s_multi_bootstrap_status_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Capture K3s service journal on startup failure
+      command: "journalctl -u {{ k3s_multi_service_name }} --no-pager -n 100"
+      register: k3s_multi_bootstrap_journal_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with K3s bootstrap startup diagnostics
+      fail:
+        msg: |
+          Failed to start {{ k3s_multi_service_name }} on {{ inventory_hostname }}.
+          Status:
+          {{ k3s_multi_bootstrap_status_fail.stdout | default('not collected') }}
+          Journal:
+          {{ k3s_multi_bootstrap_journal_fail.stdout | default('not collected') }}
+
+# ==================================================
+# 3. Health Checks and Artifact Verification
+# ==================================================
+
+- name: Wait for K3s bootstrap service readiness
+  block:
+    - name: Wait for K3s service to become active
+      command: "systemctl is-active {{ k3s_multi_service_name }}"
+      register: k3s_multi_bootstrap_service_status
+      changed_when: false
+      retries: "{{ k3s_multi_startup_retries }}"
+      delay: "{{ k3s_multi_startup_delay }}"
+      until: k3s_multi_bootstrap_service_status.stdout == "active"
+
+    - name: Wait for K3s kubeconfig file
+      wait_for:
+        path: "{{ k3s_multi_kubeconfig_path }}"
+        timeout: "{{ k3s_multi_wait_for_kubeconfig_timeout }}"
+
+    - name: Wait for K3s cluster node token
+      wait_for:
+        path: "{{ k3s_multi_node_token_path }}"
+        timeout: "{{ k3s_multi_wait_for_kubeconfig_timeout }}"
+
+    - name: Wait for K3s API server port
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ k3s_multi_api_port }}"
+        timeout: "{{ k3s_multi_wait_for_apiserver_timeout }}"
+
+    - name: Wait for Kubernetes API readyz probe
+      command: >-
+        {{ k3s_multi_binary_path }} kubectl --kubeconfig={{ k3s_multi_kubeconfig_path }}
+        --request-timeout={{ k3s_multi_kubectl_request_timeout }} get --raw=/readyz
+      register: k3s_multi_bootstrap_readyz
+      changed_when: false
+      retries: "{{ k3s_multi_startup_retries }}"
+      delay: "{{ k3s_multi_startup_delay }}"
+      until: k3s_multi_bootstrap_readyz.rc == 0 and 'ok' in k3s_multi_bootstrap_readyz.stdout
+
+    - name: Wait for bootstrap node to reach Ready status
+      command: >-
+        {{ k3s_multi_binary_path }} kubectl --kubeconfig={{ k3s_multi_kubeconfig_path }}
+        wait --for=condition=Ready node/{{ k3s_multi_node_name }} --timeout=180s
+      register: k3s_multi_bootstrap_node_ready
+      changed_when: false
+  rescue:
+    - name: Capture K3s service status for diagnostics
+      command: "systemctl status {{ k3s_multi_service_name }} --no-pager -l"
+      register: k3s_multi_status_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Capture K3s journal logs for diagnostics
+      command: "journalctl -u {{ k3s_multi_service_name }} --no-pager -n 150"
+      register: k3s_multi_journal_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Capture port listeners during failure
+      command: ss -lntpH
+      register: k3s_multi_listeners_fail
+      changed_when: false
+      failed_when: false
+
+    - name: Persist diagnostics file
+      copy:
+        dest: "{{ k3s_multi_diagnostics_log_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          K3s bootstrap server startup failed on {{ inventory_hostname }}.
+          Status:
+          {{ k3s_multi_status_fail.stdout | default('not collected') }}
+          Journal:
+          {{ k3s_multi_journal_fail.stdout | default('not collected') }}
+          Listeners:
+          {{ k3s_multi_listeners_fail.stdout | default('not collected') }}
+
+    - name: Fail with bootstrap diagnostics
+      fail:
+        msg: |
+          K3s bootstrap server failed to become ready on {{ inventory_hostname }}.
+          Journal:
+          {{ k3s_multi_journal_fail.stdout | default('not collected') }}
+
+# ==================================================
+# 4. Token Extraction and Kubectl Access
+# ==================================================
+
+- name: Read cluster join token from server
+  slurp:
+    src: "{{ k3s_multi_node_token_path }}"
+  register: k3s_multi_token_slurp
+  no_log: true
+
+- name: Publish cluster join token fact
+  set_fact:
+    k3s_cluster_token: "{{ k3s_multi_token_slurp.content | b64decode | trim }}"
+  no_log: true
+
+- name: Ensure root kubeconfig directory exists
+  file:
+    path: "{{ k3s_multi_root_kubeconfig_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Copy K3s kubeconfig to root
+  copy:
+    src: "{{ k3s_multi_kubeconfig_path }}"
+    dest: "{{ k3s_multi_root_kubeconfig_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install kubectl wrapper for direct command-line access
+  copy:
+    dest: "{{ k3s_multi_kubectl_wrapper_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      export K3S_CONFIG_FILE=/dev/null
+
+      if [ -z "${KUBECONFIG:-}" ]; then
+        if [ -r "$HOME/.kube/config" ]; then
+          export KUBECONFIG="$HOME/.kube/config"
+        elif [ -r "{{ k3s_multi_kubeconfig_path }}" ]; then
+          export KUBECONFIG="{{ k3s_multi_kubeconfig_path }}"
+        elif [ -r "{{ k3s_multi_root_kubeconfig_path }}" ]; then
+          export KUBECONFIG="{{ k3s_multi_root_kubeconfig_path }}"
+        fi
+      fi
+
+      exec "{{ k3s_multi_binary_path }}" kubectl "$@"
+  when: k3s_multi_manage_kubectl_wrapper | bool
+
+- name: Ensure kubectl symlink in /usr/bin for sudo secure_path compatibility
+  file:
+    src: "{{ k3s_multi_kubectl_wrapper_path }}"
+    dest: /usr/bin/kubectl
+    state: link
+    force: true
+  when:
+    - k3s_multi_manage_kubectl_wrapper | bool
+    - k3s_multi_kubectl_wrapper_path != "/usr/bin/kubectl"
+
+- name: Configure system-wide K3s environment in profile.d
+  copy:
+    dest: /etc/profile.d/k3s.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      export K3S_CONFIG_FILE=/dev/null
+      if [ -z "${KUBECONFIG:-}" ] && [ -r "$HOME/.kube/config" ]; then
+        export KUBECONFIG="$HOME/.kube/config"
+      fi
+
+- name: Query remote user account
+  getent:
+    database: passwd
+    key: "{{ ansible_user }}"
+  when:
+    - k3s_multi_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != "root"
+
+- name: Configure kubectl access for remote user
+  block:
+    - name: Extract remote user home directory
+      set_fact:
+        k3s_multi_remote_user_home: "{{ ansible_facts.getent_passwd[ansible_user][-2] }}"
+
+    - name: Ensure remote user kubeconfig directory exists
+      file:
+        path: "{{ k3s_multi_remote_user_home }}/.kube"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0700"
+
+    - name: Copy K3s kubeconfig to remote user
+      copy:
+        src: "{{ k3s_multi_kubeconfig_path }}"
+        dest: "{{ k3s_multi_remote_user_home }}/.kube/config"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+
+    - name: Configure KUBECONFIG shell variable in remote user rc
+      blockinfile:
+        path: "{{ k3s_multi_remote_user_home }}/{{ k3s_multi_remote_user_shell_rc_path }}"
+        create: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - K3S KUBECTL ENV"
+        block: |
+          export K3S_CONFIG_FILE=/dev/null
+          export KUBECONFIG="$HOME/.kube/config"
+  when:
+    - k3s_multi_copy_kubeconfig_to_remote_user | bool
+    - ansible_user != "root"
+
+- name: Mark K3s bootstrap initialization complete
+  set_fact:
+    lindeploy_k3s_bootstrap_ready: true

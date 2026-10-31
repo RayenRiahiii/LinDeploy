@@ -1,0 +1,4 @@
+---
+openshift_agent_install_retries: 1
+openshift_agent_install_timeout_seconds: 10800
+

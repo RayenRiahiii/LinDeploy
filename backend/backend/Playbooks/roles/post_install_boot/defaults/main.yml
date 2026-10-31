@@ -1,0 +1,6 @@
+---
+post_install_poweroff_retries: 36
+post_install_poweroff_delay: 5
+
+post_install_ssh_timeout: 600
+post_install_ssh_connect_timeout: 10

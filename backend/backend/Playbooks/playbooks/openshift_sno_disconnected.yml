@@ -1,0 +1,395 @@
+---
+- name: Install disconnected Single Node OpenShift on KVM
+  hosts: selected_hosts
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+
+  vars_files:
+    - ../vars/openshift_sno_defaults.yml
+
+  vars:
+    sno_request: "{{ cluster_config | default({}) }}"
+    sno_host_request: "{{ (selected_hosts_config | default([]) | first) | default({}) }}"
+    target_schema_version: 1
+    target_id: "lindeploy-{{ inventory_hostname | lower | regex_replace('[^a-z0-9-]', '-') }}"
+    target_provider: libvirt
+    automation_mode: apply
+    target_modification_approved: "{{ sno_request.target_modification_approved | default(false) }}"
+    force_reinstall: "{{ sno_request.force_reinstall | default(false) | bool }}"
+    cluster_name: "{{ sno_request.cluster_name }}"
+    base_dns_domain: "{{ sno_request.base_domain }}"
+    openshift_version: "{{ openshift_default_version if sno_request.openshift_version | default('stable') == 'stable' else sno_request.openshift_version }}"
+    cpu_architecture: "{{ 'x86_64' if sno_request.architecture | default('amd64') == 'amd64' else sno_request.architecture }}"
+    openshift_mirror_registry: "{{ sno_request.mirror_registry }}"
+    openshift_mirror_hostname: >-
+      {{ openshift_mirror_registry.split(':') | first }}
+    openshift_mirror_port: >-
+      {{
+        openshift_mirror_registry
+        | regex_search(':[0-9]+$')
+        | default(':443', true)
+        | regex_replace('^:', '')
+      }}
+    openshift_mirror_libvirt_firewall_zone: >-
+      {{ sno_request.mirror_libvirt_firewall_zone | default('libvirt') }}
+    openshift_mirror_quay_root: >-
+      {{ sno_request.mirror_storage_path
+         | default('/var/lib/lindeploy/openshift-mirror') }}/quay-install
+    openshift_fips_enabled: "{{ sno_request.fips | default(false) }}"
+    cluster_network_cidr: "{{ sno_request.cluster_network_cidr }}"
+    cluster_network_host_prefix: "{{ sno_request.host_prefix }}"
+    service_network_cidr: "{{ sno_request.service_network_cidr }}"
+    sno_ip_address: "{{ sno_host_request.node_ip }}"
+    sno_prefix_length: "{{ sno_host_request.prefix_length }}"
+    sno_gateway: "{{ sno_host_request.gateway }}"
+    sno_dns_servers: "{{ sno_request.dns_servers }}"
+    sno_interface_name: "{{ sno_host_request.interface_name }}"
+    sno_node_name: "{{ sno_host_request.node_name }}"
+    installation_disk_path: "{{ sno_host_request.installation_disk }}"
+    install_confirmation: "{{ sno_request.install_confirmation | default('') }}"
+    cluster_count: 1
+    minimum_installation_disk_bytes: 120000000000
+    workshop_id: "lindeploy-{{ cluster_name }}"
+    workshop_base_domain: "{{ base_dns_domain }}"
+    workshop_clusters:
+      - name: "{{ cluster_name }}"
+        target_id: "{{ target_id }}"
+        vm_name: "{{ libvirt_vm_name }}"
+        ip_address: "{{ sno_ip_address }}"
+        mac_address: "{{ sno_mac_address }}"
+        fqdn: "{{ cluster_name }}.{{ base_dns_domain }}"
+    dns_provider: existing
+    dns_validation_server: "{{ sno_gateway if sno_request.dns_management | default('managed') == 'managed' else (sno_dns_servers | first) }}"
+    dns_enforce_before_boot: true
+    dns_publish_controller_records: true
+    wait_for_cluster_convergence: true
+    require_cluster_convergence: true
+    require_workshop_readiness: true
+    openshift_installation_method: Agent-Based Installer
+    oc_binary_path: /usr/local/libexec/lindeploy-openshift/oc
+    openshift_agent_assets_root: /var/lib/lindeploy/openshift-agent
+    openshift_agent_assets_directory: "{{ openshift_agent_assets_root }}/{{ cluster_name }}"
+    discovery_iso_path: "{{ openshift_agent_assets_directory }}/agent.{{ cpu_architecture }}.iso"
+    credentials_directory: "{{ openshift_agent_assets_directory }}/auth"
+    kubeconfig_path: "{{ credentials_directory }}/kubeconfig"
+    kubeadmin_password_path: "{{ credentials_directory }}/kubeadmin-password"
+    libvirt_ownership_marker_path: "/var/lib/lindeploy/ownership/{{ cluster_name }}.json"
+
+  pre_tasks:
+    - name: Require exactly one disconnected SNO target
+      ansible.builtin.assert:
+        that:
+          - cluster_config is defined
+          - cluster_config is mapping
+          - selected_hosts_config is defined
+          - selected_hosts_config | length == 1
+        fail_msg: >-
+          Disconnected SNO requires one cluster configuration and exactly one
+          target VM definition. No host resource was changed.
+        quiet: true
+
+    - name: Validate the current disconnected libvirt adapter contract
+      ansible.builtin.assert:
+        that:
+          - sno_request.disconnected | default(false) | bool
+          - sno_request.cluster_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+          - sno_request.base_domain is match('^[A-Za-z0-9.-]+$')
+          - sno_request.mirror_registry is match('^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
+          - sno_request.dns_servers | default([]) | length > 0
+          - sno_request.rendezvous_ip == sno_host_request.node_ip
+          - sno_request.machine_network_cidr == (sno_host_request.node_ip.split('.')[0:3] | join('.') ~ '.0/24')
+          - sno_host_request.prefix_length | int == 24
+          - sno_host_request.gateway == (sno_host_request.node_ip.split('.')[0:3] | join('.') ~ '.1')
+          - sno_host_request.installation_disk is match('^/dev/[A-Za-z0-9._/-]+$')
+          - sno_host_request.mac_address is match('^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
+          - (sno_host_request.mac_address | default('') | length == 0) or (sno_host_request.mac_address is match('^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'))
+          - sno_host_request.interface_name is match('^[A-Za-z0-9_.:-]+$')
+          - sno_host_request.vcpu | int >= 8
+          - sno_host_request.memory_gib | int >= 16
+          - sno_host_request.disk_gib | int >= 120
+        fail_msg: >-
+          The disconnected libvirt adapter requires exactly one target, a /24
+          machine network, rendezvousIP equal to node_ip, gateway .1, and valid
+          DNS, disk, MAC, interface, and SNO capacity values (8 vCPU, 16 GiB
+          RAM, 120 GiB disk minimum). No VM or volume was changed.
+        quiet: true
+
+    - name: Require explicit SNO disk approval
+      ansible.builtin.assert:
+        that:
+          - target_modification_approved | bool
+          - install_confirmation == ('ERASE ' ~ installation_disk_path)
+        fail_msg: "Enter exactly ERASE {{ installation_disk_path }} before installation."
+        quiet: true
+
+    - name: Resolve the disconnected mirror IPv4 address
+      ansible.builtin.command:
+        argv:
+          - getent
+          - ahostsv4
+          - "{{ openshift_mirror_hostname }}"
+      register: openshift_sno_mirror_address
+      changed_when: false
+
+    - name: Require a reachable mirror DNS identity
+      ansible.builtin.assert:
+        that:
+          - openshift_sno_mirror_address.rc == 0
+          - openshift_sno_mirror_address.stdout_lines | length > 0
+          - openshift_sno_mirror_address.stdout_lines[0].split()[0] is match('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+        fail_msg: >-
+          The KVM host cannot resolve {{ openshift_mirror_hostname }}.
+          Installation was stopped before creating or starting the SNO VM.
+        quiet: true
+
+    - name: Record the resolved mirror network identity
+      ansible.builtin.set_fact:
+        openshift_sno_mirror_ipv4: "{{ openshift_sno_mirror_address.stdout_lines[0].split()[0] }}"
+        openshift_sno_mirror_is_local: >-
+          {{
+            openshift_sno_mirror_address.stdout_lines[0].split()[0]
+            in (
+              ansible_all_ipv4_addresses
+              | default(ansible_facts.get('all_ipv4_addresses', []), true)
+            )
+          }}
+
+    - name: Publish the mirror identity to the libvirt DNS network
+      ansible.builtin.set_fact:
+        libvirt_additional_dns_records:
+          - name: "{{ openshift_mirror_hostname }}"
+            ip_address: "{{ openshift_sno_mirror_ipv4 }}"
+
+    - name: Check firewalld for a mirror hosted on this KVM server
+      ansible.builtin.command:
+        argv: [systemctl, is-active, firewalld]
+      register: openshift_sno_local_firewalld
+      changed_when: false
+      failed_when: false
+      when: openshift_sno_mirror_is_local | bool
+
+    - name: Require active firewalld for the local mirror path
+      ansible.builtin.assert:
+        that:
+          - openshift_sno_local_firewalld.rc == 0
+          - openshift_sno_local_firewalld.stdout | trim == 'active'
+        fail_msg: >-
+          The mirror resolves to this KVM host, but firewalld is not active.
+          Start firewalld and retry before creating the SNO VM.
+        quiet: true
+      when: openshift_sno_mirror_is_local | bool
+
+    - name: Read available firewalld zones for the local mirror path
+      ansible.builtin.command:
+        argv: [firewall-cmd, --get-zones]
+      register: openshift_sno_firewalld_zones
+      changed_when: false
+      when: openshift_sno_mirror_is_local | bool
+
+    - name: Require the libvirt firewalld zone for the local mirror path
+      ansible.builtin.assert:
+        that:
+          - openshift_mirror_libvirt_firewall_zone in openshift_sno_firewalld_zones.stdout.split()
+        fail_msg: >-
+          Firewalld zone {{ openshift_mirror_libvirt_firewall_zone }} is not
+          available. Install and initialize libvirt networking before creating
+          the SNO VM.
+        quiet: true
+      when: openshift_sno_mirror_is_local | bool
+
+    - name: Check the permanent local mirror port in the libvirt zone
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - --permanent
+          - "--zone={{ openshift_mirror_libvirt_firewall_zone }}"
+          - "--query-port={{ openshift_mirror_port }}/tcp"
+      register: openshift_sno_mirror_permanent_port
+      changed_when: false
+      failed_when: openshift_sno_mirror_permanent_port.rc not in [0, 1]
+      when: openshift_sno_mirror_is_local | bool
+
+    - name: Open the permanent local mirror port in the libvirt zone
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - --permanent
+          - "--zone={{ openshift_mirror_libvirt_firewall_zone }}"
+          - "--add-port={{ openshift_mirror_port }}/tcp"
+      when:
+        - openshift_sno_mirror_is_local | bool
+        - openshift_sno_mirror_permanent_port.rc == 1
+
+    - name: Check the active local mirror port in the libvirt zone
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - "--zone={{ openshift_mirror_libvirt_firewall_zone }}"
+          - "--query-port={{ openshift_mirror_port }}/tcp"
+      register: openshift_sno_mirror_runtime_port
+      changed_when: false
+      failed_when: openshift_sno_mirror_runtime_port.rc not in [0, 1]
+      when: openshift_sno_mirror_is_local | bool
+
+    - name: Open the active local mirror port in the libvirt zone
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - "--zone={{ openshift_mirror_libvirt_firewall_zone }}"
+          - "--add-port={{ openshift_mirror_port }}/tcp"
+      when:
+        - openshift_sno_mirror_is_local | bool
+        - openshift_sno_mirror_runtime_port.rc == 1
+
+    - name: Select the requested libvirt runtime configuration
+      ansible.builtin.set_fact:
+        libvirt_uri: qemu:///system
+        libvirt_vm_name: "{{ sno_host_request.vm_name }}"
+        libvirt_network_name: "{{ sno_host_request.libvirt_network }}"
+        libvirt_pool_name: "{{ sno_host_request.storage_pool }}"
+        libvirt_vm_vcpus: "{{ sno_host_request.vcpu }}"
+        libvirt_vm_memory_mb: "{{ sno_host_request.memory_gib | int * 1024 }}"
+        libvirt_vm_disk_gb: "{{ sno_host_request.disk_gib }}"
+        libvirt_firmware: "{{ 'efi' if sno_request.boot_mode | default('uefi') == 'uefi' else 'bios' }}"
+        libvirt_vm_autostart: "{{ sno_request.vm_autostart | default(false) }}"
+        libvirt_network_cidr: "{{ sno_request.machine_network_cidr }}"
+        libvirt_gateway: "{{ sno_host_request.gateway }}"
+        libvirt_netmask: 255.255.255.0
+        libvirt_network_prefix: "{{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}"
+        libvirt_dhcp_start: "{{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}.2"
+        libvirt_dhcp_end: "{{ sno_host_request.node_ip.split('.')[0:3] | join('.') }}.254"
+        libvirt_bridge_name: "virbr-sno{{ sno_host_request.host_id }}"
+        sno_mac_address: >-
+          {{ sno_host_request.mac_address
+             if sno_host_request.mac_address | default('') | length > 0
+             else '52:54:00:01:%02x:%02x'
+                  | format(sno_host_request.host_id | int % 256,
+                           sno_host_request.node_ip.split('.')[-1] | int) }}
+
+    - name: Read storage pool definition
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", pool-dumpxml, "{{ libvirt_pool_name }}"]
+      register: openshift_pool_xml
+      changed_when: false
+      failed_when: false
+
+    - name: Select runtime storage paths
+      ansible.builtin.set_fact:
+        libvirt_pool_path: "{{ (openshift_pool_xml.stdout | regex_findall('<path>([^<]+)</path>') | first) if openshift_pool_xml.rc == 0 else '/var/lib/libvirt/images/' ~ libvirt_pool_name }}"
+        libvirt_volume_name: "{{ libvirt_vm_name }}.qcow2"
+        libvirt_volume_path: "{{ ((openshift_pool_xml.stdout | regex_findall('<path>([^<]+)</path>') | first) if openshift_pool_xml.rc == 0 else '/var/lib/libvirt/images/' ~ libvirt_pool_name) }}/{{ libvirt_vm_name }}.qcow2"
+        libvirt_iso_runtime_path: "{{ ((openshift_pool_xml.stdout | regex_findall('<path>([^<]+)</path>') | first) if openshift_pool_xml.rc == 0 else '/var/lib/libvirt/images/' ~ libvirt_pool_name) }}/{{ libvirt_vm_name }}-agent.iso"
+        libvirt_iso_target: sda
+
+    - name: Inspect existing VM domain state
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", domstate, "{{ libvirt_vm_name }}"]
+      environment:
+        LC_ALL: C
+      register: openshift_sno_existing_vm_state
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect existing cluster admin kubeconfig
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: openshift_sno_existing_kubeconfig
+
+    - name: Locate available OpenShift CLI
+      ansible.builtin.command:
+        argv: [which, oc]
+      register: openshift_sno_which_oc
+      changed_when: false
+      failed_when: false
+
+    - name: Select effective OpenShift CLI path
+      ansible.builtin.set_fact:
+        oc_binary_path: "{{ openshift_sno_which_oc.stdout | trim }}"
+      when:
+        - openshift_sno_which_oc.rc | default(1) == 0
+        - openshift_sno_which_oc.stdout | default('') | trim | length > 0
+
+    - name: Probe existing cluster readiness
+      ansible.builtin.command:
+        argv:
+          - "{{ (openshift_sno_which_oc.stdout | trim) if (openshift_sno_which_oc.rc | default(1) == 0 and (openshift_sno_which_oc.stdout | default('') | trim | length > 0)) else oc_binary_path }}"
+          - --kubeconfig
+          - "{{ kubeconfig_path }}"
+          - get
+          - nodes
+          - --request-timeout=8s
+          - -o
+          - "jsonpath={range .items[*]}{.status.conditions[?(@.type=='Ready')].status}{end}"
+      register: openshift_sno_existing_nodes_probe
+      changed_when: false
+      failed_when: false
+      when:
+        - openshift_sno_existing_vm_state.rc | default(1) == 0
+        - >-
+          ('running' in (openshift_sno_existing_vm_state.stdout | default('') | lower))
+          or ('cours' in (openshift_sno_existing_vm_state.stdout | default('') | lower))
+        - openshift_sno_existing_kubeconfig.stat.exists | default(false)
+        - not (sno_request.force_reinstall | default(false) | bool)
+        - not (force_reinstall | default(false) | bool)
+
+    - name: Evaluate existing cluster health
+      ansible.builtin.set_fact:
+        sno_already_converged: >-
+          {{
+            (openshift_sno_existing_nodes_probe.rc | default(1) == 0)
+            and ('True' in (openshift_sno_existing_nodes_probe.stdout | default('')))
+          }}
+
+    - name: Activate verification facts for already converged cluster
+      ansible.builtin.set_fact:
+        sno_credentials_available: true
+        sno_installation_completed: true
+      when: sno_already_converged | default(false) | bool
+
+    - name: Report already converged cluster status
+      ansible.builtin.debug:
+        msg:
+          - "================================================================="
+          - "Cluster '{{ cluster_name }}' is already running, healthy and converged."
+          - "Skipping Agent ISO generation, VM re-provisioning, and installation wait."
+          - "Refreshing cluster verification and user CLI access."
+          - "================================================================="
+      when: sno_already_converged | default(false) | bool
+
+  roles:
+    - role: libvirt_preflight
+      when: not (sno_already_converged | default(false) | bool)
+    - role: libvirt_network
+      when: not (sno_already_converged | default(false) | bool)
+    - role: libvirt_storage
+      when: not (sno_already_converged | default(false) | bool)
+    - role: dns_preflight
+      when: not (sno_already_converged | default(false) | bool)
+    - role: openshift_agent_assets
+      when: not (sno_already_converged | default(false) | bool)
+    - role: libvirt_vm
+      when: not (sno_already_converged | default(false) | bool)
+    - role: target_boot
+      when: not (sno_already_converged | default(false) | bool)
+    - role: openshift_agent_install
+      when: not (sno_already_converged | default(false) | bool)
+    - role: post_install_boot
+      when: not (sno_already_converged | default(false) | bool)
+    - role: cluster_verify
+    - role: openshift_cli_access
+
+  post_tasks:
+    - name: Enable VM autostart when requested
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", autostart, "{{ libvirt_vm_name }}"]
+      when: libvirt_vm_autostart | bool
+
+    - name: Report disconnected SNO completion
+      ansible.builtin.debug:
+        msg:
+          - "Disconnected SNO installation completed."
+          - "Cluster: {{ cluster_name }}.{{ base_dns_domain }}"
+          - "Kubeconfig: {{ kubeconfig_path }}"
+          - "Mirror: {{ openshift_mirror_registry }}"

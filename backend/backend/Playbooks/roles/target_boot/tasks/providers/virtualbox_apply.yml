@@ -1,0 +1,91 @@
+---
+- name: Refuse to modify a VM with a saved state
+  ansible.builtin.assert:
+    that:
+      - target_virtualbox_vm_state != 'VMState="saved"'
+    fail_msg: >-
+      VM {{ virtualbox_vm_name }} has a saved state.
+      Shut it down cleanly before using the automation.
+    quiet: true
+
+- name: Read the requested discovery ISO attachment
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - showmediuminfo
+      - dvd
+      - "{{ virtualbox_iso_path_windows }}"
+  register: target_virtualbox_iso_medium_info
+  changed_when: false
+  failed_when: false
+  when: target_virtualbox_vm_state == 'VMState="running"'
+
+- name: Verify that a running VM has the requested ISO
+  ansible.builtin.assert:
+    that:
+      - target_virtualbox_iso_medium_info.rc == 0
+      - "'In use by VMs:' in target_virtualbox_iso_medium_info.stdout"
+      - virtualbox_vm_name in target_virtualbox_iso_medium_info.stdout
+    fail_msg: >-
+      VM {{ virtualbox_vm_name }} is already running, but it does not
+      have the requested discovery ISO attached. The automation will
+      not stop or change a running VM.
+    quiet: true
+  when: target_virtualbox_vm_state == 'VMState="running"'
+
+- name: Configure safe VirtualBox boot order
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - modifyvm
+      - "{{ virtualbox_vm_name }}"
+      - --boot1
+      - disk
+      - --boot2
+      - dvd
+      - --boot3
+      - none
+      - --boot4
+      - none
+  when: target_virtualbox_vm_state == 'VMState="poweroff"'
+
+- name: Attach the requested discovery ISO
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - storageattach
+      - "{{ virtualbox_vm_name }}"
+      - --storagectl
+      - "{{ virtualbox_storage_controller }}"
+      - --port
+      - "{{ virtualbox_iso_port | string }}"
+      - --device
+      - "{{ virtualbox_iso_device | string }}"
+      - --type
+      - dvddrive
+      - --medium
+      - "{{ virtualbox_iso_path_windows }}"
+  when: target_virtualbox_vm_state == 'VMState="poweroff"'
+
+- name: Start the VirtualBox target
+  ansible.builtin.command:
+    argv:
+      - "{{ virtualbox_manage_path }}"
+      - startvm
+      - "{{ virtualbox_vm_name }}"
+      - --type
+      - headless
+  when: target_virtualbox_vm_state == 'VMState="poweroff"'
+
+- name: Store the boot result
+  ansible.builtin.set_fact:
+    target_boot_performed: >-
+      {{ target_virtualbox_vm_state == 'VMState="poweroff"' }}
+
+- name: Report the VirtualBox boot result
+  ansible.builtin.debug:
+    msg:
+      - "VM: {{ virtualbox_vm_name }}"
+      - "Discovery ISO: {{ virtualbox_iso_path_windows }}"
+      - "VM started by this run: {{ target_boot_performed }}"
+      - No installation disk was selected or erased.

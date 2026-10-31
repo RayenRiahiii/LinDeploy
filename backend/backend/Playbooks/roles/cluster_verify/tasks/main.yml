@@ -1,0 +1,15 @@
+---
+- name: Report the verification plan
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Kubeconfig: {{ kubeconfig_path }}"
+      - "Wait for convergence: {{ wait_for_cluster_convergence }}"
+      - "Require convergence: {{ require_cluster_convergence }}"
+      - Plan mode did not connect to the OpenShift API.
+  when: automation_mode == 'plan'
+
+- name: Verify the installed cluster in apply mode
+  ansible.builtin.include_tasks:
+    file: apply.yml
+  when: automation_mode == 'apply'

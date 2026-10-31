@@ -1,0 +1,38 @@
+---
+lindeploy_release_profile_id: kubernetes-v1.36.3-amd64-calico-v3.32.0
+lindeploy_release_profile_mode: production
+kubernetes_version_minor: v1.36
+kubernetes_version_exact: 1.36.3
+kubeadm_kubernetes_version: v1.36.3
+calico_version: v3.32.0
+calico_manifest_checksum: sha256:bccabc607685551db918f66da724893eca3e69a50c5a3e3077029b02dbab8d35
+kubernetes_packages_redhat:
+  - kubelet-1.36.3
+  - kubeadm-1.36.3
+  - kubectl-1.36.3
+  - cri-tools
+kubernetes_packages_debian:
+  - kubelet=1.36.3-1.1
+  - kubeadm=1.36.3-1.1
+  - kubectl=1.36.3-1.1
+  - cri-tools
+lindeploy_ownership_platform: kubernetes
+lindeploy_ownership_managed_resources:
+  - path:/etc/kubernetes
+  - path:/var/lib/etcd
+  - path:/var/lib/kubelet
+  - path:/etc/cni/net.d
+  - path:/var/lib/cni
+  - path:/var/lib/calico
+  - path:/etc/NetworkManager/conf.d/calico.conf
+  - path:/root/calico.yaml
+  - service:kubelet
+  - package:kubelet
+  - package:kubeadm
+  - package:kubectl
+  - package:cri-tools
+  - repository:kubernetes
+  - interface:cni0
+  - interface:tunl0
+  - interface:vxlan.calico
+lindeploy_ownership_required_resources: "{{ lindeploy_ownership_managed_resources }}"

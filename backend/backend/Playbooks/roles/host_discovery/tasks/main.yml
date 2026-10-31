@@ -1,0 +1,106 @@
+---
+- name: Require an existing cluster
+  ansible.builtin.assert:
+    that:
+      - sno_cluster_id is defined
+      - sno_cluster_id | length > 0
+    fail_msg: Host discovery requires an Assisted Installer cluster ID.
+    quiet: true
+
+- name: Find infrastructure environments for the cluster
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs?cluster_id={{ sno_cluster_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: host_discovery_infra_envs
+  changed_when: false
+
+- name: Select the requested infrastructure environment
+  ansible.builtin.set_fact:
+    host_discovery_matching_infra_envs: >-
+      {{
+        host_discovery_infra_envs.json
+        | selectattr('name', 'equalto', infra_env_name)
+        | list
+      }}
+
+- name: Require exactly one infrastructure environment
+  ansible.builtin.assert:
+    that:
+      - host_discovery_matching_infra_envs | length == 1
+    fail_msg: >-
+      Expected exactly one InfraEnv named {{ infra_env_name }}
+      for cluster {{ cluster_name }}.
+    quiet: true
+
+- name: Store the infrastructure environment identifier
+  ansible.builtin.set_fact:
+    sno_infra_env_id: >-
+      {{ host_discovery_matching_infra_envs[0].id }}
+
+- name: Read discovered hosts once in plan mode
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs/{{ sno_infra_env_id }}/hosts
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: planned_discovered_hosts
+  changed_when: false
+  when: automation_mode == 'plan'
+
+- name: Refuse multiple SNO hosts in plan mode
+  ansible.builtin.assert:
+    that:
+      - planned_discovered_hosts.json | length <= 1
+    fail_msg: >-
+      More than one host is registered in this SNO InfraEnv.
+      Nothing was modified.
+    quiet: true
+  when: automation_mode == 'plan'
+
+- name: Store the missing planned host state
+  ansible.builtin.set_fact:
+    sno_host_discovered: false
+  when:
+    - automation_mode == 'plan'
+    - planned_discovered_hosts.json | length == 0
+
+- name: Store the planned discovered host
+  ansible.builtin.set_fact:
+    sno_host_discovered: true
+    discovered_host: "{{ planned_discovered_hosts.json[0] }}"
+    sno_host_id: "{{ planned_discovered_hosts.json[0].id }}"
+  when:
+    - automation_mode == 'plan'
+    - planned_discovered_hosts.json | length == 1
+
+- name: Report the host discovery plan
+  ansible.builtin.debug:
+    msg:
+      - "Cluster ID: {{ sno_cluster_id }}"
+      - "InfraEnv ID: {{ sno_infra_env_id }}"
+      - >-
+        Discovered host count:
+        {{ planned_discovered_hosts.json | length }}
+      - >-
+        Host statuses:
+        {{
+          planned_discovered_hosts.json
+          | map(attribute='status')
+          | list
+        }}
+      - Plan mode queried once and did not wait for a host.
+      - No host role or installation disk was changed.
+  when: automation_mode == 'plan'
+
+- name: Wait for and configure the host in apply mode
+  ansible.builtin.include_tasks:
+    file: apply.yml
+  when: automation_mode == 'apply'

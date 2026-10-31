@@ -1,10 +1,16 @@
 ---
 k3s_install_script_url: https://get.k3s.io
+k3s_install_channel_url: ""
+k3s_install_artifact_url: ""
 k3s_install_script_checksum: ""
 k3s_install_script_path: /usr/local/bin/k3s-install.sh
 k3s_install_script_timeout: 120
 k3s_install_script_retries: 3
 k3s_install_script_delay: 5
+k3s_preinstall_selinux_rpm_from_mirror: true
+k3s_selinux_repo_file: /etc/yum.repos.d/lindeploy-k3s-selinux.repo
+k3s_selinux_repo_id: lindeploy-k3s-selinux
+k3s_selinux_repo_timeout: 20
 
 k3s_binary_path: /usr/local/bin/k3s
 k3s_service_name: k3s
@@ -25,7 +31,7 @@ k3s_copy_kubeconfig_to_remote_user: true
 k3s_manage_remote_user_shell_env: true
 k3s_remote_user_shell_rc_path: ".bashrc"
 k3s_refresh_kubectl_access_on_existing_install: true
-k3s_node_name: "{{ ansible_facts['hostname'] | lower }}"
+k3s_node_name: "{{ lindeploy_node_name | default(ansible_facts['hostname'] | lower) }}"
 k3s_write_kubeconfig_mode: "0600"
 k3s_enable_selinux: true
 k3s_hide_sensitive_config: true
@@ -34,6 +40,16 @@ k3s_version: ""
 k3s_channel: stable
 k3s_extra_config: {}
 k3s_registries: {}
+lindeploy_mirror_enabled: false
+lindeploy_mirror_allow_insecure_http: false
+lindeploy_registry_mirrors: {}
+lindeploy_mirror_ca_certificate: ""
+lindeploy_mirror_ca_path: /etc/rancher/k3s/lindeploy-mirror-ca.crt
+k3s_use_airgap_images_from_mirror: true
+k3s_airgap_images_dir: /var/lib/rancher/k3s/agent/images
+k3s_airgap_download_timeout: 1800
+k3s_airgap_download_retries: 3
+k3s_airgap_download_delay: 5
 k3s_disable_components: []
 k3s_node_labels: []
 k3s_node_taints: []
@@ -58,8 +74,8 @@ k3s_enforce_minimum_requirements: true
 k3s_min_server_vcpus: 2
 k3s_min_server_memory_mb: 2048
 k3s_remediate_incomplete_install: true
-k3s_startup_retries: 24
-k3s_startup_delay: 5
+k3s_startup_retries: 40
+k3s_startup_delay: 3
 
 k3s_stale_install_cleanup_paths:
   - /etc/rancher/k3s
@@ -77,11 +93,11 @@ k3s_stale_install_remove_paths:
   - /etc/systemd/system/k3s.service
   - /etc/systemd/system/k3s.service.env
 
-k3s_wait_for_kubeconfig_timeout: 180
-k3s_wait_for_apiserver_timeout: 180
+k3s_wait_for_kubeconfig_timeout: 120
+k3s_wait_for_apiserver_timeout: 120
 k3s_healthcheck_timeout: 300s
-k3s_healthcheck_retries: 30
-k3s_healthcheck_delay: 10
+k3s_healthcheck_retries: 40
+k3s_healthcheck_delay: 6
 
 k3s_manage_firewalld_rules: true
 k3s_required_listen_ports:

@@ -1,0 +1,269 @@
+---
+- name: Validate Kubernetes multi-node inventory
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Validate required multi-node groups
+      assert:
+        that:
+          - groups.get('bootstrap', []) | length == 1
+          - groups.get('control_plane', []) | length >= 1
+          - groups.get('workers', []) | length >= 1
+          - groups['bootstrap'][0] in groups['control_plane']
+        fail_msg: >-
+          Invalid Kubernetes multi-node inventory. Select at least one control
+          plane, at least one worker, and exactly one bootstrap host that also
+          belongs to the control-plane group.
+
+- name: Probe conflicting platform artifacts on multi-node hosts
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  tasks:
+    - name: Probe conflicting K3s installation artifacts
+      command:
+        argv:
+          - /bin/sh
+          - -c
+          - |
+            for path; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                printf '%s\n' "$path"
+              fi
+            done
+          - k3s-conflict-check
+          - /usr/local/bin/k3s
+          - /etc/systemd/system/k3s.service
+          - /etc/rancher/k3s/k3s.yaml
+          - /var/lib/rancher/k3s/server
+      register: kubernetes_k3s_conflict_artifacts
+      changed_when: false
+
+    - name: Refuse Kubernetes installation while K3s is present
+      fail:
+        msg: >-
+          Kubernetes cannot be installed on {{ inventory_hostname }} because
+          K3s installation artifacts are still present. Run the K3s cleanup
+          workflow for this target and retry. Detected artifacts:
+          {{ kubernetes_k3s_conflict_artifacts.stdout_lines | join(', ') }}.
+          No Kubernetes system changes were applied.
+      when: kubernetes_k3s_conflict_artifacts.stdout_lines | length > 0
+
+    - name: Probe conflicting existing Kubernetes installation artifacts
+      command:
+        argv:
+          - /bin/sh
+          - -c
+          - |
+            for path; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                printf '%s\n' "$path"
+              fi
+            done
+          - k8s-existing-check
+          - /etc/kubernetes/admin.conf
+          - /etc/kubernetes/manifests/kube-apiserver.yaml
+          - /var/lib/etcd/member
+          - /var/lib/kubelet/config.yaml
+      register: kubernetes_existing_conflict_artifacts
+      changed_when: false
+      when: k8s_fail_on_existing_cluster | default(true) | bool
+
+    - name: Refuse Kubernetes installation while Kubernetes is already present
+      fail:
+        msg: >-
+          Kubernetes cannot be installed on {{ inventory_hostname }} because
+          an existing Kubernetes cluster is already present on this host. Run
+          the Kubernetes cleanup workflow on this target, verify that Kubernetes is
+          removed, and retry the installation. Detected artifacts:
+          {{ kubernetes_existing_conflict_artifacts.stdout_lines | join(', ') }}.
+          No Kubernetes system changes were applied.
+      when:
+        - k8s_fail_on_existing_cluster | default(true) | bool
+        - (kubernetes_existing_conflict_artifacts.stdout_lines | default([]) | length) > 0
+
+- name: Prepare Kubernetes multi-node hosts
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: free
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
+  vars:
+    common_selinux_mode: enforcing
+    common_firewalld_enabled: true
+    common_firewalld_state: started
+    common_firewalld_ports:
+      - 6443/tcp
+      - 10250/tcp
+    common_firewalld_sources:
+      - "{{ kubeadm_pod_network_cidr }}"
+      - "{{ kubeadm_service_cidr }}"
+
+  pre_tasks:
+    - name: Gather minimal installation facts
+      setup:
+        gather_subset:
+          - "!all"
+          - min
+          - network
+          - hardware
+        filter:
+          - ansible_os_family
+          - ansible_default_ipv4
+          - ansible_default_ipv6
+          - ansible_architecture
+          - ansible_distribution
+          - ansible_distribution_release
+          - ansible_distribution_major_version
+          - ansible_hostname
+          - ansible_swaptotal_mb
+
+  roles:
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: prepare
+    - common
+    - containerd
+    - cni_prepull
+    - kubernetes
+
+  post_tasks:
+    - name: Inspect kubeadm node membership state
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubeadm_multi_prepared_kubelet_conf
+
+    - name: Publish kubeadm join requirement for bootstrap orchestration
+      set_fact:
+        lindeploy_kubeadm_node_configured: >-
+          {{ kubeadm_multi_prepared_kubelet_conf.stat.exists | bool }}
+
+    - name: Mark Kubernetes host preparation complete
+      set_fact:
+        lindeploy_kubeadm_preparation_complete: true
+
+- name: Validate Kubernetes host preparation checkpoint
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure every selected host completed preparation
+      assert:
+        that:
+          - hostvars[item].lindeploy_kubeadm_preparation_complete | default(false) | bool
+        fail_msg: >-
+          Kubernetes preparation did not complete on {{ item }}. The host became
+          unreachable or a preparation task failed. No cluster bootstrap or join
+          operation will run. Restore SSH connectivity and retry the idempotent
+          multi-node installation.
+      loop: "{{ groups.get('selected_hosts', []) }}"
+
+- name: Initialize Kubernetes multi-node control plane
+  hosts: bootstrap
+  become: true
+  gather_facts: false
+  serial: 1
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
+  roles:
+    - kubeadm_multi_bootstrap
+
+- name: Validate Kubernetes bootstrap checkpoint
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure bootstrap initialization completed
+      assert:
+        that:
+          - >-
+            hostvars[groups['bootstrap'][0]].lindeploy_kubeadm_bootstrap_ready
+            | default(false)
+            | bool
+        fail_msg: >-
+          The Kubernetes bootstrap host did not complete initialization. Worker
+          and additional control-plane joins are blocked to protect cluster
+          consistency. Restore the bootstrap host, review its diagnostics, and retry.
+
+- name: Install Kubernetes cluster networking
+  hosts: bootstrap
+  become: true
+  gather_facts: false
+  serial: 1
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
+  vars:
+    cni_remove_control_plane_taint: false
+    cni_wait_for_coredns: false
+    kubernetes_node_name: "{{ kubeadm_multi_registered_node_name }}"
+  roles:
+    - cni
+
+  post_tasks:
+    - name: Mark Kubernetes bootstrap networking ready
+      set_fact:
+        lindeploy_kubeadm_network_ready: true
+
+- name: Validate Kubernetes network checkpoint
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure bootstrap networking completed
+      assert:
+        that:
+          - >-
+            hostvars[groups['bootstrap'][0]].lindeploy_kubeadm_network_ready
+            | default(false)
+            | bool
+        fail_msg: >-
+          Calico or bootstrap network validation did not complete. Node joins
+          are blocked to prevent a partially initialized cluster. Review the
+          bootstrap diagnostics and retry after connectivity is restored.
+
+- name: Join additional Kubernetes control planes
+  hosts: "control_plane:!bootstrap"
+  become: true
+  gather_facts: false
+  serial: 1
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
+  vars:
+    kubeadm_multi_join_role: control_plane
+  roles:
+    - kubeadm_multi_join
+
+- name: Join Kubernetes workers
+  hosts: workers
+  become: true
+  gather_facts: false
+  strategy: free
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
+  vars:
+    kubeadm_multi_join_role: worker
+  roles:
+    - kubeadm_multi_join
+
+- name: Validate Kubernetes multi-node cluster
+  hosts: bootstrap
+  become: true
+  gather_facts: false
+  serial: 1
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
+  roles:
+    - kubeadm_multi_validate
+
+- name: Activate verified Kubernetes multi-node ownership
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: free
+  vars_files:
+    - ../vars/release_kubernetes_v1.36.3.yml
+  roles:
+    - role: lindeploy_ownership
+      vars:
+        lindeploy_ownership_action: activate

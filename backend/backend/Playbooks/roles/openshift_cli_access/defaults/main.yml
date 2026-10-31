@@ -1,0 +1,6 @@
+---
+openshift_cli_access_user: "{{ ansible_user | default(ansible_user_id) }}"
+openshift_cli_binary_path: /usr/local/bin/oc
+openshift_cli_completion_path: /etc/bash_completion.d/lindeploy-oc
+openshift_cli_kubeconfig_name: "lindeploy-{{ cluster_name }}.config"
+

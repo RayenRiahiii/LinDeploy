@@ -10,8 +10,16 @@ containerd_repo_name: docker-ce-stable
 containerd_repo_description: Docker CE Stable
 containerd_repo_baseurl: "https://download.docker.com/linux/{{ containerd_repo_distribution_path }}/$basearch/stable"
 containerd_repo_gpgkey: https://download.docker.com/linux/centos/gpg
+containerd_repo_upstream_baseurl: "https://download.docker.com/linux/{{ containerd_repo_distribution_path }}/$basearch/stable"
+containerd_repo_upstream_gpgkey: https://download.docker.com/linux/centos/gpg
+containerd_repo_timeout: 20
+containerd_repo_retries: 1
+containerd_repo_probe_timeout: 5
 
 containerd_apt_repo_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+containerd_apt_key_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
+containerd_apt_upstream_repo_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+containerd_apt_upstream_key_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
 containerd_apt_repo_distribution: "{{ ansible_facts['distribution_release'] }}"
 containerd_apt_repo_components: stable
 containerd_apt_keyring_dir: /etc/apt/keyrings
@@ -20,3 +28,14 @@ containerd_apt_key_refresh_max_age_seconds: 2592000
 containerd_apt_cache_valid_time: 3600
 containerd_apt_lock_timeout: 120
 containerd_redhat_update_cache: false
+
+lindeploy_mirror_enabled: false
+lindeploy_mirror_allow_insecure_http: false
+lindeploy_registry_mirrors: {}
+lindeploy_mirror_ca_certificate: ""
+lindeploy_mirror_ca_path: /etc/containerd/certs.d/lindeploy-mirror-ca.crt
+containerd_registry_config_dir: /etc/containerd/certs.d
+containerd_registry_upstream_servers:
+  docker.io: https://registry-1.docker.io
+  registry.k8s.io: https://registry.k8s.io
+  quay.io: https://quay.io

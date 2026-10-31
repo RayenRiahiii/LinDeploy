@@ -4,35 +4,58 @@ import {
   Badge,
   Button,
   Card,
+  Center,
   Code,
-  Container,
   Divider,
   Group,
   Modal,
+  Radio,
   ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
   Text,
+  TextInput,
+  Textarea,
   ThemeIcon,
   Title,
 } from "@mantine/core";
 import {
   IconAlertCircle,
+  IconArrowLeft,
+  IconArrowRight,
   IconCheck,
   IconChevronUp,
+  IconCircleMinus,
   IconClockHour4,
+  IconCrown,
+  IconHammer,
   IconHistory,
+  IconKey,
   IconLink,
   IconPlayerPlay,
   IconPlayerStop,
   IconPlugConnected,
   IconRefresh,
+  IconServer,
   IconTerminal2,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
-import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
+import { notifications } from "@mantine/notifications";
+import { Link, useNavigate } from "react-router-dom";
+import PageHeader from "../components/common/PageHeader";
 import DeploymentMonitor from "../components/deployment/DeploymentMonitor";
+import PlatformConflictModal from "../components/deployment/modals/PlatformConflictModal";
+import DeploymentTopologySelector, {
+  type DeploymentTopology,
+} from "../components/installers/DeploymentTopologySelector";
+import DeploymentWizard, {
+  type DeploymentWizardStep,
+} from "../components/installers/DeploymentWizard";
 import InstallerLabel from "../components/installers/InstallerLabel";
 import {
   type ExecutionStage,
@@ -50,6 +73,7 @@ import { parseJsonResponse } from "../lib/api";
 
 type Host = {
   id: number;
+  stable_id: string;
   name: string;
   hostname?: string;
   ip_address: string;
@@ -65,7 +89,7 @@ type Template = {
   system_type: "kubernetes" | "k3s" | "openshift_sno";
   playbook_path: string;
   description: string;
-  deployment_type: "prepare_node" | "single_node" | "cleanup";
+  deployment_type: "prepare_node" | "single_node" | "multi_node" | "cleanup";
 };
 
 type CleanupMode = "reset" | "full_uninstall";
@@ -110,20 +134,44 @@ type LaunchQueuedResponse = {
   message: string;
   cluster_config?: ClusterConfig;
   host_overrides?: HostOverridePayload[];
+  topology?: DeploymentTopology;
+  bootstrap_host_id?: number | null;
+};
+
+type OpenShiftSecretResponse = {
+  secret_reference?: string;
+  expires_at?: string;
+  message?: string;
+  errors?: unknown;
+};
+
+type OpenShiftRetryResponse = LaunchQueuedResponse & {
+  retried_installation_id?: number;
 };
 
 type ClusterConfig = {
   cluster_name: string;
   version: string;
-  topology_mode: "single_node";
+  topology_mode: DeploymentTopology;
   pod_cidr: string;
   service_cidr: string;
   cluster_domain: string;
   control_plane_endpoint: string;
   cni_plugin: string;
   disable_ingress: boolean;
+  base_domain?: string;
+  machine_network_cidr?: string;
+  cluster_network_cidr?: string;
+  service_network_cidr?: string;
+  rendezvous_ip?: string;
+  host_prefix?: number;
+  dns_servers?: string[];
+  disconnected?: boolean;
   control_plane_count?: number;
   worker_count?: number;
+  target_modification_approved?: boolean;
+  cleanup_confirmation?: string;
+  cleanup_expected_confirmation?: string;
 };
 
 type HostOverrideForm = {
@@ -133,6 +181,7 @@ type HostOverrideForm = {
   ssh_port: number;
   ansible_user: string;
   node_name: string;
+  cluster_name: string;
   node_role: string;
   advertise_address: string;
   labels: string;
@@ -153,6 +202,11 @@ type InstallationTarget = {
   stdout: string;
   stderr: string;
   return_code?: number | null;
+  desired_role?: "control_plane" | "worker";
+  is_bootstrap?: boolean;
+  join_status?: string;
+  node_name?: string;
+  cluster_name?: string;
   operator_issue?: {
     code: string;
     title: string;
@@ -172,6 +226,8 @@ type InstallationDetailResponse = {
   template_name: string;
   template_system_type?: InstallerId;
   deployment_type: string;
+  topology?: DeploymentTopology;
+  bootstrap_host?: number | null;
   summary_message?: string;
   command?: string;
   inventory_content?: string;
@@ -203,6 +259,7 @@ type InstallationDetailResponse = {
       current_task?: string;
       seen_tasks?: number;
       completed_tasks?: number;
+      total_tasks?: number;
       recent_events?: Array<{
         kind: "play_started" | "task_started" | "task_result";
         play?: string;
@@ -214,9 +271,21 @@ type InstallationDetailResponse = {
         channel?: string;
         timestamp?: string;
       }>;
+      output_lines?: Array<{
+        channel: string;
+        line: string;
+        timestamp?: string;
+      }>;
       started_at?: string | null;
       updated_at?: string | null;
       detail?: string;
+      telemetry?: {
+        total_percentage?: number;
+        cluster_status?: string;
+        stage?: string;
+        stage_percentage?: number;
+        progress_info?: string;
+      };
     };
   } | null;
   cluster_config?: ClusterConfig;
@@ -255,6 +324,7 @@ type LaunchResult = {
   template_name?: string;
   template_system_type?: InstallerId;
   deployment_type?: string;
+  topology?: DeploymentTopology;
   target_hosts?: string[];
   target_host_ids?: number[];
   command?: string;
@@ -281,14 +351,14 @@ type CleanupRequest = {
   purpose?: "maintenance" | "platform_switch";
 };
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 const ACTIVE_INSTALLATION_STORAGE_KEY = "lindeploy-active-installation-id";
 const DISMISSED_INSTALLATION_STORAGE_KEY = "lindeploy-dismissed-installation-id";
 
 function buildDefaultClusterConfig(installer: InstallerId): ClusterConfig {
   if (installer === "k3s") {
     return {
-      cluster_name: "k3s-cluster-01",
+      cluster_name: "",
       version: "stable",
       topology_mode: "single_node",
       pod_cidr: "10.42.0.0/16",
@@ -300,8 +370,31 @@ function buildDefaultClusterConfig(installer: InstallerId): ClusterConfig {
     };
   }
 
+  if (installer === "openshift_sno") {
+    return {
+      cluster_name: "sno-01",
+      base_domain: "lab.test",
+      version: "4.20.3",
+      topology_mode: "single_node",
+      pod_cidr: "10.128.0.0/14",
+      service_cidr: "172.30.0.0/16",
+      cluster_domain: "cluster.local",
+      control_plane_endpoint: "",
+      cni_plugin: "OVNKubernetes",
+      disable_ingress: false,
+      machine_network_cidr: "192.168.130.0/24",
+      rendezvous_ip: "192.168.130.10",
+      cluster_network_cidr: "10.128.0.0/14",
+      service_network_cidr: "172.30.0.0/16",
+      host_prefix: 23,
+      dns_servers: ["192.168.130.1"],
+      target_modification_approved: true,
+      disconnected: true,
+    };
+  }
+
   return {
-    cluster_name: "kubernetes-cluster-01",
+    cluster_name: "",
     version: "stable",
     topology_mode: "single_node",
     pod_cidr: "192.168.0.0/16",
@@ -313,6 +406,20 @@ function buildDefaultClusterConfig(installer: InstallerId): ClusterConfig {
   };
 }
 
+function normalizeNodeName(value: string, fallback = "node"): string {
+  const normalized = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 63)
+    .replace(/-$/g, "");
+
+  return normalized || fallback;
+}
+
 function buildDefaultHostOverride(host: Host, installer: InstallerId): HostOverrideForm {
   const defaultRole = installer === "k3s" ? "server" : "control_plane";
 
@@ -322,7 +429,8 @@ function buildDefaultHostOverride(host: Host, installer: InstallerId): HostOverr
     ip_address: host.ip_address,
     ssh_port: host.ssh_port,
     ansible_user: host.credential_username || "",
-    node_name: host.name,
+    node_name: normalizeNodeName(host.hostname || host.name, `node-${host.id}`),
+    cluster_name: "",
     node_role: defaultRole,
     advertise_address: host.ip_address,
     labels: "",
@@ -337,70 +445,64 @@ function splitListInput(value: string): string[] {
     .filter(Boolean);
 }
 
-const stageMap: ExecutionStage[] = [
-  {
-    phase: "queued",
-    label: "Queued for execution",
-    detail: "The request is stored and waiting for the worker to start the installation task.",
-  },
-  {
-    phase: "ssh_check",
-    label: "Verifying SSH connectivity",
-    detail: "The backend is building inventory and validating access to each selected machine.",
-  },
-  {
-    phase: "running_playbook",
-    label: "Running Ansible playbook",
-    detail: "Node preparation, runtime configuration, and cluster bootstrap tasks are currently executing.",
-  },
-  {
-    phase: "finalizing",
-    label: "Finalizing result",
-    detail: "The backend is collecting logs, timings, and final Ansible status.",
-  },
-  {
-    phase: "completed",
-    label: "Completed",
-    detail: "The installation finished successfully and the final output is stored.",
-  },
-  {
-    phase: "failed",
-    label: "Failed",
-    detail: "The installation stopped with an error. Inspect the captured output below.",
-  },
-  {
-    phase: "cancelled",
-    label: "Cancelled",
-    detail: "The installation was stopped by the user before completion.",
-  },
-];
-
-const pipelineStageMap: ExecutionStage[] = stageMap.filter(
-  (stage) => stage.phase !== "failed" && stage.phase !== "cancelled"
-);
-
-function formatPhaseLabel(phase?: string) {
-  return formatExecutionPhaseLabel(stageMap, phase);
+function getStageMap(): ExecutionStage[] {
+  return [
+    {
+      phase: "queued",
+      label: i18n.t("monitor.stages.queuedLabel", "Queued for execution"),
+      detail: i18n.t("monitor.stages.queuedDetail", "The request is stored and waiting for the worker to start the installation task."),
+    },
+    {
+      phase: "ssh_check",
+      label: i18n.t("monitor.stages.sshCheckLabel", "Verifying SSH connectivity"),
+      detail: i18n.t("monitor.stages.sshCheckDetail", "The backend is building inventory and validating access to each selected machine."),
+    },
+    {
+      phase: "running_playbook",
+      label: i18n.t("monitor.stages.runningPlaybookLabel", "Running Ansible playbook"),
+      detail: i18n.t("monitor.stages.runningPlaybookDetail", "Node preparation, runtime configuration, and cluster bootstrap tasks are currently executing."),
+    },
+    {
+      phase: "finalizing",
+      label: i18n.t("monitor.stages.finalizingLabel", "Finalizing result"),
+      detail: i18n.t("monitor.stages.finalizingDetail", "The backend is collecting logs, timings, and final Ansible status."),
+    },
+    {
+      phase: "completed",
+      label: i18n.t("monitor.stages.completedLabel", "Completed"),
+      detail: i18n.t("monitor.stages.completedDetail", "The installation finished successfully and the final output is stored."),
+    },
+    {
+      phase: "failed",
+      label: i18n.t("monitor.stages.failedLabel", "Failed"),
+      detail: i18n.t("monitor.stages.failedDetail", "The installation stopped with an error. Inspect the captured output below."),
+    },
+    {
+      phase: "cancelled",
+      label: i18n.t("monitor.stages.cancelledLabel", "Cancelled"),
+      detail: i18n.t("monitor.stages.cancelledDetail", "The installation was stopped by the user before completion."),
+    },
+  ];
 }
 
-const installerWorkflowSteps = [
-  {
-    title: "Choose the target hosts",
-    detail: "Pick one or more prepared machines from the inventory. Each selected target receives its own single-node installation.",
-  },
-  {
-    title: "Verify SSH access",
-    detail: "Confirm the stored host credential and network reachability before any playbook execution starts.",
-  },
-  {
-    title: "Run the playbook",
-    detail: "Launch the selected installer workflow on every selected target and follow the live execution monitor below.",
-  },
-  {
-    title: "Use cleanup when needed",
-    detail: "Reset cluster state or fully uninstall the system from the same page after deployment.",
-  },
-] as const;
+function getPipelineStageMap(): ExecutionStage[] {
+  return getStageMap().filter(
+    (stage) => stage.phase !== "failed" && stage.phase !== "cancelled"
+  );
+}
+
+function formatPhaseLabel(phase?: string) {
+  return formatExecutionPhaseLabel(getStageMap(), phase);
+}
+
+function formatHistoryDate(value?: string | null) {
+  if (!value) {
+    return "Not recorded";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Not recorded" : date.toLocaleString();
+}
 
 function getLiveExecutionHeading(
   executionKind: "install" | "cleanup",
@@ -411,105 +513,171 @@ function getLiveExecutionHeading(
     const normalizedName = (templateName || "").toLowerCase();
 
     if (normalizedName.includes("reset")) {
-      return "Reset in Progress";
+      return String(i18n.t("monitor.resetResult", { defaultValue: "Reset in Progress" }));
     }
 
-    return "Cleanup in Progress";
+    return String(i18n.t("monitor.cleanupResult", { defaultValue: "Cleanup in Progress" }));
   }
 
-  return "Installation in Progress";
+  return String(i18n.t("wizard.stepExecution", { defaultValue: "Installation in Progress" }));
 }
 
 
 function getExecutionPresentation(
   status?: string | null,
   isCleanupExecution?: boolean,
-  installerLabel?: string
+  installerLabel?: string,
+  isResetExecution?: boolean
 ) {
+  const tr = (key: string, def: string, opt?: Record<string, any>) =>
+    String(i18n.t(key, { defaultValue: def, ...opt }));
+
+  const actionLabel = isResetExecution
+    ? tr("results.clusterReset", "Cluster reset")
+    : isCleanupExecution
+      ? tr("results.cleanup", "Cleanup")
+      : tr("results.installation", "Installation");
+
+  if (status === "cancelled") {
+    return {
+      title: tr("results.actionCancelledTitle", `${actionLabel} cancelled`, { action: actionLabel }),
+      summary: tr("results.actionCancelledSummary", `${actionLabel} was stopped before completing. Selected hosts were released.`, { action: actionLabel }),
+      recommendation: isCleanupExecution
+        ? tr("results.actionCancelledCleanupRec", "Review host state and rerun cleanup if needed before starting a new deployment.")
+        : tr("results.actionCancelledInstallRec", "Run cluster cleanup or reset before initiating another installation on these hosts."),
+    };
+  }
+
+  if (isResetExecution && status === "failed") {
+    return {
+      title: tr("results.resetFailedTitle", "Cluster reset failed"),
+      summary: tr("results.resetFailedSummary", "The cluster reset playbook encountered errors before clearing state on all targets."),
+      recommendation: tr("results.resetFailedRec", "Inspect host logs, resolve blocking resources or locks, then retry the reset."),
+    };
+  }
+
+  if (isResetExecution && status === "partial_success") {
+    return {
+      title: tr("results.resetPartialTitle", "Cluster reset completed with issues"),
+      summary: tr("results.resetPartialSummary", "Cluster reset succeeded on some hosts, but others could not be cleared."),
+      recommendation: tr("results.resetPartialRec", "Review the failed hosts and retry reset only on affected targets."),
+    };
+  }
+
+  if (isResetExecution) {
+    return {
+      title: tr("results.resetSuccessTitle", "Cluster reset completed successfully"),
+      summary: tr("results.resetSuccessSummary", "Cluster state and CNI artifacts were removed. System packages are preserved for faster reinstall."),
+      recommendation: tr("results.resetSuccessRec", "Hosts are ready for a clean deployment of the same platform."),
+    };
+  }
+
+  if (isCleanupExecution && status === "failed") {
+    return {
+      title: tr("results.cleanupFailedTitle", "Cleanup failed"),
+      summary: tr("results.cleanupFailedSummary", "The cleanup workflow stopped before the selected target state was fully removed."),
+      recommendation: tr("results.cleanupFailedRec", "Review each affected host below, correct the reported issue, then retry cleanup only on those targets."),
+    };
+  }
+
+  if (isCleanupExecution && status === "partial_success") {
+    return {
+      title: tr("results.cleanupPartialTitle", "Cleanup completed with issues"),
+      summary: tr("results.cleanupPartialSummary", "Cleanup succeeded on at least one target, but other machines still require attention."),
+      recommendation: tr("results.cleanupPartialRec", "Validate cleaned hosts and retry only the targets that remain in a failed state."),
+    };
+  }
+
   if (isCleanupExecution) {
     return {
-      title: "Cleanup completed successfully",
-      summary:
-        "The cleanup workflow finished successfully and the selected target state was removed without blocking errors.",
-      recommendation:
-        "Run the post-cleanup checks on the processed hosts to confirm that cluster state and runtime artifacts were removed as expected.",
+      title: tr("results.cleanupSuccessTitle", "Cleanup completed successfully"),
+      summary: tr("results.cleanupSuccessSummary", "The cleanup workflow finished successfully and the selected target state was removed without blocking errors."),
+      recommendation: tr("results.cleanupSuccessRec", "Run the post-cleanup checks on the processed hosts to confirm that cluster state and runtime artifacts were removed as expected."),
     };
   }
 
   if (status === "partial_success") {
     return {
-      title: "Installation completed with partial success",
-      summary:
-        "At least one selected target completed successfully, but one or more hosts still require operator intervention.",
-      recommendation:
-        "Review the failed hosts first, correct the reported issue, then retry only the affected targets.",
+      title: tr("results.installPartialTitle", "Installation completed with partial success"),
+      summary: tr("results.installPartialSummary", "At least one selected target completed successfully, but one or more hosts still require operator intervention."),
+      recommendation: tr("results.installPartialRec", "Review the failed hosts first, correct the reported issue, then retry only the affected targets."),
     };
   }
 
   if (status === "failed") {
     return {
-      title: "Installation failed",
-      summary:
-        "The workflow did not reach a successful final state on the selected targets.",
-      recommendation:
-        "Use the host-level output and controller diagnostics below to identify the root cause before retrying.",
+      title: tr("results.installFailedTitle", "Installation failed"),
+      summary: tr("results.installFailedSummary", "The workflow did not reach a successful final state on the selected targets."),
+      recommendation: tr("results.installFailedRec", "Use the host-level output below to identify the root cause before retrying."),
     };
   }
 
   return {
-    title: "Installation completed successfully",
-    summary: `${installerLabel || "The selected installer"} completed successfully and the target nodes should now be ready for validation.`,
-    recommendation:
-      "Run the validation commands on each successful host, then proceed with workload onboarding.",
+    title: tr("results.installSuccessTitle", "Installation completed successfully"),
+    summary: tr("results.installSuccessSummary", `${installerLabel || "The selected installer"} completed successfully and the target nodes should now be ready for validation.`, { installer: installerLabel || "The selected installer" }),
+    recommendation: tr("results.installSuccessRec", "Run the validation commands on each successful host, then proceed with workload onboarding."),
   };
+}
+
+function getFailureStage(message?: string) {
+  const normalized = (message || "").toLowerCase();
+  const tr = (key: string, def: string) => String(i18n.t(key, { defaultValue: def }));
+  if (normalized.includes("baseline detection")) return tr("results.stageBaseline", "Target eligibility check");
+  if (normalized.includes("ssh") || normalized.includes("unreachable")) return tr("results.stageSsh", "SSH connectivity");
+  if (normalized.includes("cleanup")) return tr("results.stageCleanup", "Cleanup launch");
+  if (normalized.includes("inventory")) return tr("results.stageInventory", "Inventory generation");
+  return tr("results.stagePlaybook", "Playbook launch or execution");
 }
 
 function getPrecheckPresentation(precheck?: PrecheckResult | null) {
   const failedHosts = precheck?.summary?.failed_hosts ?? 0;
+  const tr = (key: string, def: string) => String(i18n.t(key, { defaultValue: def }));
 
   if (failedHosts === 0) {
     return {
-      title: "SSH verification completed successfully",
-      summary:
-        "All selected targets accepted the SSH validation and are ready for playbook execution.",
-      recommendation:
-        "You can start the installation now. Keep this report for traceability if needed.",
+      title: tr("results.precheckSuccessTitle", "SSH verification completed successfully"),
+      summary: tr("results.precheckSuccessSummary", "All selected targets accepted the SSH validation and are ready for playbook execution."),
+      recommendation: tr("results.precheckSuccessRec", "You can start the installation now. Keep this report for traceability if needed."),
       color: "teal" as const,
     };
   }
 
   return {
-    title: "SSH verification completed with issues",
-    summary:
-      "At least one selected target failed the SSH validation. Healthy hosts are still identified below.",
-    recommendation:
-      "Correct SSH access, privilege escalation, or network reachability on the failing hosts before retrying them.",
+    title: tr("results.precheckIssuesTitle", "SSH verification completed with issues"),
+    summary: tr("results.precheckIssuesSummary", "At least one selected target failed the SSH validation. Healthy hosts are still identified below."),
+    recommendation: tr("results.precheckIssuesRec", "Correct SSH access, privilege escalation, or network reachability on the failing hosts before retrying them."),
     color: "yellow" as const,
   };
 }
 
 function getConnectivityOperatorAction(item: ConnectivityStatus) {
+  const tr = (key: string, def: string) => String(i18n.t(key, { defaultValue: def }));
   if (item.status === "success") {
-    return "This host is ready for playbook execution.";
+    return tr("results.connReady", "This host is ready for playbook execution.");
   }
 
   if (item.status === "unreachable") {
-    return "Check network reachability, host address, and SSH service availability before retrying.";
+    return tr("results.connUnreachable", "Check network reachability, host address, and SSH service availability before retrying.");
   }
 
-  return "Check credentials, sudo configuration, and remote access policy before retrying.";
+  return tr("results.connCheckCreds", "Check credentials, sudo configuration, and remote access policy before retrying.");
 }
 
 function getTargetOperatorAction(target: InstallationTarget) {
+  const tr = (key: string, def: string) => String(i18n.t(key, { defaultValue: def }));
   if (target.status === "success") {
-    return "Run the validation checks on this host and confirm cluster health.";
+    return tr("results.targetValidate", "Run the validation checks on this host and confirm cluster health.");
   }
 
   if (target.status === "failed" || target.status === "unreachable") {
-    return "Review the captured output, correct the underlying issue, then retry this host only.";
+    const diagnostics = `${target.output || ""} ${target.stderr || ""}`.toLowerCase();
+    if (diagnostics.includes("baseline detection")) {
+      return tr("results.targetBaselineErr", "Verify SSH access, sudo privileges, the detected operating system, and conflicting cluster artifacts, then retry this host.");
+    }
+    return tr("results.targetReviewErr", "Review the captured output, correct the underlying issue, then retry this host only.");
   }
 
-  return "Review the captured output for this host before deciding on the next action.";
+  return tr("results.targetReviewOutput", "Review the captured output for this host before deciding on the next action.");
 }
 
 function isInstallationActive(installation?: InstallationDetailResponse | null) {
@@ -527,21 +695,30 @@ function buildResultFromInstallation(installation: InstallationDetailResponse): 
     })
     .join("\n\n");
 
+  const isReset = (installation.template_name || "").toLowerCase().includes("reset");
+  const isCleanup = installation.deployment_type === "cleanup" || isReset;
+  const actionLabel = isReset ? "Cluster reset" : isCleanup ? "Cleanup" : "Installation";
+
   return {
     installation_id: installation.id,
     status: installation.status,
     message:
       installation.summary_message ||
       (installation.status === "success"
-        ? "Playbook executed successfully."
+        ? (isReset
+            ? "Cluster reset executed successfully."
+            : isCleanup
+              ? "Cleanup executed successfully."
+              : "Playbook executed successfully.")
         : installation.status === "partial_success"
-          ? "Playbook completed with issues on one or more targets."
-        : installation.status === "cancelled"
-          ? "Installation cancelled by user."
-          : "Playbook execution failed."),
+          ? `${actionLabel} completed with issues on one or more targets.`
+          : installation.status === "cancelled"
+            ? `${actionLabel} cancelled by user.`
+            : `${actionLabel} execution failed.`),
     template_name: installation.template_name,
     template_system_type: installation.template_system_type,
     deployment_type: installation.deployment_type,
+    topology: installation.topology,
     target_hosts: installation.targets.map((target) => target.host_name),
     target_host_ids: installation.targets.map((target) => target.host),
     command: installation.command,
@@ -661,12 +838,15 @@ type RunDeploymentMode = "full" | "installer" | "execution" | "history";
 type RunDeploymentProps = {
   forcedInstaller?: InstallerId;
   mode?: RunDeploymentMode;
+  targetInstallationId?: number;
 };
 
 export default function RunDeployment({
   forcedInstaller,
   mode = "full",
+  targetInstallationId,
 }: RunDeploymentProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [hosts, setHosts] = useState<Host[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -676,6 +856,10 @@ export default function RunDeployment({
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [installations, setInstallations] = useState<InstallationDetailResponse[]>([]);
   const [selectedHostIds, setSelectedHostIds] = useState<number[]>([]);
+  const [topology, setTopology] = useState<DeploymentTopology>("single_node");
+  const [controlPlaneHostIds, setControlPlaneHostIds] = useState<number[]>([]);
+  const [workerHostIds, setWorkerHostIds] = useState<number[]>([]);
+  const [bootstrapHostId, setBootstrapHostId] = useState<number | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [selectedInstaller, setSelectedInstaller] = useState<InstallerId>(forcedInstaller ?? "kubernetes");
   const [clusterConfig, setClusterConfig] = useState<ClusterConfig>(
@@ -688,6 +872,12 @@ export default function RunDeployment({
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showFailureModal, setShowFailureModal] = useState(false);
   const [showPlatformConflictModal, setShowPlatformConflictModal] = useState(false);
+  const [showOpenShiftRetryModal, setShowOpenShiftRetryModal] = useState(false);
+  const [openShiftRetryPullSecret, setOpenShiftRetryPullSecret] = useState("");
+  const [openShiftRetrySshKey, setOpenShiftRetrySshKey] = useState("");
+  const [openShiftRetryTrustBundle, setOpenShiftRetryTrustBundle] = useState("");
+  const [openShiftRetryError, setOpenShiftRetryError] = useState("");
+  const [restartingOpenShift, setRestartingOpenShift] = useState(false);
   const [showSshSuccessModal, setShowSshSuccessModal] = useState(false);
   const [cleanupRequest, setCleanupRequest] = useState<CleanupRequest | null>(null);
   const [resumeCandidate, setResumeCandidate] = useState<InstallationDetailResponse | null>(null);
@@ -708,37 +898,48 @@ export default function RunDeployment({
   const [liveCurrentTask, setLiveCurrentTask] = useState<string>("");
   const [liveSeenTasks, setLiveSeenTasks] = useState<number>(0);
   const [liveCompletedTasks, setLiveCompletedTasks] = useState<number>(0);
+  const [liveTotalTasks, setLiveTotalTasks] = useState<number>(0);
+  const [liveRecentEvents, setLiveRecentEvents] = useState<NonNullable<NonNullable<InstallationDetailResponse["celery_progress"]>["meta"]>["recent_events"]>([]);
+  const [liveOutputLines, setLiveOutputLines] = useState<NonNullable<NonNullable<InstallationDetailResponse["celery_progress"]>["meta"]>["output_lines"]>([]);
+  const [liveTelemetry, setLiveTelemetry] = useState<NonNullable<NonNullable<InstallationDetailResponse["celery_progress"]>["meta"]>["telemetry"]>(undefined);
   const [liveExecutionTitle, setLiveExecutionTitle] = useState("Installation in Progress");
+  const [wizardStep, setWizardStep] = useState<DeploymentWizardStep>(0);
   const loadingStartedAtRef = useRef<number | null>(null);
-  const lastSuccessModalInstallationIdRef = useRef<number | null>(null);
-  const lastFailureModalInstallationIdRef = useRef<number | null>(null);
-  const showDashboardSummary = mode !== "history";
-  const showResumeAlert = mode !== "history";
+  const showDashboardSummary = mode === "full" || mode === "execution";
+  const showResumeAlert = mode !== "history" && mode !== "execution";
   const showInstallerChooser = mode === "full";
   const showInstallerConfiguration = mode === "full" || mode === "installer";
   const showExecutionMonitoring = mode !== "history";
   const showHistoryPage = mode === "history";
   const showHistoryButton = mode !== "history";
+  const showGuidedInstaller = mode === "installer";
   const pageTitle =
     mode === "installer"
-      ? `${getInstallerOption(forcedInstaller ?? selectedInstaller).label} Deployment`
+      ? t("wizard.title", { installer: getInstallerOption(forcedInstaller ?? selectedInstaller).label, defaultValue: `Deploy ${getInstallerOption(forcedInstaller ?? selectedInstaller).label}` })
       : mode === "execution"
-        ? "Execution Center"
+        ? t("nav.executions", "Execution Center")
         : mode === "history"
-          ? "Installation History"
-          : "Run Playbook";
+          ? t("history.title", "Installation History")
+          : t("wizard.runPlaybook", "Run Playbook");
   const pageDescription =
     mode === "installer"
-      ? "Configure the selected installer, validate access, and launch the automation workflow from its dedicated page."
+      ? t("sections.kubernetes.description", "Choose a topology, select target hosts, verify SSH access, and follow the deployment from this workspace.")
       : mode === "execution"
-        ? "Monitor active runs, inspect the pipeline, and review the latest execution result."
+        ? t("sections.executions.description", "Monitor active runs, inspect the pipeline, and review the latest execution result.")
         : mode === "history"
-          ? "Review completed installation runs outside the live execution view and remove obsolete records."
-          : "Choose the target installer, validate SSH access, and run the selected automation workflow with live execution feedback.";
+          ? t("sections.history.description", "Review completed installation runs outside the live execution view and remove obsolete records.")
+          : t("sections.default.description", "Choose the target installer, validate SSH access, and run the selected automation workflow with live execution feedback.");
 
   const selectionSignature = useMemo(
-    () => [...selectedHostIds].sort((a, b) => a - b).join(","),
-    [selectedHostIds]
+    () =>
+      [
+        topology,
+        [...selectedHostIds].sort((a, b) => a - b).join(","),
+        [...controlPlaneHostIds].sort((a, b) => a - b).join(","),
+        [...workerHostIds].sort((a, b) => a - b).join(","),
+        bootstrapHostId ?? "none",
+      ].join("|"),
+    [bootstrapHostId, controlPlaneHostIds, selectedHostIds, topology, workerHostIds]
   );
 
   const selectedTemplate = useMemo(
@@ -777,15 +978,31 @@ export default function RunDeployment({
     [hostOverrides, selectedHosts, selectedInstaller]
   );
 
-  const plannedControlPlaneCount = useMemo(() => {
+  const singleNodeControlPlaneCount = useMemo(() => {
     const controlRoles = selectedInstaller === "k3s" ? ["server"] : ["control_plane"];
     return selectedHostOverrideList.filter((host) => controlRoles.includes(host.node_role)).length;
   }, [selectedHostOverrideList, selectedInstaller]);
 
-  const plannedWorkerCount = useMemo(() => {
+  const singleNodeWorkerCount = useMemo(() => {
     const workerRoles = selectedInstaller === "k3s" ? ["agent"] : ["worker"];
     return selectedHostOverrideList.filter((host) => workerRoles.includes(host.node_role)).length;
   }, [selectedHostOverrideList, selectedInstaller]);
+
+  const plannedControlPlaneCount =
+    topology === "multi_node" ? controlPlaneHostIds.length : singleNodeControlPlaneCount;
+  const plannedWorkerCount =
+    topology === "multi_node" ? workerHostIds.length : singleNodeWorkerCount;
+  const bootstrapHost = useMemo(
+    () => hosts.find((host) => host.id === bootstrapHostId) || null,
+    [bootstrapHostId, hosts]
+  );
+  const topologyReady =
+    topology === "single_node"
+      ? selectedHostIds.length > 0
+      : controlPlaneHostIds.length > 0 &&
+        workerHostIds.length > 0 &&
+        bootstrapHostId !== null &&
+        controlPlaneHostIds.includes(bootstrapHostId);
 
   const resultTargetSummary = useMemo(
     () => getTargetStatusSummary(result?.targets || []),
@@ -814,9 +1031,12 @@ export default function RunDeployment({
     [precheckResult]
   );
 
+  const currentStageMap = useMemo(() => getStageMap(), [i18n.language]);
+  const currentPipelineStageMap = useMemo(() => getPipelineStageMap(), [i18n.language]);
+
   const activeStage = useMemo(() => {
-    return stageMap.find((stage) => stage.phase === livePhase) || stageMap[0];
-  }, [livePhase]);
+    return currentStageMap.find((stage) => stage.phase === livePhase) || currentStageMap[0];
+  }, [currentStageMap, livePhase]);
 
   const pipelinePhase = useMemo(() => {
     if (livePhase && livePhase !== "failed" && livePhase !== "cancelled") {
@@ -835,8 +1055,8 @@ export default function RunDeployment({
       return -1;
     }
 
-    return pipelineStageMap.findIndex((stage) => stage.phase === pipelinePhase);
-  }, [pipelinePhase]);
+    return currentPipelineStageMap.findIndex((stage) => stage.phase === pipelinePhase);
+  }, [currentPipelineStageMap, pipelinePhase]);
 
   const clusterTargetHosts = useMemo(() => {
     if (result?.target_hosts && result.target_hosts.length > 0) {
@@ -889,7 +1109,11 @@ export default function RunDeployment({
       (result?.targets || []).filter(
         (target) =>
           target.operator_issue?.code === "k3s_conflict" ||
-          target.operator_issue?.code === "kubernetes_conflict"
+          target.operator_issue?.code === "kubernetes_conflict" ||
+          target.operator_issue?.code === "kubernetes_identity_conflict" ||
+          target.operator_issue?.code === "openshift_running_vm" ||
+          target.operator_issue?.code === "openshift_storage_conflict" ||
+          target.operator_issue?.code === "openshift_bootstrap_timeout"
       ),
     [result?.targets]
   );
@@ -897,6 +1121,22 @@ export default function RunDeployment({
   const conflictCleanupSystem = useMemo<InstallerId | null>(
     () => platformConflictTargets[0]?.operator_issue?.cleanup_system || null,
     [platformConflictTargets]
+  );
+
+  const hasKubernetesIdentityConflict = useMemo(
+    () =>
+      platformConflictTargets.some(
+        (target) => target.operator_issue?.code === "kubernetes_identity_conflict"
+      ),
+    [platformConflictTargets]
+  );
+
+  const conflictCleanupTargetIds = useMemo(
+    () =>
+      hasKubernetesIdentityConflict
+        ? Array.from(new Set((result?.targets || []).map((target) => target.host)))
+        : platformConflictTargets.map((target) => target.host),
+    [hasKubernetesIdentityConflict, platformConflictTargets, result?.targets]
   );
 
   const conflictCleanupLabel = conflictCleanupSystem
@@ -948,11 +1188,15 @@ export default function RunDeployment({
     return explicitWorkers;
   }, [clusterSelectedHosts, clusterControlPlaneCount, clusterTargetHosts, result]);
 
-  const isCleanupExecution = result?.deployment_type === "cleanup";
+  const isResetExecution = (result?.template_name || "").toLowerCase().includes("reset");
+  const isCleanupExecution = result?.deployment_type === "cleanup" || isResetExecution;
 
   const clusterTopologyLabel = useMemo(() => {
+    if (isResetExecution) {
+      return "Cluster state and CNI artifacts reset on selected hosts";
+    }
     if (result?.deployment_type === "cleanup") {
-      return "Cluster state removed from the selected host";
+      return "Cluster state and platform packages removed from selected hosts";
     }
     if (result?.deployment_type === "single_node") {
       return activeInstallerSystem === "k3s"
@@ -960,7 +1204,7 @@ export default function RunDeployment({
         : "Single-node control plane with workload scheduling enabled";
     }
     return "Multi-node topology";
-  }, [activeInstallerSystem, result]);
+  }, [activeInstallerSystem, isResetExecution, result]);
 
   const postInstallChecks = useMemo(
     () => {
@@ -1083,7 +1327,7 @@ export default function RunDeployment({
   }
 
   async function fetchInstallations() {
-    const response = await fetch(`${BASE_URL}/api/installations/?limit=50`);
+    const response = await fetch(`${BASE_URL}/api/installations/?limit=all`);
     if (!response.ok) {
       throw new Error("Failed to load installation history.");
     }
@@ -1122,6 +1366,10 @@ export default function RunDeployment({
     setLiveCurrentTask("");
     setLiveSeenTasks(0);
     setLiveCompletedTasks(0);
+    setLiveTotalTasks(0);
+    setLiveRecentEvents([]);
+    setLiveOutputLines([]);
+    setLiveTelemetry(undefined);
     setProgress(0);
     loadingStartedAtRef.current = null;
     persistActiveInstallationId(null);
@@ -1141,6 +1389,15 @@ export default function RunDeployment({
     }
 
     if (data.status === "pending" || data.status === "running") {
+      setResult(null);
+      setLiveExecutionTitle(
+        getLiveExecutionHeading(
+          data.deployment_type === "cleanup" ? "cleanup" : "install",
+          data.deployment_type,
+          data.template_name
+        )
+      );
+      setWizardStep(3);
       setResumeCandidate(null);
       setLoading(true);
       setActiveInstallationId(data.id);
@@ -1153,6 +1410,10 @@ export default function RunDeployment({
       setLiveCurrentTask(data.celery_progress?.meta?.current_task || "");
       setLiveSeenTasks(data.celery_progress?.meta?.seen_tasks || 0);
       setLiveCompletedTasks(data.celery_progress?.meta?.completed_tasks || 0);
+      setLiveTotalTasks(data.celery_progress?.meta?.total_tasks || 0);
+      setLiveRecentEvents(data.celery_progress?.meta?.recent_events || []);
+      setLiveOutputLines(data.celery_progress?.meta?.output_lines || []);
+      setLiveTelemetry(data.celery_progress?.meta?.telemetry || undefined);
       persistActiveInstallationId(data.id);
       return;
     }
@@ -1178,8 +1439,15 @@ export default function RunDeployment({
         refreshOperationalData(),
       ]);
 
+      if (targetInstallationId) {
+        await resumeInstallationMonitoring(targetInstallationId);
+        return;
+      }
+
       const persistedId = window.localStorage.getItem(ACTIVE_INSTALLATION_STORAGE_KEY);
       const dismissedId = window.localStorage.getItem(DISMISSED_INSTALLATION_STORAGE_KEY);
+
+      let candidateToResume: InstallationDetailResponse | null = null;
 
       if (persistedId) {
         const response = await fetch(`${BASE_URL}/api/installations/${persistedId}/`);
@@ -1190,29 +1458,62 @@ export default function RunDeployment({
           const installation = await parseJsonResponse<InstallationDetailResponse>(response);
 
           if (isInstallationActive(installation)) {
-            if (dismissedId !== String(installation.id)) {
-              setResumeCandidate(installation);
-            }
-            return;
+            candidateToResume = installation;
+          } else {
+            persistActiveInstallationId(null);
           }
-
-          persistActiveInstallationId(null);
         }
       }
 
-      const latestActiveInstallation = operationalData.installationsData.find(
-        (installation) => isInstallationActive(installation)
-      );
+      if (!candidateToResume) {
+        const latestActiveInstallation = operationalData.installationsData.find(
+          (installation) => isInstallationActive(installation)
+        );
 
-      if (latestActiveInstallation && dismissedId !== String(latestActiveInstallation.id)) {
-        setResumeCandidate(latestActiveInstallation);
+        if (latestActiveInstallation) {
+          candidateToResume = latestActiveInstallation;
+        }
+      }
+
+      if (candidateToResume) {
+        if (mode === "execution") {
+          persistDismissedInstallationId(null);
+          await resumeInstallationMonitoring(candidateToResume.id);
+          return;
+        }
+
+        if (dismissedId !== String(candidateToResume.id)) {
+          setResumeCandidate(candidateToResume);
+        }
       }
     }
 
     void initializePage().catch((err) =>
       setError(err instanceof Error ? err.message : "Failed to initialize page.")
     );
-  }, []);
+  }, [mode, targetInstallationId]);
+
+  useEffect(() => {
+    if (mode !== "execution" || loading) {
+      return;
+    }
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const { installationsData } = await refreshOperationalData();
+        const active = installationsData.find((installation) => isInstallationActive(installation));
+        if (active && active.id !== activeInstallationId) {
+          await resumeInstallationMonitoring(active.id);
+        }
+      } catch {
+        // ignore background poll errors
+      }
+    }, 2500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [mode, loading, activeInstallationId]);
 
   useEffect(() => {
     if (!forcedInstaller || selectedInstaller === forcedInstaller) {
@@ -1234,6 +1535,11 @@ export default function RunDeployment({
 
   useEffect(() => {
     setClusterConfig(buildDefaultClusterConfig(selectedInstaller));
+    setTopology("single_node");
+    setControlPlaneHostIds([]);
+    setWorkerHostIds([]);
+    setBootstrapHostId(null);
+    setWizardStep(0);
   }, [selectedInstaller]);
 
   useEffect(() => {
@@ -1252,6 +1558,7 @@ export default function RunDeployment({
               ssh_port: existing.ssh_port,
               ansible_user: existing.ansible_user,
               node_name: existing.node_name,
+              cluster_name: existing.cluster_name,
               advertise_address: existing.advertise_address,
               labels: existing.labels,
               taints: existing.taints,
@@ -1316,6 +1623,16 @@ export default function RunDeployment({
         setLiveCurrentTask(data.celery_progress?.meta?.current_task || "");
         setLiveSeenTasks(data.celery_progress?.meta?.seen_tasks || 0);
         setLiveCompletedTasks(data.celery_progress?.meta?.completed_tasks || 0);
+        setLiveTotalTasks(data.celery_progress?.meta?.total_tasks || 0);
+        if (Array.isArray(data.celery_progress?.meta?.recent_events)) {
+          setLiveRecentEvents(data.celery_progress.meta.recent_events);
+        }
+        if (Array.isArray(data.celery_progress?.meta?.output_lines)) {
+          setLiveOutputLines(data.celery_progress.meta.output_lines);
+        }
+        if (data.celery_progress?.meta?.telemetry) {
+          setLiveTelemetry(data.celery_progress.meta.telemetry);
+        }
         if (
           data.status === "success" ||
           data.status === "partial_success" ||
@@ -1337,7 +1654,7 @@ export default function RunDeployment({
     void pollInstallation();
     const intervalId = window.setInterval(() => {
       void pollInstallation();
-    }, 2000);
+    }, 1000);
 
     return () => {
       cancelled = true;
@@ -1354,28 +1671,21 @@ export default function RunDeployment({
       return;
     }
 
-    if (lastSuccessModalInstallationIdRef.current === result.installation_id) {
-      return;
-    }
-
-    lastSuccessModalInstallationIdRef.current = result.installation_id;
     setShowSuccessModal(true);
-  }, [result]);
+  }, [mode, result]);
 
   useEffect(() => {
     if (mode === "history") {
       return;
     }
 
-    if (result?.status !== "failed" && result?.status !== "partial_success") {
+    if (
+      result?.status !== "failed" &&
+      result?.status !== "partial_success" &&
+      result?.status !== "cancelled"
+    ) {
       return;
     }
-
-    if (lastFailureModalInstallationIdRef.current === result.installation_id) {
-      return;
-    }
-
-    lastFailureModalInstallationIdRef.current = result.installation_id;
 
     if (platformConflictTargets.length > 0) {
       setShowFailureModal(false);
@@ -1383,21 +1693,91 @@ export default function RunDeployment({
       return;
     }
 
-    setShowFailureModal(true);
-  }, [platformConflictTargets.length, result]);
+    if (result?.status !== "cancelled") {
+      setShowFailureModal(true);
+    }
+  }, [mode, platformConflictTargets.length, result]);
 
   function toggleHost(hostId: number, checked: boolean) {
     if (checked) {
-      setSelectedHostIds((prev) => [...prev, hostId]);
+      setSelectedHostIds((prev) => (prev.includes(hostId) ? prev : [...prev, hostId]));
       return;
     }
 
     setSelectedHostIds((prev) => prev.filter((id) => id !== hostId));
+    setControlPlaneHostIds((prev) => prev.filter((id) => id !== hostId));
+    setWorkerHostIds((prev) => prev.filter((id) => id !== hostId));
+    if (bootstrapHostId === hostId) {
+      setBootstrapHostId(null);
+    }
+  }
+
+  function handleTopologyChange(nextTopology: DeploymentTopology) {
+    setTopology(nextTopology);
+    setClusterConfig((current) => ({ ...current, topology_mode: nextTopology }));
+
+    if (nextTopology === "single_node") {
+      setControlPlaneHostIds([]);
+      setWorkerHostIds([]);
+      setBootstrapHostId(null);
+      return;
+    }
+
+    const [firstHostId, ...remainingHostIds] = selectedHostIds;
+    setControlPlaneHostIds(firstHostId ? [firstHostId] : []);
+    setWorkerHostIds(remainingHostIds);
+    setBootstrapHostId(firstHostId ?? null);
+  }
+
+  function setMultiNodeHostRole(
+    hostId: number,
+    role: "unassigned" | "control_plane" | "worker"
+  ) {
+    const nextControlPlaneIds = controlPlaneHostIds.filter((id) => id !== hostId);
+    const nextWorkerIds = workerHostIds.filter((id) => id !== hostId);
+
+    if (role === "control_plane") {
+      nextControlPlaneIds.push(hostId);
+    } else if (role === "worker") {
+      nextWorkerIds.push(hostId);
+    }
+
+    setControlPlaneHostIds(nextControlPlaneIds);
+    setWorkerHostIds(nextWorkerIds);
+    setSelectedHostIds([...nextControlPlaneIds, ...nextWorkerIds]);
+
+    if (role === "control_plane" && bootstrapHostId === null) {
+      setBootstrapHostId(hostId);
+    } else if (bootstrapHostId === hostId && role !== "control_plane") {
+      setBootstrapHostId(nextControlPlaneIds[0] ?? null);
+    }
+  }
+
+  function updateHostIdentity(
+    hostId: number,
+    field: "node_name" | "cluster_name",
+    value: string
+  ) {
+    setHostOverrides((current) => {
+      const host = hosts.find((item) => item.id === hostId);
+      if (!host) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [hostId]: {
+          ...(current[hostId] || buildDefaultHostOverride(host, selectedInstaller)),
+          [field]: value,
+        },
+      };
+    });
   }
 
   function buildClusterPayload(): ClusterConfig {
     return {
       ...clusterConfig,
+      topology_mode: topology,
       control_plane_count: plannedControlPlaneCount,
       worker_count: plannedWorkerCount,
     };
@@ -1406,6 +1786,18 @@ export default function RunDeployment({
   function buildHostOverridesPayload(): HostOverridePayload[] {
     return selectedHostOverrideList.map((hostOverride) => ({
       ...hostOverride,
+      node_name: normalizeNodeName(hostOverride.node_name, `node-${hostOverride.host_id}`),
+      cluster_name: hostOverride.cluster_name.trim(),
+      node_role:
+        topology === "multi_node"
+          ? controlPlaneHostIds.includes(hostOverride.host_id)
+            ? selectedInstaller === "k3s"
+              ? "server"
+              : "control_plane"
+            : selectedInstaller === "k3s"
+              ? "agent"
+              : "worker"
+          : hostOverride.node_role,
       labels: splitListInput(hostOverride.labels),
       taints: splitListInput(hostOverride.taints),
     }));
@@ -1462,6 +1854,10 @@ export default function RunDeployment({
     hostIds?: number[];
     clusterConfigOverride?: ClusterConfig;
     hostOverridesOverride?: HostOverridePayload[];
+    topologyOverride?: DeploymentTopology;
+    controlPlaneHostIdsOverride?: number[];
+    workerHostIdsOverride?: number[];
+    bootstrapHostIdOverride?: number | null;
   }) {
     const effectiveMode = options?.deploymentMode || deploymentMode;
     const effectiveTemplateId =
@@ -1471,6 +1867,18 @@ export default function RunDeployment({
     const effectiveHostIds = options?.hostIds || selectedHostIds;
     const effectiveClusterConfig = options?.clusterConfigOverride || buildClusterPayload();
     const effectiveHostOverrides = options?.hostOverridesOverride || buildHostOverridesPayload();
+    const effectiveTopology =
+      executionKind === "cleanup" ? "single_node" : options?.topologyOverride || topology;
+    const effectiveControlPlaneHostIds =
+      effectiveTopology === "multi_node"
+        ? options?.controlPlaneHostIdsOverride || controlPlaneHostIds
+        : [];
+    const effectiveWorkerHostIds =
+      effectiveTopology === "multi_node" ? options?.workerHostIdsOverride || workerHostIds : [];
+    const effectiveBootstrapHostId =
+      effectiveTopology === "multi_node"
+        ? options?.bootstrapHostIdOverride ?? bootstrapHostId
+        : null;
     const effectiveTemplate =
       typeof effectiveTemplateId === "number"
         ? templates.find((template) => template.id === effectiveTemplateId) || null
@@ -1483,15 +1891,24 @@ export default function RunDeployment({
     setError("");
     setResult(null);
     setLiveStatus("pending");
-    setLivePhase("queued");
+    const isResetLaunch = (effectiveTemplate?.name || "").toLowerCase().includes("reset");
+    const isCleanupLaunch = executionKind === "cleanup" || isResetLaunch;
     setLiveSummaryMessage(
-      executionKind === "cleanup" ? "Cleanup queued successfully." : "Installation queued successfully."
+      isResetLaunch
+        ? "Cluster reset queued successfully."
+        : isCleanupLaunch
+          ? "Cleanup queued successfully."
+          : "Installation queued successfully."
     );
     setLiveCurrentPlay("");
     setLiveCurrentRole("");
     setLiveCurrentTask("");
     setLiveSeenTasks(0);
     setLiveCompletedTasks(0);
+    setLiveTotalTasks(0);
+    setLiveRecentEvents([]);
+    setLiveOutputLines([]);
+    setWizardStep(3);
     setLiveExecutionTitle(
       getLiveExecutionHeading(executionKind, effectiveTemplate?.deployment_type, effectiveTemplate?.name)
     );
@@ -1509,6 +1926,10 @@ export default function RunDeployment({
                 deployment_mode: "manual",
                 template_id: effectiveTemplateId,
                 host_ids: effectiveHostIds,
+                topology: effectiveTopology,
+                control_plane_host_ids: effectiveControlPlaneHostIds,
+                worker_host_ids: effectiveWorkerHostIds,
+                bootstrap_host_id: effectiveBootstrapHostId,
                 cluster_config: effectiveClusterConfig,
                 host_overrides: effectiveHostOverrides,
               }
@@ -1516,6 +1937,10 @@ export default function RunDeployment({
                 system_type: effectiveSystemType,
                 deployment_mode: "auto",
                 host_ids: effectiveHostIds,
+                topology: effectiveTopology,
+                control_plane_host_ids: effectiveControlPlaneHostIds,
+                worker_host_ids: effectiveWorkerHostIds,
+                bootstrap_host_id: effectiveBootstrapHostId,
                 cluster_config: effectiveClusterConfig,
                 host_overrides: effectiveHostOverrides,
               }
@@ -1541,12 +1966,47 @@ export default function RunDeployment({
           : executionKind === "cleanup"
             ? "Cleanup launch failed."
             : "Launch failed.";
+      const failedTargets: InstallationTarget[] = effectiveHostIds.map((hostId, index) => {
+        const host = hosts.find((candidate) => candidate.id === hostId);
+        const override = effectiveHostOverrides.find((candidate) => candidate.host_id === hostId);
+        const desiredRole = effectiveControlPlaneHostIds.includes(hostId)
+          ? "control_plane"
+          : effectiveWorkerHostIds.includes(hostId)
+            ? "worker"
+            : undefined;
+
+        return {
+          id: -(index + 1),
+          host: hostId,
+          host_name: host?.name || override?.host_name || `Target ${hostId}`,
+          status: "failed",
+          output: failureMessage,
+          stdout: "",
+          stderr: failureMessage,
+          return_code: null,
+          desired_role: desiredRole,
+          is_bootstrap: effectiveBootstrapHostId === hostId,
+          join_status: "not_started",
+          node_name: override?.node_name,
+          cluster_name: override?.cluster_name || effectiveClusterConfig.cluster_name,
+        };
+      });
+
       setError(failureMessage);
       setResult({
         installation_id: activeInstallationId ?? 0,
         status: "failed",
         message: failureMessage,
         stderr: failureMessage,
+        template_name: effectiveTemplate?.name || `${effectiveSystemType} ${executionKind}`,
+        template_system_type: effectiveSystemType,
+        deployment_type: executionKind === "cleanup" ? "cleanup" : effectiveTemplate?.deployment_type,
+        topology: effectiveTopology,
+        target_hosts: failedTargets.map((target) => target.host_name),
+        target_host_ids: effectiveHostIds,
+        cluster_config: effectiveClusterConfig,
+        host_overrides: effectiveHostOverrides,
+        targets: failedTargets,
       });
       clearLiveInstallationState();
     }
@@ -1558,8 +2018,21 @@ export default function RunDeployment({
       return;
     }
 
-    if (!clusterConfig.cluster_name.trim()) {
-      setError("Cluster name is required.");
+    if (topology === "multi_node" && controlPlaneHostIds.length === 0) {
+      setError("Assign at least one control-plane host to the multi-node cluster.");
+      return;
+    }
+
+    if (topology === "multi_node" && workerHostIds.length === 0) {
+      setError("Assign at least one worker host to the multi-node cluster.");
+      return;
+    }
+
+    if (
+      topology === "multi_node" &&
+      (bootstrapHostId === null || !controlPlaneHostIds.includes(bootstrapHostId))
+    ) {
+      setError("Select one control-plane host to bootstrap the cluster.");
       return;
     }
 
@@ -1572,6 +2045,10 @@ export default function RunDeployment({
       deploymentMode,
       templateId: selectedTemplateId ? Number(selectedTemplateId) : undefined,
       executionKind: "install",
+      topologyOverride: topology,
+      controlPlaneHostIdsOverride: controlPlaneHostIds,
+      workerHostIdsOverride: workerHostIds,
+      bootstrapHostIdOverride: bootstrapHostId,
     });
   }
 
@@ -1582,8 +2059,24 @@ export default function RunDeployment({
     setShowPlatformConflictModal(false);
   }
 
+  function buildCleanupConfirmation(request: CleanupRequest) {
+    const defaultClusterName =
+      request.systemType === "k3s"
+        ? "k3s-cluster-01"
+        : request.systemType === "openshift_sno"
+        ? "single"
+        : "kubernetes-cluster-01";
+    const clusterName = request.clusterConfig.cluster_name?.trim() || defaultClusterName;
+    const stableTargetIds = hosts
+      .filter((host) => request.hostIds.includes(host.id))
+      .map((host) => host.stable_id)
+      .sort()
+      .join(",");
+    return `CLEAN ${clusterName} ON ${stableTargetIds}`;
+  }
+
   function handlePlatformConflictCleanupLaunch() {
-    const conflictHostIds = platformConflictTargets.map((target) => target.host);
+    const conflictHostIds = conflictCleanupTargetIds;
 
     if (!conflictCleanupSystem || !hasConflictCleanupOption) {
       setError("The required cleanup workflow is not registered. Refresh installer data and try again.");
@@ -1595,25 +2088,34 @@ export default function RunDeployment({
       return;
     }
 
-    const conflictHostOverrides = hosts
-      .filter((host) => conflictHostIds.includes(host.id))
-      .map((host) => {
-        const hostOverride = buildDefaultHostOverride(host, conflictCleanupSystem);
-        return {
-          ...hostOverride,
-          labels: splitListInput(hostOverride.labels),
-          taints: splitListInput(hostOverride.taints),
-        };
-      });
+    const conflictClusterConfig =
+      (result?.cluster_config as ClusterConfig | undefined) ||
+      buildDefaultClusterConfig(conflictCleanupSystem);
+
+    const conflictHostOverrides =
+      result?.host_overrides && result.host_overrides.length > 0
+        ? result.host_overrides.filter((o) => conflictHostIds.includes(o.host_id))
+        : hosts
+            .filter((host) => conflictHostIds.includes(host.id))
+            .map((host) => {
+              const hostOverride = buildDefaultHostOverride(host, conflictCleanupSystem);
+              return {
+                ...hostOverride,
+                labels: splitListInput(hostOverride.labels),
+                taints: splitListInput(hostOverride.taints),
+              };
+            });
 
     setSelectedHostIds(conflictHostIds);
     openCleanupDialog({
       systemType: conflictCleanupSystem,
       hostIds: conflictHostIds,
-      clusterConfig: buildDefaultClusterConfig(conflictCleanupSystem),
+      clusterConfig: conflictClusterConfig,
       hostOverrides: conflictHostOverrides,
       title:
-        conflictHostIds.length === 1
+        hasKubernetesIdentityConflict
+          ? `Reset Kubernetes identity on ${conflictHostIds.length} cluster target(s)`
+          : conflictHostIds.length === 1
           ? `Cleanup ${conflictCleanupLabel} on ${platformConflictTargets[0].host_name}`
           : `Cleanup ${conflictCleanupLabel} on ${conflictHostIds.length} affected targets`,
       purpose: "platform_switch",
@@ -1632,7 +2134,9 @@ export default function RunDeployment({
       return;
     }
 
+    const expectedConfirmation = buildCleanupConfirmation(request);
     setCleanupRequest(null);
+
 
     await queueInstallation({
       deploymentMode: "manual",
@@ -1640,7 +2144,12 @@ export default function RunDeployment({
       executionKind: "cleanup",
       systemType: request.systemType,
       hostIds: request.hostIds,
-      clusterConfigOverride: request.clusterConfig,
+      clusterConfigOverride: {
+        ...request.clusterConfig,
+        target_modification_approved: true,
+        cleanup_confirmation: expectedConfirmation,
+        cleanup_expected_confirmation: expectedConfirmation,
+      },
       hostOverridesOverride: request.hostOverrides,
     });
 
@@ -1762,6 +2271,103 @@ export default function RunDeployment({
     });
   }
 
+  function openOpenShiftRetryDialog() {
+    setShowFailureModal(false);
+    setOpenShiftRetryError("");
+    setShowOpenShiftRetryModal(true);
+  }
+
+  function closeOpenShiftRetryDialog() {
+    if (restartingOpenShift) return;
+    setShowOpenShiftRetryModal(false);
+    setOpenShiftRetryPullSecret("");
+    setOpenShiftRetrySshKey("");
+    setOpenShiftRetryTrustBundle("");
+    setOpenShiftRetryError("");
+  }
+
+  async function handleOpenShiftRetry() {
+    if (!result || result.installation_id <= 0 || restartingOpenShift) return;
+    if (!openShiftRetryPullSecret.trim() || !openShiftRetrySshKey.trim()) {
+      setOpenShiftRetryError("Enter the Red Hat pull secret and SSH public key.");
+      return;
+    }
+
+    setRestartingOpenShift(true);
+    setOpenShiftRetryError("");
+    try {
+      const secretResponse = await fetch(`${BASE_URL}/api/openshift/secrets/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pull_secret: openShiftRetryPullSecret,
+          ssh_public_key: openShiftRetrySshKey,
+          additional_trust_bundle: openShiftRetryTrustBundle,
+        }),
+      });
+      const secretData = await parseJsonResponse<OpenShiftSecretResponse>(secretResponse);
+      if (!secretResponse.ok || !secretData.secret_reference) {
+        throw new Error(
+          secretData.message ||
+            (secretData.errors ? JSON.stringify(secretData.errors) : "Could not create retry credentials.")
+        );
+      }
+
+      const retryResponse = await fetch(
+        `${BASE_URL}/api/installations/${result.installation_id}/retry-openshift/`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ secret_reference: secretData.secret_reference }),
+        }
+      );
+      const retryData = await parseJsonResponse<OpenShiftRetryResponse>(retryResponse);
+      if (!retryResponse.ok || !retryData.installation_id) {
+        throw new Error(retryData.message || "The OpenShift installation could not be restarted.");
+      }
+
+      setOpenShiftRetryPullSecret("");
+      setOpenShiftRetrySshKey("");
+      setOpenShiftRetryTrustBundle("");
+      setShowOpenShiftRetryModal(false);
+      setShowFailureModal(false);
+      setResult(null);
+      setError("");
+      persistDismissedInstallationId(null);
+      persistActiveInstallationId(retryData.installation_id);
+      await refreshOperationalData();
+      await resumeInstallationMonitoring(retryData.installation_id);
+    } catch (retryError) {
+      setOpenShiftRetryError(
+        retryError instanceof Error
+          ? retryError.message
+          : "The OpenShift installation could not be restarted."
+      );
+    } finally {
+      setRestartingOpenShift(false);
+    }
+  }
+
+  function handleStartAnotherInstallation() {
+    clearLiveInstallationState();
+    setShowSuccessModal(false);
+    setShowFailureModal(false);
+    setShowPlatformConflictModal(false);
+    setCleanupRequest(null);
+    setResult(null);
+    setError("");
+    setPrecheckResult(null);
+    setSelectedHostIds([]);
+    setControlPlaneHostIds([]);
+    setWorkerHostIds([]);
+    setBootstrapHostId(null);
+    setHostOverrides({});
+    setTopology("single_node");
+    setClusterConfig(buildDefaultClusterConfig(selectedInstaller));
+    setWizardStep(0);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   async function handleCancelInstallation() {
     if (activeInstallationId === null) {
       return;
@@ -1788,9 +2394,28 @@ export default function RunDeployment({
       persistDismissedInstallationId(null);
       clearLiveInstallationState();
       await refreshOperationalData();
+
+      const isReset = (data.installation.template_name || "").toLowerCase().includes("reset");
+      const isCleanup = data.installation.deployment_type === "cleanup" || isReset;
+      const actionLabel = isReset
+        ? t("results.clusterReset", "Cluster Reset")
+        : isCleanup
+          ? t("results.cleanup", "Cleanup")
+          : t("results.installation", "Installation");
+
+      notifications.show({
+        title: `${actionLabel} ${t("execution.statusCancelled", "Cancelled")}`,
+        message: data.message || t("results.actionStopped", "{{action}} was stopped.", { action: actionLabel }),
+        color: "yellow",
+        icon: <IconAlertCircle size={18} />,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Cancellation failed.");
+      setError(err instanceof Error ? err.message : t("execution.cancellationFailed", "Cancellation failed."));
     }
+  }
+
+  function handleRequestCancel() {
+    void handleCancelInstallation();
   }
 
   async function handleClearHistory() {
@@ -1865,14 +2490,14 @@ export default function RunDeployment({
       <Stack gap="md">
         <Group justify="space-between" align="center">
           <div>
-            <Title order={3}>Installation History</Title>
+            <Title order={3}>{t("history.title", "Installation History")}</Title>
             <Text size="sm" c="dimmed" mt={4}>
-              Stored runs are kept outside the live monitor and can be deleted permanently from here.
+              {t("history.description", "Stored runs are kept outside the live monitor and can be deleted permanently from here.")}
             </Text>
           </div>
           <Group gap="sm">
             <Badge color="red" variant="light">
-              saved {historyInstallations.length}
+              {t("history.savedRuns", { count: historyInstallations.length, defaultValue: `saved ${historyInstallations.length}` })}
             </Badge>
             <Button
               color="red"
@@ -1881,28 +2506,27 @@ export default function RunDeployment({
               loading={clearingHistory}
               disabled={historyInstallations.length === 0}
             >
-              Delete All History
+              {t("history.deleteAll", "Delete All History")}
             </Button>
           </Group>
         </Group>
 
         {historyInstallations.length === 0 ? (
           <Alert color="gray" variant="light">
-            No saved installation history remains.
+            {t("history.noHistory", "No saved installation history remains.")}
           </Alert>
         ) : (
-          <ScrollArea.Autosize mah={mode === "history" ? 640 : 460}>
-            <Table striped withTableBorder>
+          <ScrollArea.Autosize mah={mode === "history" ? 640 : "65vh"}>
+            <Table className="installation-history-table" striped withTableBorder style={{ width: "100%" }}>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>ID</Table.Th>
-                  <Table.Th>Template</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Phase</Table.Th>
-                  <Table.Th>Progress</Table.Th>
-                  <Table.Th>Targets</Table.Th>
-                  <Table.Th>Duration</Table.Th>
-                  <Table.Th>Action</Table.Th>
+                  <Table.Th>{t("history.run", "Run")}</Table.Th>
+                  <Table.Th>{t("history.installer", "Installer")}</Table.Th>
+                  <Table.Th>{t("history.operation", "Operation")}</Table.Th>
+                  <Table.Th>{t("history.status", "Status")}</Table.Th>
+                  <Table.Th>{t("history.targets", "Targets")}</Table.Th>
+                  <Table.Th>{t("history.duration", "Duration")}</Table.Th>
+                  <Table.Th>{t("history.actions", "Actions")}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -1919,25 +2543,48 @@ export default function RunDeployment({
 
                   return (
                   <Table.Tr key={installation.id}>
-                    <Table.Td>{installation.id}</Table.Td>
-                    <Table.Td>{installation.template_name}</Table.Td>
+                    <Table.Td>
+                      <Text fw={700}>#{installation.id}</Text>
+                      <Text size="xs" c="dimmed">
+                        {formatHistoryDate(installation.started_at || installation.created_at)}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <InstallerLabel
+                        label={
+                          installation.template_system_type
+                            ? getInstallerOption(installation.template_system_type).label
+                            : installation.template_name
+                        }
+                        installerId={installation.template_system_type}
+                        withLogo={Boolean(installation.template_system_type)}
+                      />
+                    </Table.Td>
+                    <Table.Td>
+                      <Text fw={700} size="sm">
+                        {installation.deployment_type === "cleanup"
+                          ? t("results.cleanup", "Cleanup")
+                          : installation.topology === "multi_node"
+                            ? t("topology.multiNode", "Multi-node installation")
+                            : t("topology.singleNode", "Single-node installation")}
+                      </Text>
+                      <Text size="xs" c="dimmed">{formatPhaseLabel(installation.phase)}</Text>
+                    </Table.Td>
                     <Table.Td>
                       <Badge color={getStatusColor(installation.status)} variant="light">
                         {installation.status}
                       </Badge>
                     </Table.Td>
-                    <Table.Td>{formatPhaseLabel(installation.phase)}</Table.Td>
-                    <Table.Td>{installation.progress}%</Table.Td>
                     <Table.Td>
                       <Group gap="xs">
                         <Badge color="gray" variant="light">
-                          total {installation.targets.length}
+                          {t("history.totalTargets", { count: installation.targets.length, defaultValue: `total ${installation.targets.length}` })}
                         </Badge>
                         <Badge color="teal" variant="light">
-                          ok {installation.targets.filter((target) => target.status === "success").length}
+                          {t("history.okTargets", { count: installation.targets.filter((target) => target.status === "success").length, defaultValue: `ok ${installation.targets.filter((target) => target.status === "success").length}` })}
                         </Badge>
                         <Badge color="red" variant="light">
-                          failed {installation.targets.filter((target) => target.status === "failed").length}
+                          {t("history.failedTargets", { count: installation.targets.filter((target) => target.status === "failed").length, defaultValue: `failed ${installation.targets.filter((target) => target.status === "failed").length}` })}
                         </Badge>
                       </Group>
                     </Table.Td>
@@ -1954,7 +2601,9 @@ export default function RunDeployment({
                               disabled={loading}
                               onClick={() => void handleInstallationCleanupLaunch(installation)}
                             >
-                              {requiresDifferentSystemCleanup ? `Cleanup ${getInstallerOption(cleanupSystem).label}` : "Cleanup"}
+                              {requiresDifferentSystemCleanup
+                                ? t("history.cleanupTarget", { target: getInstallerOption(cleanupSystem).label, defaultValue: `Cleanup ${getInstallerOption(cleanupSystem).label}` })
+                                : t("results.cleanup", "Cleanup")}
                             </Button>
                           )}
                         <Button
@@ -1965,7 +2614,7 @@ export default function RunDeployment({
                           loading={deletingHistoryInstallationId === installation.id}
                           onClick={() => void handleDeleteHistoryInstallation(installation.id)}
                         >
-                          Delete
+                          {t("common.delete", "Delete")}
                         </Button>
                       </Group>
                     </Table.Td>
@@ -1981,86 +2630,166 @@ export default function RunDeployment({
   );
 
   return (
-    <Container size="xl" px={0}>
-      <Stack gap="lg">
-        <Card className="console-panel" padding="lg">
-          <Group justify="space-between" align="center">
-            <div>
-              <Group gap="sm" mb={6}>
-                {mode === "execution" ? (
-                  <>
-                    <ThemeIcon color="red" variant="light" size="lg" radius="md">
-                      <IconTerminal2 size={18} />
-                    </ThemeIcon>
-                    <Title order={2}>{pageTitle}</Title>
-                  </>
-                ) : (
-                  <Title order={2}>
-                    <InstallerLabel
-                      label={pageTitle}
-                      withLogo
-                      installerId={forcedInstaller ?? selectedInstaller}
-                      className="page-installer-heading"
-                    />
-                  </Title>
-                )}
-              </Group>
-              <Text c="dimmed" mt={4}>
-                {pageDescription}
-              </Text>
-            </div>
-            <Group>
+    <Stack gap="lg">
+      <PageHeader
+        icon={
+          mode === "execution" ? (
+            <IconTerminal2 size={22} />
+          ) : mode === "history" ? (
+            <IconHistory size={22} />
+          ) : showGuidedInstaller ? (
+            <img
+              src={getInstallerLogo(forcedInstaller ?? selectedInstaller)}
+              alt=""
+              className="template-logo-inline"
+              style={{ width: 22, height: 22 }}
+            />
+          ) : (
+            <IconPlayerPlay size={22} />
+          )
+        }
+        badge={
+          mode === "execution"
+            ? "Live Pipeline"
+            : mode === "history"
+              ? "Execution Records"
+              : showGuidedInstaller
+                ? `${selectedInstallerOption.label} Installer`
+                : "Platform Engine"
+        }
+        badgeColor="red"
+        title={
+          showGuidedInstaller ? (
+            <InstallerLabel
+              label={pageTitle}
+              withLogo
+              installerId={forcedInstaller ?? selectedInstaller}
+              className="page-installer-heading"
+            />
+          ) : (
+            pageTitle
+          )
+        }
+        subtitle={pageDescription}
+        stats={
+          mode === "execution" && dashboard ? (
+            <>
+              <Badge color="red" variant="light">
+                Active: {dashboard.installations.running + dashboard.installations.pending}
+              </Badge>
+              <Badge color="teal" variant="light">
+                Passed: {dashboard.installations.success}
+              </Badge>
+              <Badge color="gray" variant="outline">
+                Total Runs: {dashboard.installations.total}
+              </Badge>
+            </>
+          ) : mode === "history" ? (
+            <>
+              <Badge color="red" variant="light">
+                Total Runs: {historyInstallations.length}
+              </Badge>
+              <Badge color="teal" variant="light">
+                Passed: {historyInstallations.filter((i) => i.status === "success").length}
+              </Badge>
+              <Badge color="gray" variant="outline">
+                Failed: {historyInstallations.filter((i) => i.status === "failed").length}
+              </Badge>
+            </>
+          ) : undefined
+        }
+        actions={
+          <Group gap="sm">
+            <Button
+              variant="default"
+              leftSection={<IconRefresh size={16} />}
+              onClick={() => void refreshOperationalData()}
+            >
+              Refresh
+            </Button>
+            {mode === "history" ? (
               <Button
-                variant="default"
-                leftSection={<IconRefresh size={16} />}
-                onClick={() => void refreshOperationalData()}
+                color="red"
+                variant="light"
+                leftSection={<IconTrash size={16} />}
+                onClick={() => void handleClearHistory()}
+                loading={clearingHistory}
+                disabled={historyInstallations.length === 0}
               >
-                Refresh
+                Delete All History
               </Button>
-              {showHistoryButton && (
-                <Button
-                  variant={showHistory ? "filled" : "default"}
-                  color="red"
-                  leftSection={showHistory ? <IconChevronUp size={16} /> : <IconHistory size={16} />}
-                  onClick={() => setShowHistory(true)}
-                >
-                  {showHistory ? "History Open" : `History (${historyInstallations.length})`}
-                </Button>
-              )}
-            </Group>
+            ) : showHistoryButton ? (
+              <Button
+                variant={showHistory ? "filled" : "default"}
+                color="red"
+                leftSection={showHistory ? <IconChevronUp size={16} /> : <IconHistory size={16} />}
+                onClick={() => setShowHistory(true)}
+              >
+                {showHistory ? "History Open" : `History (${historyInstallations.length})`}
+              </Button>
+            ) : null}
           </Group>
-        </Card>
+        }
+      />
 
         {showDashboardSummary && dashboard && (
-          <SimpleGrid cols={{ base: 1, md: 4 }} spacing="md">
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Hosts</Text>
-              <Title order={3}>{dashboard.hosts.total}</Title>
-              <Text size="sm" c="dimmed">
+          <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Hosts</Text>
+                  <Title order={2} mt={4}>{dashboard.hosts.total}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconServer size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 enabled {dashboard.hosts.enabled} | cp {dashboard.hosts.control_plane} | workers {dashboard.hosts.worker}
               </Text>
-              <Text size="sm" c="dimmed">
+              <Text size="xs" c="dimmed">
                 installer-ready inventory overview
               </Text>
             </Card>
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Credentials</Text>
-              <Title order={3}>{dashboard.credentials.total}</Title>
-              <Text size="sm" c="dimmed">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Credentials</Text>
+                  <Title order={2} mt={4}>{dashboard.credentials.total}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconKey size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 password {dashboard.credentials.password} | ssh key {dashboard.credentials.ssh_key}
               </Text>
             </Card>
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Installations</Text>
-              <Title order={3}>{dashboard.installations.total}</Title>
-              <Text size="sm" c="dimmed">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Installations</Text>
+                  <Title order={2} mt={4}>{dashboard.installations.total}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconPlayerPlay size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 success {dashboard.installations.success} | failed {dashboard.installations.failed} | cancelled {dashboard.installations.cancelled ?? 0}
               </Text>
             </Card>
-            <Card className="console-panel" padding="md">
-              <Text c="dimmed" size="sm">Active Queue</Text>
-              <Title order={3}>{dashboard.installations.running + dashboard.installations.pending}</Title>
-              <Text size="sm" c="dimmed">
+            <Card className="console-panel dashboard-stat-card" padding="lg">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Active Queue</Text>
+                  <Title order={2} mt={4}>{dashboard.installations.running + dashboard.installations.pending}</Title>
+                </div>
+                <ThemeIcon color="red" variant="light" size={36} radius="md">
+                  <IconTerminal2 size={18} />
+                </ThemeIcon>
+              </Group>
+              <Text size="xs" c="dimmed" mt="xs">
                 running {dashboard.installations.running} | pending {dashboard.installations.pending}
               </Text>
             </Card>
@@ -2074,14 +2803,25 @@ export default function RunDeployment({
         )}
 
         {showResumeAlert && resumeCandidate && !loading && (
-          <Alert color="yellow" title="Active installation detected" variant="light" icon={<IconClockHour4 size={16} />}>
+          <Alert
+            color="yellow"
+            title={
+              (resumeCandidate.template_name || "").toLowerCase().includes("reset")
+                ? "Active cluster reset detected"
+                : resumeCandidate.deployment_type === "cleanup"
+                  ? "Active cleanup detected"
+                  : "Active installation detected"
+            }
+            variant="light"
+            icon={<IconClockHour4 size={16} />}
+          >
             <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
               <div>
                 <Text fw={600}>
                   {resumeCandidate.template_name} is still marked {resumeCandidate.status} on the backend.
                 </Text>
                 <Text size="sm" c="dimmed" mt={4}>
-                  Phase: {formatPhaseLabel(resumeCandidate.phase)} | installation #{resumeCandidate.id}
+                  Phase: {formatPhaseLabel(resumeCandidate.phase)} | run #{resumeCandidate.id}
                   {resumeCandidate.updated_at ? ` | updated ${new Date(resumeCandidate.updated_at).toLocaleString()}` : ""}
                 </Text>
               </div>
@@ -2160,59 +2900,40 @@ export default function RunDeployment({
               </Card>
             )}
 
-            <Card className="console-panel" padding="lg">
-              <Stack gap="md">
-                <Group justify="space-between" align="flex-start">
-                  <div>
-                    <Title order={3}>Deployment Flow</Title>
-                    <Text size="sm" c="dimmed" mt={4}>
-                      This page only keeps the controls that matter for the active workflow. Host access stays managed from the Hosts inventory.
-                    </Text>
-                  </div>
-                  <Badge color="red" variant="light">
-                    single-node per target
-                  </Badge>
-                </Group>
+            {showGuidedInstaller && (
+              <DeploymentWizard
+                activeStep={wizardStep}
+                topologyReady={topologyReady}
+                sshVerified={precheckSucceeded}
+                executionStarted={loading || Boolean(result)}
+                disabled={loading}
+                onStepChange={setWizardStep}
+              />
+            )}
 
-                <div className="workflow-grid">
-                  {installerWorkflowSteps.map((step, index) => (
-                    <div key={step.title} className="workflow-step-card">
-                      <div className="workflow-step-index">{index + 1}</div>
-                      <Text fw={700}>{step.title}</Text>
-                      <Text size="sm" c="dimmed" mt={6}>
-                        {step.detail}
-                      </Text>
-                    </div>
-                  ))}
-                </div>
-
-                <SimpleGrid cols={{ base: 1, md: 4 }} spacing="sm">
-                  <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">Installer</Text>
-                    <Text fw={700}>{selectedInstallerOption.label}</Text>
-                  </Card>
-                  <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">Selected Hosts</Text>
-                    <Text fw={700}>{selectedHostIds.length}</Text>
-                  </Card>
-                  <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">Control Plane Nodes</Text>
-                    <Text fw={700}>{plannedControlPlaneCount}</Text>
-                  </Card>
-                  <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">Worker Nodes</Text>
-                    <Text fw={700}>{plannedWorkerCount}</Text>
-                  </Card>
-                </SimpleGrid>
-
-                {selectedHostIds.length > 0 && (
-                  <Alert color="blue" variant="light" title="Execution mode">
-                    Every selected host will receive an independent {selectedInstallerOption.label} single-node deployment.
-                  </Alert>
+            {(!showGuidedInstaller || wizardStep === 0) && (
+              <>
+                <DeploymentTopologySelector
+                  installerLabel={selectedInstallerOption.label}
+                  installerId={selectedInstaller}
+                  topology={topology}
+                  onChange={handleTopologyChange}
+                  disabled={loading}
+                />
+                {showGuidedInstaller && (
+                  <Group className="wizard-stage-actions" justify="flex-end">
+                    <Button
+                      onClick={() => setWizardStep(1)}
+                      rightSection={<IconArrowRight size={16} />}
+                    >
+                      Continue to targets
+                    </Button>
+                  </Group>
                 )}
-              </Stack>
-            </Card>
+              </>
+            )}
 
+            {(!showGuidedInstaller || wizardStep === 1) && (
             <Card className="console-panel" padding="lg">
               <Stack gap="md">
                 <Group justify="space-between" align="flex-start">
@@ -2221,16 +2942,37 @@ export default function RunDeployment({
                       <IconPlugConnected size={16} />
                     </ThemeIcon>
                     <div>
-                      <Title order={3}>Select Hosts</Title>
+                      <Title order={3}>
+                        {topology === "multi_node" ? "Assign Host Roles" : "Select Hosts"}
+                      </Title>
                       <Text size="sm" c="dimmed" mt={4}>
-                        Choose one or more enabled targets from the inventory. SSH user and port are taken directly from the host record.
+                        {topology === "multi_node"
+                          ? "Assign each machine to the Master (control-plane) or Worker group, then choose the bootstrap Master that initializes the cluster."
+                          : "Choose one or more enabled targets from the inventory. SSH user and port are taken directly from the host record."}
                       </Text>
                     </div>
                   </Group>
                   <Badge color="gray" variant="light">
-                    hosts inventory
+                    {topology === "multi_node" ? "role assignment" : "hosts inventory"}
                   </Badge>
                 </Group>
+
+                {topology === "multi_node" && (
+                  <TextInput
+                    label="Cluster name"
+                    description="Optional shared name. Changing it on an existing cluster requires Reset Cluster first."
+                    placeholder={`${selectedInstaller}-production`}
+                    value={clusterConfig.cluster_name}
+                    onChange={(event) => {
+                      const clusterName = event.currentTarget.value;
+                      setClusterConfig((current) => ({
+                        ...current,
+                        cluster_name: clusterName,
+                      }));
+                    }}
+                    disabled={loading}
+                  />
+                )}
 
                 {hosts.filter((host) => host.enabled).length === 0 ? (
                   <Text c="dimmed">No enabled hosts are available. Add or enable a host before launching an installation.</Text>
@@ -2240,30 +2982,92 @@ export default function RunDeployment({
                       .filter((host) => host.enabled)
                       .map((host) => {
                         const isSelected = selectedHostIds.includes(host.id);
+                        const isControlPlane = controlPlaneHostIds.includes(host.id);
+                        const isWorker = workerHostIds.includes(host.id);
+                        const assignedRole = isControlPlane
+                          ? "control_plane"
+                          : isWorker
+                            ? "worker"
+                            : "unassigned";
+                        const hostIdentity =
+                          hostOverrides[host.id] || buildDefaultHostOverride(host, selectedInstaller);
 
                         return (
                           <div
                             key={host.id}
-                            className={`host-selection-card${isSelected ? " is-selected" : ""}`}
-                            onClick={() => toggleHost(host.id, !isSelected)}
-                            role="button"
-                            tabIndex={0}
+                            className={`host-selection-card${isSelected ? " is-selected" : ""}${isControlPlane ? " is-control-plane" : ""}${isWorker ? " is-worker" : ""}${topology === "multi_node" ? " has-role-control" : ""}`}
+                            onClick={
+                              topology === "single_node"
+                                ? () => toggleHost(host.id, !isSelected)
+                                : undefined
+                            }
+                            role={topology === "single_node" ? "button" : undefined}
+                            tabIndex={topology === "single_node" ? 0 : undefined}
                             onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
+                              if (
+                                topology === "single_node" &&
+                                (event.key === "Enter" || event.key === " ")
+                              ) {
                                 event.preventDefault();
                                 toggleHost(host.id, !isSelected);
                               }
                             }}
                           >
                             <Group justify="space-between" align="flex-start">
-                              <div>
-                                <Text fw={700}>{host.name}</Text>
-                                <Text size="sm" c="dimmed" mt={4}>
-                                  {host.ip_address}
-                                </Text>
-                              </div>
-                              <Badge color={isSelected ? "red" : "gray"} variant={isSelected ? "filled" : "light"}>
-                                {isSelected ? "selected" : "available"}
+                              <Group gap="sm" align="center">
+                                <ThemeIcon
+                                  size={32}
+                                  radius="md"
+                                  color={
+                                    isControlPlane
+                                      ? "blue"
+                                      : isWorker
+                                        ? "teal"
+                                        : isSelected
+                                          ? "red"
+                                          : "gray"
+                                  }
+                                  variant="light"
+                                >
+                                  {isControlPlane ? (
+                                    <IconCrown size={16} />
+                                  ) : isWorker ? (
+                                    <IconHammer size={16} />
+                                  ) : (
+                                    <IconServer size={16} />
+                                  )}
+                                </ThemeIcon>
+                                <div>
+                                  <Text fw={700}>{host.name}</Text>
+                                  <Text size="xs" c="dimmed">
+                                    {host.ip_address}
+                                  </Text>
+                                </div>
+                              </Group>
+                              <Badge
+                                color={
+                                  isControlPlane
+                                    ? "blue"
+                                    : isWorker
+                                      ? "teal"
+                                      : isSelected
+                                        ? "red"
+                                        : "gray"
+                                }
+                                variant="light"
+                                size="sm"
+                              >
+                                {topology === "multi_node"
+                                  ? isControlPlane
+                                    ? bootstrapHostId === host.id
+                                      ? "Bootstrap Master"
+                                      : "Master"
+                                    : isWorker
+                                      ? "Worker"
+                                      : "Available"
+                                  : isSelected
+                                    ? "Selected"
+                                    : "Available"}
                               </Badge>
                             </Group>
 
@@ -2277,25 +3081,142 @@ export default function RunDeployment({
                                 <Text fw={700}>{host.ssh_port}</Text>
                               </div>
                             </div>
+
+                            {isSelected && (
+                              <Stack
+                                gap="xs"
+                                mt="md"
+                                onClick={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => event.stopPropagation()}
+                              >
+                                {topology === "single_node" && (
+                                  <TextInput
+                                    label="Cluster name"
+                                    description="Optional. Changing it after installation requires Reset Cluster first."
+                                    placeholder={`${selectedInstaller}-${normalizeNodeName(host.hostname || host.name)}`}
+                                    value={hostIdentity.cluster_name}
+                                    onChange={(event) =>
+                                      updateHostIdentity(host.id, "cluster_name", event.currentTarget.value)
+                                    }
+                                    disabled={loading}
+                                  />
+                                )}
+                                <TextInput
+                                  label="Node name"
+                                  description="Optional DNS name. Changing it after installation requires Reset Cluster first."
+                                  placeholder={normalizeNodeName(host.hostname || host.name, `node-${host.id}`)}
+                                  value={hostIdentity.node_name}
+                                  onChange={(event) =>
+                                    updateHostIdentity(host.id, "node_name", event.currentTarget.value)
+                                  }
+                                  disabled={loading}
+                                />
+                              </Stack>
+                            )}
+
+                            {topology === "multi_node" && (
+                              <div className="host-role-control" style={{ marginTop: 12 }}>
+                                <Text size="xs" fw={700} c="dimmed" mb={8}>
+                                  Cluster Role
+                                </Text>
+                                <SegmentedControl
+                                  value={assignedRole}
+                                  onChange={(value) =>
+                                    setMultiNodeHostRole(
+                                      host.id,
+                                      value as "unassigned" | "control_plane" | "worker"
+                                    )
+                                  }
+                                  fullWidth
+                                  size="xs"
+                                  disabled={loading}
+                                  data={[
+                                    {
+                                      label: (
+                                        <Center style={{ gap: 6 }}>
+                                          <IconCircleMinus size={13} />
+                                          <span>Unused</span>
+                                        </Center>
+                                      ),
+                                      value: "unassigned",
+                                    },
+                                    {
+                                      label: (
+                                        <Center style={{ gap: 6 }}>
+                                          <IconCrown size={13} />
+                                          <span>Master</span>
+                                        </Center>
+                                      ),
+                                      value: "control_plane",
+                                    },
+                                    {
+                                      label: (
+                                        <Center style={{ gap: 6 }}>
+                                          <IconHammer size={13} />
+                                          <span>Worker</span>
+                                        </Center>
+                                      ),
+                                      value: "worker",
+                                    },
+                                  ]}
+                                  aria-label={`Cluster role for ${host.name}`}
+                                />
+
+                                {isControlPlane && (
+                                  <Radio
+                                    mt="xs"
+                                    checked={bootstrapHostId === host.id}
+                                    onChange={() => setBootstrapHostId(host.id)}
+                                    disabled={loading}
+                                    label="Bootstrap Master (initializes cluster)"
+                                    size="xs"
+                                  />
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
                   </div>
                 )}
+                {showGuidedInstaller && (
+                  <Group className="wizard-stage-actions" justify="space-between">
+                    <Button
+                      variant="default"
+                      onClick={() => setWizardStep(0)}
+                      leftSection={<IconArrowLeft size={16} />}
+                    >
+                      Back to topology
+                    </Button>
+                    <Button
+                      onClick={() => setWizardStep(2)}
+                      disabled={!topologyReady}
+                      rightSection={<IconArrowRight size={16} />}
+                    >
+                      Continue to installation
+                    </Button>
+                  </Group>
+                )}
               </Stack>
             </Card>
+            )}
 
+            {(!showGuidedInstaller || wizardStep === 2) && (
             <Card className="console-panel" padding="lg">
               <Stack gap="md">
                 <Group justify="space-between" align="flex-start">
                   <div>
-                    <Title order={3}>Execution Readiness</Title>
+                    <Title order={3}>Start Installation</Title>
                     <Text size="sm" c="dimmed" mt={4}>
-                      Review the selected targets, verify SSH access, then launch the installer on all of them.
+                      Confirm the selected targets, verify SSH access, then start the installer on all eligible hosts.
                     </Text>
                   </div>
-                  <Badge color={selectedHostIds.length > 0 ? "teal" : "gray"} variant="light">
-                    {selectedHostIds.length > 0 ? "ready to verify" : "target required"}
+                  <Badge color={topologyReady ? "teal" : "gray"} variant="light">
+                    {topologyReady
+                      ? "ready to verify"
+                      : topology === "multi_node"
+                        ? "roles required"
+                        : "target required"}
                   </Badge>
                 </Group>
 
@@ -2306,19 +3227,46 @@ export default function RunDeployment({
 
                       {selectedHostIds.length > 0 ? (
                         <>
-                          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
+                          <SimpleGrid
+                            cols={{ base: 1, sm: 2, lg: topology === "multi_node" ? 3 : 2 }}
+                            spacing="sm"
+                          >
                             <Card className="host-panel" padding="sm">
                               <Text size="sm" c="dimmed">Selected Hosts</Text>
                               <Text fw={700}>{selectedHostIds.length}</Text>
                             </Card>
                             <Card className="host-panel" padding="sm">
-                              <Text size="sm" c="dimmed">Execution Model</Text>
-                              <Text fw={700}>Independent single-node run on each selected host</Text>
+                              <Text size="sm" c="dimmed">Topology</Text>
+                              <Text fw={700}>
+                                {topology === "multi_node"
+                                  ? "One shared multi-node cluster"
+                                  : "Independent single-node clusters"}
+                              </Text>
                             </Card>
+                            {topology === "multi_node" && (
+                              <>
+                                <Card className="host-panel" padding="sm">
+                                  <Text size="sm" c="dimmed">Control Plane</Text>
+                                  <Text fw={700}>{controlPlaneHostIds.length}</Text>
+                                </Card>
+                                <Card className="host-panel" padding="sm">
+                                  <Text size="sm" c="dimmed">Workers</Text>
+                                  <Text fw={700}>{workerHostIds.length}</Text>
+                                </Card>
+                                <Card className="host-panel" padding="sm">
+                                  <Text size="sm" c="dimmed">Bootstrap Host</Text>
+                                  <Text fw={700}>{bootstrapHost?.name || "Not selected"}</Text>
+                                </Card>
+                              </>
+                            )}
                           </SimpleGrid>
 
-                          <Alert color="blue" variant="light">
-                            The playbook will run on every selected target in the generated inventory. Host access settings remain managed from the Hosts inventory.
+                          <Alert color={topologyReady ? "blue" : "yellow"} variant="light">
+                            {topology === "multi_node"
+                              ? topologyReady
+                                ? `The backend will generate one inventory with ${controlPlaneHostIds.length} control-plane host(s), ${workerHostIds.length} worker host(s), and ${bootstrapHost?.name} as bootstrap.`
+                                : "Complete the control-plane, worker, and bootstrap assignments before starting the shared cluster installation."
+                              : "The playbook will run on every selected target in the generated inventory. Host access settings remain managed from the Hosts inventory."}
                           </Alert>
                         </>
                       ) : (
@@ -2369,7 +3317,17 @@ export default function RunDeployment({
                   </div>
                 </div>
 
-                <Group>
+                <Group className="wizard-stage-actions">
+                  {showGuidedInstaller && (
+                    <Button
+                      variant="default"
+                      onClick={() => setWizardStep(1)}
+                      disabled={loading}
+                      leftSection={<IconArrowLeft size={16} />}
+                    >
+                      Back to targets
+                    </Button>
+                  )}
                   <Button
                     variant="default"
                     onClick={() => void runPrecheck(true)}
@@ -2384,7 +3342,7 @@ export default function RunDeployment({
                     onClick={handleLaunch}
                     loading={loading}
                     disabled={
-                      selectedHostIds.length === 0 ||
+                      !topologyReady ||
                       checkingConnectivity ||
                       (deploymentMode === "manual" && !selectedTemplateId)
                     }
@@ -2407,20 +3365,25 @@ export default function RunDeployment({
                   {loading && activeInstallationId !== null && (
                     <Button
                       color="red"
-                      onClick={() => void handleCancelInstallation()}
+                      onClick={handleRequestCancel}
                       leftSection={<IconPlayerStop size={16} />}
                     >
-                      Cancel Installation
+                      {liveExecutionTitle.toLowerCase().includes("reset")
+                        ? t("execution.cancelReset", "Cancel Reset")
+                        : liveExecutionTitle.toLowerCase().includes("cleanup")
+                          ? t("execution.cancelCleanup", "Cancel Cleanup")
+                          : t("execution.cancelInstallation", "Cancel Installation")}
                     </Button>
                   )}
                 </Group>
               </Stack>
             </Card>
+            )}
 
           </>
         )}
 
-        {showExecutionMonitoring && (loading || result) && (
+        {showExecutionMonitoring && (loading || result) && (!showGuidedInstaller || wizardStep === 3) && (
           <DeploymentMonitor
             loading={loading}
             live={{
@@ -2433,9 +3396,13 @@ export default function RunDeployment({
               currentTask: liveCurrentTask,
               seenTasks: liveSeenTasks,
               completedTasks: liveCompletedTasks,
+              totalTasks: liveTotalTasks,
               progress,
               elapsedSeconds,
               installationId: activeInstallationId,
+              recentEvents: liveRecentEvents || [],
+              outputLines: liveOutputLines || [],
+              telemetry: liveTelemetry,
             }}
             result={result ? {
               status: result.status,
@@ -2444,53 +3411,111 @@ export default function RunDeployment({
               installationId: result.installation_id,
             } : undefined}
             activeStage={activeStage}
-            stages={pipelineStageMap}
+            stages={currentPipelineStageMap}
             pipelineStageIndex={pipelineStageIndex}
+            isOpenShift={selectedInstaller === "openshift_sno"}
+            onCancel={
+              loading && activeInstallationId !== null
+                ? handleRequestCancel
+                : undefined
+            }
+            actions={
+              result && !loading ? (
+                <Group gap="xs">
+                  {canRetryFailedTargets && (
+                    <Button size="xs" variant="light" onClick={() => void handleRetryFailedTargets()}>
+                      Retry Failed Targets
+                    </Button>
+                  )}
+                  {canCleanupResult && (
+                    <Button size="xs" color="orange" variant="light" onClick={() => void handleResultCleanupLaunch()}>
+                      {isResetExecution ? "Reset Cluster" : "Cleanup Cluster"}
+                    </Button>
+                  )}
+                  {showGuidedInstaller && (
+                    <Button size="xs" leftSection={<IconRefresh size={14} />} onClick={handleStartAnotherInstallation}>
+                      Start Another Installation
+                    </Button>
+                  )}
+                  <Button
+                    size="xs"
+                    variant="default"
+                    leftSection={<IconX size={14} />}
+                    onClick={() => {
+                      setResult(null);
+                      persistDismissedInstallationId(result.installation_id);
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                </Group>
+              ) : undefined
+            }
           />
         )}
 
-        {showExecutionMonitoring && result && (
+        {showExecutionMonitoring && result && (!showGuidedInstaller || wizardStep === 3) && (
           <Card className="console-panel" padding="lg">
             <Stack gap="sm">
               <Group justify="space-between" align="center">
-                <Title order={3}>Execution Result</Title>
-                <Badge
-                  color={getStatusColor(result.status)}
-                  variant="filled"
-                  size="lg"
-                >
-                  {result.status}
-                </Badge>
+                <Title order={3}>
+                  {isResetExecution
+                    ? t("results.resetResult", "Reset Result")
+                    : isCleanupExecution
+                      ? t("results.cleanupResult", "Cleanup Result")
+                      : t("results.executionResult", "Execution Result")}
+                </Title>
+                <Group gap="xs">
+                  <Badge
+                    color={getStatusColor(result.status)}
+                    variant="filled"
+                    size="lg"
+                  >
+                    {result.status}
+                  </Badge>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    leftSection={<IconX size={14} />}
+                    onClick={() => {
+                      setResult(null);
+                      persistDismissedInstallationId(result.installation_id);
+                    }}
+                  >
+                    {t("results.dismiss", "Dismiss")}
+                  </Button>
+                </Group>
               </Group>
 
               <Text c="dimmed" size="sm">
-                This section summarizes the last execution. Use the success or failure report window for host-by-host diagnostics and next actions.
+                {t("results.resultSectionDesc", "This section summarizes the last execution. Use the success or failure report window for host-by-host diagnostics and next actions.")}
               </Text>
 
               <Group gap="xl">
-                <Text>Installation ID: {result.installation_id}</Text>
-                <Text>Message: {result.message}</Text>
-                <Text>Return code: {result.return_code ?? "-"}</Text>
-                <Text>Execution Time: {formatDurationDetailed(result.duration_seconds)}</Text>
+                <Text>{t("results.executionReference", "Execution reference:")} {result.installation_id > 0 ? `#${result.installation_id}` : t("results.notCreatedPreExec", "Not created (pre-execution failure)")}</Text>
+                <Text>{t("results.message", "Message:")} {result.message}</Text>
+                <Text>{t("results.returnCode", "Return code:")} {result.return_code ?? "-"}</Text>
+                <Text>{t("results.executionTime", "Execution Time:")} {formatDurationDetailed(result.duration_seconds)}</Text>
               </Group>
 
               {result.targets && result.targets.length > 0 && (
                 <>
                   <SimpleGrid cols={{ base: 1, md: 4 }} spacing="sm">
                     <Card className="host-panel" padding="sm">
-                      <Text size="sm" c="dimmed">Selected Targets</Text>
+                      <Text size="sm" c="dimmed">{t("results.selectedTargets", "Selected Targets")}</Text>
                       <Text fw={700}>{result.targets.length}</Text>
                     </Card>
                     <Card className="host-panel" padding="sm">
-                      <Text size="sm" c="dimmed">Succeeded</Text>
+                      <Text size="sm" c="dimmed">{t("results.succeeded", "Succeeded")}</Text>
                       <Text fw={700}>{resultTargetSummary.success || 0}</Text>
                     </Card>
                     <Card className="host-panel" padding="sm">
-                      <Text size="sm" c="dimmed">Failed</Text>
+                      <Text size="sm" c="dimmed">{t("results.failed", "Failed")}</Text>
                       <Text fw={700}>{resultTargetSummary.failed || 0}</Text>
                     </Card>
                     <Card className="host-panel" padding="sm">
-                      <Text size="sm" c="dimmed">Other States</Text>
+                      <Text size="sm" c="dimmed">{t("results.otherStates", "Other States")}</Text>
                       <Text fw={700}>
                         {(resultTargetSummary.pending || 0) + (resultTargetSummary.running || 0) + (resultTargetSummary.cancelled || 0)}
                       </Text>
@@ -2500,10 +3525,10 @@ export default function RunDeployment({
                   <Table withTableBorder striped>
                     <Table.Thead>
                       <Table.Tr>
-                        <Table.Th>Target</Table.Th>
-                        <Table.Th>Status</Table.Th>
-                        <Table.Th>Return Code</Table.Th>
-                        <Table.Th>Detail</Table.Th>
+                        <Table.Th>{t("results.target", "Target")}</Table.Th>
+                        <Table.Th>{t("common.status", "Status")}</Table.Th>
+                        <Table.Th>{t("results.returnCode", "Return Code")}</Table.Th>
+                        <Table.Th>{t("results.detail", "Detail")}</Table.Th>
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -2524,43 +3549,22 @@ export default function RunDeployment({
                 </>
               )}
 
-              {canCleanupResult && (
-                <Group>
-                  <Button color="red" variant="light" onClick={() => void handleResultCleanupLaunch()}>
-                    Cleanup Options
-                  </Button>
-                  {canRetryFailedTargets && (
-                    <Button variant="light" onClick={() => void handleRetryFailedTargets()}>
-                      Retry Failed Targets Only
-                    </Button>
-                  )}
-                </Group>
-              )}
-
-              {!canCleanupResult && canRetryFailedTargets && (
-                <Group>
-                  <Button variant="light" onClick={() => void handleRetryFailedTargets()}>
-                    Retry Failed Targets Only
-                  </Button>
-                </Group>
-              )}
-
               {result.timings && (
                 <SimpleGrid cols={{ base: 1, md: 4 }} spacing="sm">
                   <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">Inventory</Text>
+                    <Text size="sm" c="dimmed">{t("results.inventoryTiming", "Inventory")}</Text>
                     <Text fw={700}>{formatDurationDetailed(result.timings.inventory_build_seconds)}</Text>
                   </Card>
                   <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">Repo Discovery</Text>
+                    <Text size="sm" c="dimmed">{t("results.repoDiscoveryTiming", "Repo Discovery")}</Text>
                     <Text fw={700}>{formatDurationDetailed(result.timings.repo_discovery_seconds)}</Text>
                   </Card>
                   <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">SSH Check</Text>
+                    <Text size="sm" c="dimmed">{t("results.sshCheckTiming", "SSH Check")}</Text>
                     <Text fw={700}>{formatDurationDetailed(result.timings.ssh_check_seconds)}</Text>
                   </Card>
                   <Card className="host-panel" padding="sm">
-                    <Text size="sm" c="dimmed">Playbook</Text>
+                    <Text size="sm" c="dimmed">{t("results.playbookTiming", "Playbook")}</Text>
                     <Text fw={700}>{formatDurationDetailed(result.timings.playbook_execution_seconds)}</Text>
                   </Card>
                 </SimpleGrid>
@@ -2569,7 +3573,7 @@ export default function RunDeployment({
               {result.bottleneck_hints && result.bottleneck_hints.length > 0 && (
                 <>
                   <Divider />
-                  <Title order={5}>Likely Bottlenecks</Title>
+                  <Title order={5}>{t("results.likelyBottlenecks", "Likely Bottlenecks")}</Title>
                   <Stack gap="xs">
                     {result.bottleneck_hints.map((hint) => (
                       <Alert key={hint} color="red" variant="light" icon={<IconAlertCircle size={16} />}>
@@ -2583,12 +3587,12 @@ export default function RunDeployment({
               {result.task_profile && result.task_profile.length > 0 && (
                 <>
                   <Divider />
-                  <Title order={5}>Slowest Tasks</Title>
+                  <Title order={5}>{t("results.slowestTasks", "Slowest Tasks")}</Title>
                   <Table>
                     <Table.Thead>
                       <Table.Tr>
-                        <Table.Th>Task</Table.Th>
-                        <Table.Th>Duration</Table.Th>
+                        <Table.Th>{t("results.task", "Task")}</Table.Th>
+                        <Table.Th>{t("results.duration", "Duration")}</Table.Th>
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -2606,7 +3610,7 @@ export default function RunDeployment({
               {result.command && (
                 <>
                   <Divider />
-                  <Title order={5}>Command</Title>
+                  <Title order={5}>{t("results.command", "Command")}</Title>
                   <Code block>{result.command}</Code>
                 </>
               )}
@@ -2614,7 +3618,7 @@ export default function RunDeployment({
               {result.rawOutput && (
                 <>
                   <Divider />
-                  <Title order={5}>Raw Output</Title>
+                  <Title order={5}>{t("results.rawOutput", "Raw Output")}</Title>
                   <ScrollArea.Autosize mah={220}>
                     <Code block>{result.rawOutput}</Code>
                   </ScrollArea.Autosize>
@@ -2624,7 +3628,7 @@ export default function RunDeployment({
               {result.stdout && (
                 <>
                   <Divider />
-                  <Title order={5}>Stdout</Title>
+                  <Title order={5}>{t("results.stdout", "Stdout")}</Title>
                   <ScrollArea.Autosize mah={320}>
                     <Code block>{result.stdout}</Code>
                   </ScrollArea.Autosize>
@@ -2634,12 +3638,35 @@ export default function RunDeployment({
               {result.stderr && (
                 <>
                   <Divider />
-                  <Title order={5}>Stderr</Title>
+                  <Title order={5}>{t("results.stderr", "Stderr")}</Title>
                   <ScrollArea.Autosize mah={220}>
                     <Code block>{result.stderr}</Code>
                   </ScrollArea.Autosize>
                 </>
               )}
+
+            </Stack>
+          </Card>
+        )}
+
+        {mode === "execution" && !loading && !result && !resumeCandidate && (
+          <Card className="console-panel" padding="xl">
+            <Stack align="center" gap="md" py="xl">
+              <ThemeIcon color="red" variant="light" size={48} radius="xl">
+                <IconTerminal2 size={24} />
+              </ThemeIcon>
+              <Title order={3}>{t("results.noActivePipeline", "No Active Pipeline Running")}</Title>
+              <Text c="dimmed" size="sm" ta="center" maw={520}>
+                {t("results.noActivePipelineDesc", "All previous deployments have finished. Start a new deployment from the Installer Catalog or inspect completed runs in the History view.")}
+              </Text>
+              <Group gap="sm" mt="sm">
+                <Button component={Link} to="/installers" leftSection={<IconPlayerPlay size={16} />}>
+                  {t("results.openInstallerCatalog", "Open Installer Catalog")}
+                </Button>
+                <Button component={Link} to="/history" variant="default" leftSection={<IconHistory size={16} />}>
+                  {t("results.viewInstallationHistory", "View Installation History")}
+                </Button>
+              </Group>
             </Stack>
           </Card>
         )}
@@ -2650,8 +3677,8 @@ export default function RunDeployment({
           <Modal
             opened={showHistory}
             onClose={() => setShowHistory(false)}
-            title="Installation History"
-            size="xl"
+            title={t("history.title", "Installation History")}
+            size="95vw"
             centered
             classNames={{ content: "history-modal-content", header: "terminal-modal-header" }}
           >
@@ -2661,17 +3688,19 @@ export default function RunDeployment({
 
         <Modal
           opened={Boolean(cleanupRequest)}
-          onClose={() => setCleanupRequest(null)}
-          title="Cleanup Options"
+          onClose={() => {
+            setCleanupRequest(null);
+          }}
+          title={t("results.cleanupOptions", "Cleanup Options")}
           size="md"
           centered
           classNames={{ content: "success-modal-content", header: "terminal-modal-header" }}
         >
           <Stack gap="lg">
             <div>
-              <Title order={3}>{cleanupRequest?.title || "Cleanup Options"}</Title>
+              <Title order={3}>{cleanupRequest?.title || t("results.cleanupOptions", "Cleanup Options")}</Title>
               <Text c="dimmed" size="sm" mt={6}>
-                Choose how much of the selected target system state should be removed.
+                {t("results.cleanupOptionsSubtitle", "Choose how much of the selected target system state should be removed.")}
               </Text>
             </div>
 
@@ -2679,13 +3708,13 @@ export default function RunDeployment({
               <Card className="host-panel" padding="md">
                 <Stack gap="xs">
                   <Group justify="space-between" align="center">
-                    <Text fw={700}>Reset Cluster</Text>
+                    <Text fw={700}>{t("results.clusterReset", "Reset Cluster")}</Text>
                     {cleanupRequest?.purpose !== "platform_switch" && (
-                      <Badge color="yellow" variant="light">Recommended</Badge>
+                      <Badge color="yellow" variant="light">{t("results.recommended", "Recommended")}</Badge>
                     )}
                   </Group>
                   <Text size="sm" c="dimmed">
-                    Removes cluster state and CNI artifacts, but keeps installed packages for a faster reinstall of the same platform.
+                    {t("results.resetClusterDesc", "Removes cluster state and CNI artifacts, but keeps installed packages for a faster reinstall of the same platform.")}
                   </Text>
                   <Button
                     color="orange"
@@ -2693,7 +3722,7 @@ export default function RunDeployment({
                     onClick={() => void (cleanupRequest ? launchCleanupRequest(cleanupRequest, "reset") : Promise.resolve())}
                     disabled={loading}
                   >
-                    Reset Cluster
+                    {t("results.clusterReset", "Reset Cluster")}
                   </Button>
                 </Stack>
               </Card>
@@ -2703,13 +3732,13 @@ export default function RunDeployment({
               <Card className="host-panel" padding="md">
                 <Stack gap="xs">
                   <Group justify="space-between" align="center">
-                    <Text fw={700}>Full Uninstall</Text>
+                    <Text fw={700}>{t("results.fullUninstall", "Full Uninstall")}</Text>
                     {cleanupRequest?.purpose === "platform_switch" && (
-                      <Badge color="red" variant="light">Recommended for platform switch</Badge>
+                      <Badge color="red" variant="light">{t("results.recommendedPlatformSwitch", "Recommended for platform switch")}</Badge>
                     )}
                   </Group>
                   <Text size="sm" c="dimmed">
-                    Removes the cluster state and uninstalls the platform packages from the selected target hosts.
+                    {t("results.fullUninstallDesc", "Removes the cluster state and uninstalls the platform packages from the selected target hosts.")}
                   </Text>
                   <Button
                     color="red"
@@ -2717,7 +3746,7 @@ export default function RunDeployment({
                     onClick={() => void (cleanupRequest ? launchCleanupRequest(cleanupRequest, "full_uninstall") : Promise.resolve())}
                     disabled={loading}
                   >
-                    Full Uninstall
+                    {t("results.fullUninstall", "Full Uninstall")}
                   </Button>
                 </Stack>
               </Card>
@@ -2827,124 +3856,31 @@ export default function RunDeployment({
         )}
 
         {mode !== "history" && (
-        <Modal
-          opened={showPlatformConflictModal}
-          onClose={() => setShowPlatformConflictModal(false)}
-          title={`Action required before ${blockedInstallerLabel} installation`}
-          size="64rem"
-          centered
-          closeOnClickOutside={false}
-          classNames={{ content: "failure-modal-content", header: "terminal-modal-header" }}
-        >
-          <Stack gap="lg">
-            <Stack gap="md" align="center" className="modal-status-hero">
-              <div className="success-logo-shell">
-                <img
-                  src={getInstallerLogo(conflictCleanupSystem)}
-                  alt={`${conflictCleanupLabel} logo`}
-                  className="success-logo"
-                />
-              </div>
-              <div>
-                <Title order={2}>{conflictCleanupLabel} is already installed</Title>
-                <Text c="dimmed" size="sm" mt={4}>
-                  {blockedInstallerLabel} cannot safely share this target with the existing {conflictCleanupLabel} cluster.
-                </Text>
-              </div>
-            </Stack>
-
-            <Alert
-              color="yellow"
-              variant="light"
-              icon={<IconAlertCircle size={18} />}
-              title={`${blockedInstallerLabel} installation was safely stopped`}
-            >
-              No {blockedInstallerLabel} system changes were applied to the affected targets. Cleanup {conflictCleanupLabel} first,
-              then retry the {blockedInstallerLabel} installation.
-            </Alert>
-
-            {result?.status === "partial_success" && (
-              <Alert color="teal" variant="light" icon={<IconCheck size={18} />}>
-                {blockedInstallerLabel} completed on {succeededResultTargets.length} other target(s). Cleanup will
-                run only on the targets listed below.
-              </Alert>
-            )}
-
-            <div>
-              <Title order={4}>Targets requiring {conflictCleanupLabel} cleanup</Title>
-              <Text size="sm" c="dimmed" mt={4}>
-                {platformConflictTargets.length} target(s) are blocked by an existing {conflictCleanupLabel} installation.
-              </Text>
-            </div>
-
-            <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-              {platformConflictTargets.map((target) => (
-                <Card key={`platform-conflict-${target.id}`} className="host-panel target-result-card" padding="lg">
-                  <Stack gap="sm">
-                    <Group justify="space-between" align="center">
-                      <Text fw={700}>{target.host_name}</Text>
-                      <Badge color="yellow" variant="light">{conflictCleanupLabel} detected</Badge>
-                    </Group>
-                    <Text size="sm">
-                      {target.operator_issue?.detail ||
-                        `An existing ${conflictCleanupLabel} installation is preventing a safe ${blockedInstallerLabel} deployment.`}
-                    </Text>
-                    {Boolean(target.operator_issue?.artifacts?.length) && (
-                      <div className="target-output-panel">
-                        <Text size="sm" fw={600} mb="xs">Detected {conflictCleanupLabel} artifacts</Text>
-                        <Stack gap={4}>
-                          {target.operator_issue?.artifacts?.map((artifact) => (
-                            <Code key={`${target.id}-${artifact}`} block>{artifact}</Code>
-                          ))}
-                        </Stack>
-                      </div>
-                    )}
-                    <Text size="sm" c="dimmed">
-                      {target.operator_issue?.recommended_action}
-                    </Text>
-                  </Stack>
-                </Card>
-              ))}
-            </SimpleGrid>
-
-            <Alert color="red" variant="light" title="Cleanup impact">
-              The next step opens the registered {conflictCleanupLabel} cleanup options and explains
-              what will be removed. Cleanup starts only after your confirmation.
-            </Alert>
-
-            <Group justify="space-between" align="center" wrap="wrap">
-              <Button
-                variant="subtle"
-                onClick={() => {
-                  setShowPlatformConflictModal(false);
-                  setShowFailureModal(true);
-                }}
-              >
-                View full deployment report
-              </Button>
-              <Group>
-                <Button variant="default" onClick={() => setShowPlatformConflictModal(false)}>
-                  Close
-                </Button>
-                <Button
-                  color="red"
-                  leftSection={<IconTrash size={16} />}
-                  onClick={handlePlatformConflictCleanupLaunch}
-                  disabled={!hasConflictCleanupOption}
-                >
-                  Cleanup {conflictCleanupLabel}
-                </Button>
-              </Group>
-            </Group>
-          </Stack>
-        </Modal>
+          <PlatformConflictModal
+            opened={showPlatformConflictModal}
+            onClose={() => setShowPlatformConflictModal(false)}
+            onViewFullReport={() => {
+              setShowPlatformConflictModal(false);
+              setShowFailureModal(true);
+            }}
+            onLaunchConflictCleanup={handlePlatformConflictCleanupLaunch}
+            blockedInstallerLabel={blockedInstallerLabel}
+            conflictCleanupLabel={conflictCleanupLabel}
+            conflictCleanupSystem={conflictCleanupSystem}
+            hasKubernetesIdentityConflict={hasKubernetesIdentityConflict}
+            conflictCleanupTargetIds={conflictCleanupTargetIds}
+            platformConflictTargets={platformConflictTargets}
+            succeededResultTargets={succeededResultTargets}
+            hasConflictCleanupOption={hasConflictCleanupOption}
+            result={result}
+          />
         )}
 
         {mode !== "history" && (
         <Modal
           opened={showSuccessModal}
           onClose={() => setShowSuccessModal(false)}
-          title={isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
+          title={isResetExecution ? "Reset Report" : isCleanupExecution ? "Cleanup Report" : "Deployment Report"}
           size="78rem"
           centered
           classNames={{ content: "success-modal-content", header: "terminal-modal-header" }}
@@ -2959,7 +3895,7 @@ export default function RunDeployment({
                 />
               </div>
               <div>
-                <Title order={2}>{getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel).title}</Title>
+                <Title order={2}>{getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution).title}</Title>
                 <Text c="dimmed" size="sm" mt={4}>
                   {isCleanupExecution ? (
                     <>
@@ -3063,7 +3999,14 @@ export default function RunDeployment({
                     <Card key={`result-success-${target.id}`} className="host-panel target-result-card" padding="lg">
                       <Stack gap="md">
                         <Group justify="space-between" align="center">
-                          <Text fw={700}>{target.host_name}</Text>
+                          <div>
+                            <Text fw={700}>{target.host_name}</Text>
+                            {!isCleanupExecution && (target.node_name || target.cluster_name) && (
+                              <Text size="xs" c="dimmed" mt={2}>
+                                Node: {target.node_name || "automatic"} | Cluster: {target.cluster_name || "automatic"}
+                              </Text>
+                            )}
+                          </div>
                           <Badge color={getStatusColor(target.status)} variant="light">
                             {target.status}
                           </Badge>
@@ -3139,7 +4082,7 @@ export default function RunDeployment({
         <Modal
           opened={showFailureModal}
           onClose={() => setShowFailureModal(false)}
-          title="Deployment Report"
+          title={isResetExecution ? "Reset Report" : isCleanupExecution ? "Cleanup Report" : result?.status === "cancelled" ? "Cancelled Execution Report" : "Deployment Report"}
           size="78rem"
           centered
           classNames={{ content: "failure-modal-content", header: "terminal-modal-header" }}
@@ -3149,29 +4092,33 @@ export default function RunDeployment({
               <ThemeIcon
                 size={72}
                 radius={18}
-                color={result?.status === "partial_success" ? "yellow" : "red"}
+                color={result?.status === "cancelled" ? "yellow" : result?.status === "partial_success" ? "yellow" : "red"}
                 variant="light"
               >
                 <IconAlertCircle size={42} />
               </ThemeIcon>
               <div>
                 <Title order={2}>
-                  {getExecutionPresentation(result?.status, false, activeInstallerLabel).title}
+                  {getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution).title}
                 </Title>
                 <Text c="dimmed" size="sm" mt={4}>
-                  {getExecutionPresentation(result?.status, false, activeInstallerLabel).summary}
+                  {getExecutionPresentation(result?.status, isCleanupExecution, activeInstallerLabel, isResetExecution).summary}
                 </Text>
               </div>
             </Stack>
 
-            <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md" className="modal-summary-grid">
+            <SimpleGrid cols={{ base: 1, md: 4 }} spacing="md" className="modal-summary-grid">
               <Card className="host-panel" padding="sm">
-                <Text size="sm" c="dimmed">Installation ID</Text>
-                <Text fw={700}>{result?.installation_id || "-"}</Text>
+                <Text size="sm" c="dimmed">Execution Reference</Text>
+                <Text fw={700}>{result && result.installation_id > 0 ? `#${result.installation_id}` : "Pre-execution"}</Text>
               </Card>
               <Card className="host-panel" padding="sm">
                 <Text size="sm" c="dimmed">Status</Text>
                 <Text fw={700}>{result?.status || "-"}</Text>
+              </Card>
+              <Card className="host-panel" padding="sm">
+                <Text size="sm" c="dimmed">Failure Stage</Text>
+                <Text fw={700}>{getFailureStage(result?.message)}</Text>
               </Card>
               <Card className="host-panel" padding="sm">
                 <Text size="sm" c="dimmed">Return Code</Text>
@@ -3257,7 +4204,14 @@ export default function RunDeployment({
                     <Card key={`failed-${target.id}`} className="host-panel target-result-card" padding="lg">
                       <Stack gap="md">
                         <Group justify="space-between" align="center">
-                          <Text fw={700}>{target.host_name}</Text>
+                          <div>
+                            <Text fw={700}>{target.host_name}</Text>
+                            {(target.node_name || target.cluster_name) && (
+                              <Text size="xs" c="dimmed" mt={2}>
+                                Node: {target.node_name || "automatic"} | Cluster: {target.cluster_name || "automatic"}
+                              </Text>
+                            )}
+                          </div>
                           <Badge color="red" variant="light">failed</Badge>
                         </Group>
                         <SimpleGrid cols={2} spacing="sm" className="target-result-metrics">
@@ -3304,7 +4258,14 @@ export default function RunDeployment({
                     <Card key={`success-${target.id}`} className="host-panel target-result-card" padding="lg">
                       <Stack gap="md">
                         <Group justify="space-between" align="center">
-                          <Text fw={700}>{target.host_name}</Text>
+                          <div>
+                            <Text fw={700}>{target.host_name}</Text>
+                            {(target.node_name || target.cluster_name) && (
+                              <Text size="xs" c="dimmed" mt={2}>
+                                Node: {target.node_name || "automatic"} | Cluster: {target.cluster_name || "automatic"}
+                              </Text>
+                            )}
+                          </div>
                           <Badge color="teal" variant="light">success</Badge>
                         </Group>
                         <SimpleGrid cols={2} spacing="sm" className="target-result-metrics">
@@ -3353,8 +4314,16 @@ export default function RunDeployment({
                   Cleanup Options
                 </Button>
                 {canRetryFailedTargets && (
-                  <Button variant="light" onClick={() => void handleRetryFailedTargets()}>
-                    Retry Failed Targets Only
+                  <Button
+                    variant="light"
+                    leftSection={<IconRefresh size={16} />}
+                    onClick={() =>
+                      activeInstallerSystem === "openshift_sno"
+                        ? openOpenShiftRetryDialog()
+                        : void handleRetryFailedTargets()
+                    }
+                  >
+                    {activeInstallerSystem === "openshift_sno" ? "Restart same installation" : "Retry Failed Targets Only"}
                   </Button>
                 )}
               </Group>
@@ -3362,15 +4331,89 @@ export default function RunDeployment({
 
             {!canCleanupResult && canRetryFailedTargets && (
               <Group>
-                <Button variant="light" onClick={() => void handleRetryFailedTargets()}>
-                  Retry Failed Targets Only
+                <Button
+                  variant="light"
+                  leftSection={<IconRefresh size={16} />}
+                  onClick={() =>
+                    activeInstallerSystem === "openshift_sno"
+                      ? openOpenShiftRetryDialog()
+                      : void handleRetryFailedTargets()
+                  }
+                >
+                  {activeInstallerSystem === "openshift_sno" ? "Restart same installation" : "Retry Failed Targets Only"}
                 </Button>
               </Group>
             )}
           </Stack>
         </Modal>
         )}
-      </Stack>
-    </Container>
+
+        {mode !== "history" && (
+          <Modal
+            opened={showOpenShiftRetryModal}
+            onClose={closeOpenShiftRetryDialog}
+            title="Restart OpenShift SNO installation"
+            centered
+            size="lg"
+            closeOnClickOutside={!restartingOpenShift}
+            closeOnEscape={!restartingOpenShift}
+          >
+            <Stack gap="md">
+              <Alert color="blue" variant="light" title="Saved configuration will be reused">
+                Cluster, KVM host, VM, network, storage and disk-erasure approval are copied from execution
+                #{result?.installation_id}. Only the short-lived credentials must be supplied again because LinDeploy
+                securely destroyed them after the failed run.
+              </Alert>
+              {openShiftRetryError && (
+                <Alert color="red" variant="light" title="Restart blocked">
+                  {openShiftRetryError}
+                </Alert>
+              )}
+              <Textarea
+                label="Red Hat pull secret"
+                description="Paste the complete pull-secret JSON. It is encrypted and consumed once."
+                placeholder='{"auths":{"cloud.openshift.com":{"auth":"..."}}}'
+                required
+                minRows={5}
+                autosize
+                value={openShiftRetryPullSecret}
+                onChange={(event) => setOpenShiftRetryPullSecret(event.currentTarget.value)}
+              />
+              <Textarea
+                label="SSH public key"
+                description="Enter only a public key, never a private key."
+                placeholder="ssh-ed25519 AAAAC3... operator@workstation"
+                required
+                minRows={2}
+                autosize
+                value={openShiftRetrySshKey}
+                onChange={(event) => setOpenShiftRetrySshKey(event.currentTarget.value)}
+              />
+              <Textarea
+                label="Additional trust bundle"
+                description="Optional. Re-enter it only when the original connected installation required a custom CA."
+                placeholder="-----BEGIN CERTIFICATE-----"
+                minRows={3}
+                autosize
+                value={openShiftRetryTrustBundle}
+                onChange={(event) => setOpenShiftRetryTrustBundle(event.currentTarget.value)}
+              />
+              <Group justify="flex-end">
+                <Button variant="default" disabled={restartingOpenShift} onClick={closeOpenShiftRetryDialog}>
+                  Cancel
+                </Button>
+                <Button
+                  color="red"
+                  leftSection={<IconRefresh size={16} />}
+                  loading={restartingOpenShift}
+                  onClick={() => void handleOpenShiftRetry()}
+                >
+                  Restart same installation
+                </Button>
+              </Group>
+            </Stack>
+          </Modal>
+        )}
+    </Stack>
   );
 }

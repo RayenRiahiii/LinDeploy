@@ -1,0 +1,213 @@
+---
+- name: Render the requested libvirt network definition
+  ansible.builtin.set_fact:
+    libvirt_requested_network_xml: "{{ lookup('ansible.builtin.template', 'network.xml.j2') }}"
+
+- name: Read the existing libvirt network
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", net-dumpxml, "{{ libvirt_network_name }}"]
+  environment:
+    LC_ALL: C
+  register: libvirt_existing_network
+  changed_when: false
+  failed_when: false
+
+- name: Initialize missing network identity list
+  ansible.builtin.set_fact:
+    libvirt_missing_network_identities: []
+
+- name: Detect missing network identities
+  ansible.builtin.set_fact:
+    libvirt_missing_network_identities: "{{ libvirt_missing_network_identities + [item] }}"
+  loop: "{{ workshop_clusters }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - >-
+      libvirt_existing_network.rc != 0
+      or item.ip_address not in libvirt_existing_network.stdout
+      or (item.mac_address | lower) not in (libvirt_existing_network.stdout | lower)
+      or ('api.' ~ item.name ~ '.' ~ workshop_base_domain) not in libvirt_existing_network.stdout
+
+- name: Read bridge name from existing network when present
+  ansible.builtin.set_fact:
+    libvirt_bridge_name: >-
+      {{
+        (libvirt_existing_network.stdout | regex_search("<bridge[^>]+name=['\"]([^'\"]+)['\"]", '\1') | first)
+        | default(libvirt_bridge_name, true)
+      }}
+  when: libvirt_existing_network.rc == 0
+
+- name: Recreate incompatible libvirt network when approved
+  when:
+    - automation_mode == 'apply'
+    - libvirt_existing_network.rc == 0
+    - (libvirt_gateway not in libvirt_existing_network.stdout) or (libvirt_missing_network_identities | length > 0)
+    - target_modification_approved | default(false) | bool
+  block:
+    - name: Stop incompatible libvirt network
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", net-destroy, "{{ libvirt_network_name }}"]
+      failed_when: false
+
+    - name: Undefine incompatible libvirt network
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", net-undefine, "{{ libvirt_network_name }}"]
+      failed_when: false
+
+    - name: Mark network as absent for re-creation
+      ansible.builtin.set_fact:
+        libvirt_existing_network:
+          rc: 1
+          stdout: ""
+          stderr: ""
+        libvirt_network_needs_recreation: true
+
+- name: Refuse unsafe mutation of an existing incompatible network
+  ansible.builtin.assert:
+    that:
+      - libvirt_existing_network.rc != 0 or libvirt_bridge_name in libvirt_existing_network.stdout
+      - libvirt_existing_network.rc != 0 or libvirt_gateway in libvirt_existing_network.stdout
+      - libvirt_existing_network.rc != 0 or libvirt_missing_network_identities | length == 0
+    fail_msg: >-
+      Existing network {{ libvirt_network_name }} does not match the requested
+      bridge, gateway, or cluster reservations. Diagnose it before changing a
+      live workshop network.
+    quiet: true
+
+- name: Report the libvirt network plan
+  ansible.builtin.debug:
+    msg:
+      - "Network: {{ libvirt_network_name }}"
+      - "Bridge: {{ libvirt_bridge_name }}"
+      - "CIDR: {{ libvirt_network_cidr }}"
+      - "Existing: {{ libvirt_existing_network.rc == 0 }}"
+      - "Automation mode: {{ automation_mode }}"
+      - No existing network was restarted or replaced.
+
+- name: Create the new libvirt network in apply mode
+  when:
+    - automation_mode == 'apply'
+    - libvirt_existing_network.rc != 0
+  block:
+    - name: Create a temporary network definition
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .xml
+      register: libvirt_network_xml_file
+
+    - name: Write the network definition
+      ansible.builtin.copy:
+        content: "{{ libvirt_requested_network_xml }}"
+        dest: "{{ libvirt_network_xml_file.path }}"
+        mode: "0600"
+
+    - name: Define the libvirt network
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", net-define, "{{ libvirt_network_xml_file.path }}"]
+
+    - name: Start the libvirt network
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", net-start, "{{ libvirt_network_name }}"]
+
+    - name: Enable libvirt network autostart
+      ansible.builtin.command:
+        argv: [virsh, --connect, "{{ libvirt_uri }}", net-autostart, "{{ libvirt_network_name }}"]
+  always:
+    - name: Remove the temporary network definition
+      ansible.builtin.file:
+        path: "{{ libvirt_network_xml_file.path | default('') }}"
+        state: absent
+      when: libvirt_network_xml_file.path | default('') | length > 0
+
+- name: Read current libvirt network definition
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", net-info, "{{ libvirt_network_name }}"]
+  environment:
+    LC_ALL: C
+  register: libvirt_network_info
+  changed_when: false
+  failed_when: false
+
+- name: Read active libvirt network names
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", net-list, --name]
+  register: libvirt_active_networks
+  changed_when: false
+
+- name: Start an existing inactive network in apply mode
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", net-start, "{{ libvirt_network_name }}"]
+  when:
+    - automation_mode == 'apply'
+    - libvirt_network_info.rc == 0
+    - libvirt_network_name not in libvirt_active_networks.stdout_lines
+
+- name: Add missing supplemental DNS records to an existing network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - --connect
+      - "{{ libvirt_uri }}"
+      - net-update
+      - "{{ libvirt_network_name }}"
+      - add
+      - dns-host
+      - "<host ip='{{ item.ip_address }}'><hostname>{{ item.name }}</hostname></host>"
+      - --live
+      - --config
+  loop: "{{ libvirt_additional_dns_records | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - automation_mode == 'apply'
+    - libvirt_existing_network.rc == 0
+    - >-
+      item.name not in libvirt_existing_network.stdout
+      or item.ip_address not in libvirt_existing_network.stdout
+
+- name: Ensure autostart for the workshop network
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", net-autostart, "{{ libvirt_network_name }}"]
+  changed_when: false
+  when:
+    - automation_mode == 'apply'
+    - libvirt_network_info.rc == 0
+
+- name: Read final active libvirt network names
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", net-list, --name]
+  register: libvirt_final_active_networks
+  changed_when: false
+  when: automation_mode == 'apply'
+
+- name: Read final libvirt network definition
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", net-dumpxml, "{{ libvirt_network_name }}"]
+  register: libvirt_final_network_definition
+  changed_when: false
+  when: automation_mode == 'apply'
+
+- name: Require the network to exist after apply
+  ansible.builtin.assert:
+    that:
+      - libvirt_network_info.rc == 0 or automation_mode == 'plan'
+      - >-
+        automation_mode == 'plan'
+        or libvirt_network_name in libvirt_final_active_networks.stdout_lines
+    fail_msg: The requested libvirt network was not created successfully.
+    quiet: true
+
+- name: Require supplemental DNS records after apply
+  ansible.builtin.assert:
+    that:
+      - item.name in libvirt_final_network_definition.stdout
+      - item.ip_address in libvirt_final_network_definition.stdout
+    fail_msg: >-
+      DNS record {{ item.name }} -> {{ item.ip_address }} was not published to
+      libvirt network {{ libvirt_network_name }}.
+    quiet: true
+  loop: "{{ libvirt_additional_dns_records | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: automation_mode == 'apply'

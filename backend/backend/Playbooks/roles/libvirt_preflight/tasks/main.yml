@@ -1,0 +1,131 @@
+---
+- name: Read the virtualization host operating system
+  ansible.builtin.command:
+    argv: [cat, /etc/os-release]
+  register: libvirt_os_release
+  changed_when: false
+
+- name: Read host CPU capacity
+  ansible.builtin.command:
+    argv: [nproc]
+  register: libvirt_host_cpu
+  changed_when: false
+
+- name: Read host available memory
+  ansible.builtin.command:
+    argv: [awk, '/MemAvailable:/ {print int($2 / 1024)}', /proc/meminfo]
+  register: libvirt_host_memory
+  changed_when: false
+
+- name: Read storage filesystem capacity
+  ansible.builtin.command:
+    argv: [df, --output=avail, -BG, "{{ libvirt_pool_path | dirname | dirname }}"]
+  register: libvirt_host_storage
+  changed_when: false
+
+- name: Check required virtualization commands
+  ansible.builtin.command:
+    argv: [bash, -lc, "command -v {{ item }}"]
+  loop: "{{ libvirt_required_commands }}"
+  register: libvirt_command_checks
+  changed_when: false
+  failed_when: false
+
+- name: Check KVM device access
+  ansible.builtin.stat:
+    path: /dev/kvm
+  register: libvirt_kvm_device
+
+- name: Check the libvirt connection
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", list, --all]
+  register: libvirt_connection_check
+  changed_when: false
+  failed_when: false
+
+- name: Check already running requested domains
+  ansible.builtin.command:
+    argv: [virsh, --connect, "{{ libvirt_uri }}", domid, "{{ item.vm_name }}"]
+  loop: "{{ workshop_clusters | default([]) }}"
+  loop_control:
+    label: "{{ item.vm_name }}"
+  register: libvirt_running_domain_checks
+  changed_when: false
+  failed_when: false
+
+- name: Select domains that still require host capacity
+  ansible.builtin.set_fact:
+    libvirt_capacity_cluster_count: >-
+      {{
+        (libvirt_running_domain_checks.results
+         | default([])
+         | selectattr('rc', 'ne', 0)
+         | list
+         | length)
+        if workshop_clusters | default([]) | length > 0
+        else cluster_count | int
+      }}
+
+- name: Calculate requested workshop capacity
+  ansible.builtin.set_fact:
+    libvirt_required_vcpus: "{{ libvirt_capacity_cluster_count | int * libvirt_vm_vcpus | int }}"
+    libvirt_required_memory_mb: "{{ libvirt_capacity_cluster_count | int * libvirt_vm_memory_mb | int }}"
+    libvirt_required_storage_gb: "{{ libvirt_capacity_cluster_count | int * libvirt_vm_disk_gb | int }}"
+    libvirt_available_vcpus: "{{ libvirt_host_cpu.stdout | int }}"
+    libvirt_available_memory_mb: >-
+      {{ libvirt_host_memory.stdout | int - libvirt_host_reserved_memory_mb | int }}
+    libvirt_available_storage_gb: >-
+      {{
+        (libvirt_host_storage.stdout_lines[-1] | trim | regex_replace('G$', '') | int)
+        - libvirt_host_reserved_disk_gb | int
+      }}
+
+- name: Require a supported RHEL-family KVM host
+  ansible.builtin.assert:
+    that:
+      - >-
+        libvirt_os_release.stdout is search('(?m)^ID=(rhel|centos|rocky|almalinux)$')
+        or libvirt_os_release.stdout is search('(?m)^ID_LIKE=.*(rhel|fedora)')
+      - libvirt_kvm_device.stat.exists
+      - libvirt_connection_check.rc == 0
+      - libvirt_command_checks.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: The controller is not a ready RHEL-family KVM/libvirt host.
+    quiet: true
+
+- name: Require sufficient CPU capacity
+  ansible.builtin.assert:
+    that:
+      - libvirt_allow_cpu_overcommit | bool or libvirt_required_vcpus | int <= libvirt_available_vcpus | int
+    fail_msg: >-
+      Requested {{ libvirt_required_vcpus }} vCPUs but only
+      {{ libvirt_available_vcpus }} are available. Reduce cluster_count or
+      explicitly enable libvirt_allow_cpu_overcommit.
+    quiet: true
+
+- name: Require sufficient memory capacity
+  ansible.builtin.assert:
+    that:
+      - libvirt_allow_memory_overcommit | bool or libvirt_required_memory_mb | int <= libvirt_available_memory_mb | int
+    fail_msg: >-
+      Requested {{ libvirt_required_memory_mb }} MiB but only
+      {{ libvirt_available_memory_mb }} MiB remain after the host reserve.
+    quiet: true
+
+- name: Require sufficient storage capacity
+  ansible.builtin.assert:
+    that:
+      - libvirt_allow_storage_overcommit | bool or libvirt_required_storage_gb | int <= libvirt_available_storage_gb | int
+    fail_msg: >-
+      Requested {{ libvirt_required_storage_gb }} GiB but only
+      {{ libvirt_available_storage_gb }} GiB remain after the host reserve.
+    quiet: true
+
+- name: Report libvirt capacity readiness
+  ansible.builtin.debug:
+    msg:
+      - "Clusters requested: {{ cluster_count }}"
+      - "Domains requiring new capacity: {{ libvirt_capacity_cluster_count }}"
+      - "CPU requested/available: {{ libvirt_required_vcpus }}/{{ libvirt_available_vcpus }} vCPU"
+      - "RAM requested/available: {{ libvirt_required_memory_mb }}/{{ libvirt_available_memory_mb }} MiB"
+      - "Storage requested/available: {{ libvirt_required_storage_gb }}/{{ libvirt_available_storage_gb }} GiB"
+      - KVM/libvirt preflight passed without modifying the host.

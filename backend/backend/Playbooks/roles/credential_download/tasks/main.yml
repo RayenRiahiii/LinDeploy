@@ -1,0 +1,41 @@
+---
+- name: Determine whether credential download is permitted
+  ansible.builtin.set_fact:
+    sno_credential_download_permitted: >-
+      {{
+        sno_cluster_status == 'installed'
+        or (sno_installation_completed | default(false) | bool)
+        or
+        (
+          sno_workflow_action == 'recover'
+          and (sno_failed_cluster_recoverable | default(false) | bool)
+          and (failed_cluster_recovery_approved | default(false) | bool)
+        )
+      }}
+
+- name: Require an installed or explicitly recoverable cluster
+  ansible.builtin.assert:
+    that:
+      - sno_cluster_id is defined
+      - sno_cluster_id | length > 0
+      - sno_credential_download_permitted | bool
+    fail_msg: >-
+      Credentials can be downloaded only for an installed cluster or
+      an explicitly approved finalization-timeout recovery.
+    quiet: true
+
+- name: Report credential download plan
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Cluster ID: {{ sno_cluster_id }}"
+      - "Workflow action: {{ sno_workflow_action }}"
+      - "Kubeconfig destination: {{ kubeconfig_path }}"
+      - "Password destination: {{ kubeadmin_password_path }}"
+      - Plan mode did not download credentials.
+  when: automation_mode == 'plan'
+
+- name: Download credentials in apply mode
+  ansible.builtin.include_tasks:
+    file: apply.yml
+  when: automation_mode == 'apply'

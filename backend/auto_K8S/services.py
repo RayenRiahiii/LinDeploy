@@ -4,7 +4,10 @@ import json
 import stat
 import subprocess
 import tempfile
+import threading
 import time
+import unicodedata
+from collections import deque
 from pathlib import Path
 
 from celery.result import AsyncResult
@@ -12,7 +15,9 @@ from django.conf import settings
 from django.utils import timezone
 
 from backend.celery import app as celery_app
-from .models import Host, Installation, InstallationTarget, InstallationTemplate
+from .models import Host, Installation, InstallationTarget, InstallationTemplate, MirrorProfile
+from .openshift_secrets import consume_secret_bundle, destroy_secret_bundle
+from .openshift_telemetry import OpenShiftTelemetryPoller
 from .runners import get_runner
 
 
@@ -21,8 +26,158 @@ class InstallationCancelled(Exception):
 
 
 AUTO_FULL_PLAYBOOK_PATH = "playbooks/k8s_single_node.yml"
-AUTO_PREPARED_PLAYBOOK_PATH = "playbooks/init_single_node.yml"
+AUTO_PREPARED_PLAYBOOK_PATH = "playbooks/k8s_single_node.yml"
 AUTO_K3S_SINGLE_NODE_PLAYBOOK_PATH = "playbooks/k3s_single_node.yml"
+AUTO_K3S_MULTI_NODE_PLAYBOOK_PATH = "playbooks/k3s_multi_node.yml"
+AUTO_K3S_MULTI_NODE_CLEANUP_PLAYBOOK_PATH = "playbooks/k3s_multi_node_cleanup.yml"
+
+LIVE_OUTPUT_LINE_LIMIT = 5000
+
+SECRET_PATTERNS = [
+    # Red Hat Offline Tokens / JWTs
+    (re.compile(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}"), "<redacted-jwt-token>"),
+    # Docker auth tokens / base64 auth
+    (re.compile(r'("auth":\s*")[^"]+(")'), r'\1<redacted-auth>\2'),
+    (re.compile(r'("password":\s*")[^"]+(")'), r'\1<redacted-password>\2'),
+    # OpenShift pull secret auths
+    (re.compile(r'("auths":\s*\{)[^\}]+(\})'), r'\1"<redacted-pull-secret>"\2'),
+    # Ansible & SSH passwords in key-value format
+    (re.compile(r'(ansible_(?:password|become_password|ssh_pass)\s*[:=]\s*)[^\s,]+', re.IGNORECASE), r'\1"<redacted>"'),
+    # Private keys
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "<redacted-private-key>"),
+    # Generic bearer tokens
+    (re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.]{20,}", re.IGNORECASE), r"\1<redacted-token>"),
+]
+
+
+def sanitize_log_line(text):
+    """Scrub sensitive credentials, tokens, passwords, and private keys from log lines."""
+    if not text or not isinstance(text, str):
+        return text or ""
+    sanitized = text
+    for pattern, replacement in SECRET_PATTERNS:
+        sanitized = pattern.sub(replacement, sanitized)
+    return sanitized
+
+
+def redact_inventory_secrets(inventory_content):
+    """Return a diagnostic-safe inventory without SSH or sudo secret values."""
+    if not inventory_content:
+        return ""
+    return sanitize_log_line(inventory_content)
+
+
+def get_live_output_path(installation_id):
+    return Path(settings.BASE_DIR) / "runtime" / "live-output" / f"installation-{installation_id}.jsonl"
+
+
+def reset_live_output(installation_id):
+    path = get_live_output_path(installation_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    return path
+
+
+def append_live_output_line(path, lock, *, channel, line, timestamp):
+    safe_line = sanitize_log_line(line)
+    payload = json.dumps(
+        {
+            "channel": channel,
+            "line": safe_line,
+            "timestamp": timestamp,
+        },
+        ensure_ascii=False,
+    )
+    with lock:
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{payload}\n")
+
+
+def read_live_output_lines(installation_id, limit=LIVE_OUTPUT_LINE_LIMIT):
+    path = get_live_output_path(installation_id)
+    if not path.is_file():
+        return []
+
+    output_lines = deque(maxlen=max(1, int(limit)))
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for raw_line in stream:
+                try:
+                    item = json.loads(raw_line)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(item, dict) and isinstance(item.get("line"), str):
+                    output_lines.append(item)
+    except OSError:
+        return []
+
+    return list(output_lines)
+
+
+def read_live_output_chunk(installation_id, offset=0, limit=LIVE_OUTPUT_LINE_LIMIT):
+    """
+    Read output lines starting from line index `offset` (0-indexed).
+    Returns a dict: {"lines": [...], "next_offset": int, "total_lines": int}
+    """
+    path = get_live_output_path(installation_id)
+    if not path.is_file():
+        return {"lines": [], "next_offset": 0, "total_lines": 0}
+
+    offset_val = max(0, int(offset or 0))
+    limit_val = max(1, int(limit or LIVE_OUTPUT_LINE_LIMIT))
+
+    lines = []
+    current_index = 0
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for raw_line in stream:
+                try:
+                    item = json.loads(raw_line)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(item, dict) and isinstance(item.get("line"), str):
+                    if current_index >= offset_val and len(lines) < limit_val:
+                        lines.append(item)
+                    current_index += 1
+    except OSError:
+        return {"lines": [], "next_offset": offset_val, "total_lines": current_index}
+
+    return {
+        "lines": lines,
+        "next_offset": offset_val + len(lines),
+        "total_lines": current_index,
+    }
+
+
+def normalize_node_name(value, fallback="node"):
+    """Return a Kubernetes-compatible DNS label without changing valid names."""
+    candidate = unicodedata.normalize("NFKD", str(value or ""))
+    candidate = candidate.encode("ascii", "ignore").decode("ascii").lower()
+    candidate = re.sub(r"[^a-z0-9-]+", "-", candidate)
+    candidate = re.sub(r"-+", "-", candidate).strip("-")
+    candidate = candidate[:63].rstrip("-")
+
+    if candidate:
+        return candidate
+
+    normalized_fallback = re.sub(r"[^a-z0-9-]+", "-", str(fallback).lower())
+    return normalized_fallback.strip("-")[:63] or "node"
+
+
+def normalize_cluster_name(value, fallback="cluster"):
+    """Return a DNS-subdomain-compatible cluster identifier."""
+    candidate = unicodedata.normalize("NFKD", str(value or ""))
+    candidate = candidate.encode("ascii", "ignore").decode("ascii").lower()
+    candidate = re.sub(r"[^a-z0-9.-]+", "-", candidate)
+    candidate = re.sub(r"-+", "-", candidate)
+    candidate = re.sub(r"\.+", ".", candidate).strip("-.")
+    candidate = candidate[:253].rstrip("-.")
+
+    if candidate:
+        return candidate
+
+    normalized_fallback = re.sub(r"[^a-z0-9.-]+", "-", str(fallback).lower())
+    return normalized_fallback.strip("-.")[:253] or "cluster"
 
 
 def revoke_celery_task(task_id):
@@ -40,6 +195,66 @@ def kill_process_tree(pid):
         return
 
     try:
+        if os.name == "nt" and int(pid) < 0:
+            wsl_pid = abs(int(pid))
+            distro = settings.ANSIBLE_WSL_DISTRO
+            terminate_script = (
+                "import os, signal, time\n"
+                f"root = {wsl_pid}\n"
+                "def children(parent):\n"
+                "    result = []\n"
+                "    for name in os.listdir('/proc'):\n"
+                "        if not name.isdigit():\n"
+                "            continue\n"
+                "        try:\n"
+                "            fields = open(f'/proc/{name}/stat').read().split()\n"
+                "            if int(fields[3]) == parent:\n"
+                "                child = int(name)\n"
+                "                result.extend(children(child))\n"
+                "                result.append(child)\n"
+                "        except (FileNotFoundError, ProcessLookupError, ValueError):\n"
+                "            pass\n"
+                "    return result\n"
+                "pids = children(root) + [root]\n"
+                "for target in pids:\n"
+                "    try: os.kill(target, signal.SIGTERM)\n"
+                "    except ProcessLookupError: pass\n"
+                "time.sleep(1)\n"
+                "for target in pids:\n"
+                "    try: os.kill(target, signal.SIGKILL)\n"
+                "    except ProcessLookupError: pass\n"
+            )
+            subprocess.run(
+                [
+                    "wsl",
+                    "-d",
+                    distro,
+                    "python3",
+                    "-c",
+                    terminate_script,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+            )
+            # Extra safeguard for lingering ansible/openshift processes
+            subprocess.run(
+                [
+                    "wsl",
+                    "-d",
+                    distro,
+                    "sh",
+                    "-c",
+                    f"pkill -TERM -P {wsl_pid} 2>/dev/null || true; sleep 1; pkill -KILL -P {wsl_pid} 2>/dev/null || true",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+            )
+            return
+
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -78,15 +293,28 @@ def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
 
     for host in hosts:
         raw = overrides_by_host_id.get(host.id, {})
-        normalized.append(
-            {
+        node_name = normalize_node_name(
+            raw.get("node_name") or host.hostname or host.name,
+            fallback=f"node-{host.id}",
+        )
+        system_prefix = (
+            "k3s"
+            if system_type == InstallationTemplate.SystemType.K3S
+            else ("openshift" if system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO else "kubernetes")
+        )
+        normalized_item = {
                 "host_id": host.id,
                 "host_name": host.name,
                 "hostname": host.hostname,
                 "ip_address": host.ip_address,
                 "ssh_port": int(raw.get("ssh_port") or host.ssh_port),
                 "ansible_user": (raw.get("ansible_user") or getattr(host.credential, "username", "")).strip(),
-                "node_name": (raw.get("node_name") or host.name).strip(),
+                "node_name": node_name,
+                "cluster_name": normalize_cluster_name(
+                    raw.get("cluster_name"),
+                    fallback=f"{system_prefix}-{node_name}",
+                ),
+                "cluster_name_explicit": bool(str(raw.get("cluster_name") or "").strip()),
                 "node_role": (raw.get("node_role") or default_role).strip(),
                 "advertise_address": (raw.get("advertise_address") or host.ip_address).strip(),
                 "labels": raw.get("labels") or [],
@@ -96,17 +324,186 @@ def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
                 "baseline_state": raw.get("baseline_state") or "",
                 "reachable": raw.get("reachable"),
             }
-        )
+        if system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+            for key in (
+                "vm_name",
+                "node_ip",
+                "prefix_length",
+                "gateway",
+                "interface_name",
+                "mac_address",
+                "installation_disk",
+                "libvirt_network",
+                "storage_pool",
+                "vcpu",
+                "memory_gib",
+                "disk_gib",
+                "network_mode",
+            ):
+                normalized_item[key] = raw.get(key)
+            if not normalized_item.get("mac_address"):
+                try:
+                    host_id_byte = int(host.id) % 256
+                    last_ip_byte = int(str(normalized_item.get("node_ip", "10")).split(".")[-1]) % 256
+                    normalized_item["mac_address"] = f"52:54:00:01:{host_id_byte:02x}:{last_ip_byte:02x}"
+                except Exception:
+                    normalized_item["mac_address"] = "52:54:00:01:00:10"
+        normalized.append(normalized_item)
 
     return normalized
 
 
-def build_inventory_file(hosts, host_overrides=None):
+def _append_inventory_host(
+    inventory_lines,
+    host,
+    host_override,
+    runner,
+    temp_dir,
+    indent,
+    include_node_metadata=False,
+):
+    inventory_lines.append(f"{indent}{host.name}:")
+    inventory_lines.append(f"{indent}  ansible_host: {host.ip_address}")
+    inventory_lines.append(f'{indent}  lindeploy_target_id: "{host.stable_id}"')
+    inventory_lines.append(
+        f"{indent}  ansible_port: {host_override.get('ssh_port', host.ssh_port)}"
+    )
+
+    if include_node_metadata and host_override.get("node_name"):
+        inventory_lines.append(
+            f'{indent}  lindeploy_node_name: "{host_override["node_name"]}"'
+        )
+    if include_node_metadata and host_override.get("cluster_name"):
+        inventory_lines.append(
+            f'{indent}  lindeploy_cluster_name: "{host_override["cluster_name"]}"'
+        )
+        inventory_lines.append(
+            f"{indent}  lindeploy_cluster_name_explicit: "
+            f"{'true' if host_override.get('cluster_name_explicit') else 'false'}"
+        )
+    if include_node_metadata and host_override.get("advertise_address"):
+        inventory_lines.append(
+            f'{indent}  lindeploy_advertise_address: "{host_override["advertise_address"]}"'
+        )
+
+    if not host.credential:
+        return
+
+    inventory_lines.append(
+        f"{indent}  ansible_user: \"{host_override.get('ansible_user', host.credential.username)}\""
+    )
+
+    if host.credential.auth_type == "password" and host.credential.password:
+        inventory_lines.append(
+            f'{indent}  ansible_password: "{host.credential.password}"'
+        )
+
+    if host.credential.auth_type == "ssh_key" and host.credential.private_key:
+        key_path = temp_dir / f"{host.name}-{host.credential.id}.pem"
+        key_path.write_text(host.credential.private_key, encoding="utf-8")
+        os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
+        inventory_lines.append(
+            f'{indent}  ansible_ssh_private_key_file: "{runner.to_runner_path(key_path)}"'
+        )
+
+    if host.credential.become_password:
+        inventory_lines.append(
+            f'{indent}  ansible_become_password: "{host.credential.become_password}"'
+        )
+
+
+def build_inventory_file(
+    hosts,
+    host_overrides=None,
+    topology=Installation.Topology.SINGLE_NODE,
+    bootstrap_host_id=None,
+):
     runner = get_runner()
     temp_dir = Path(tempfile.mkdtemp())
     overrides_by_host_id = {
         item["host_id"]: item for item in normalize_host_overrides(hosts, host_overrides)
     }
+
+    if topology == Installation.Topology.MULTI_NODE:
+        control_plane_hosts = [
+            host
+            for host in hosts
+            if overrides_by_host_id.get(host.id, {}).get("node_role")
+            in {"control_plane", "server"}
+        ]
+        worker_hosts = [
+            host
+            for host in hosts
+            if overrides_by_host_id.get(host.id, {}).get("node_role") in {"worker", "agent"}
+        ]
+        bootstrap_host = next(
+            (host for host in control_plane_hosts if host.id == bootstrap_host_id),
+            None,
+        )
+
+        if not control_plane_hosts:
+            raise ValueError("Multi-node inventory requires at least one control-plane host.")
+        if not worker_hosts:
+            raise ValueError("Multi-node inventory requires at least one worker host.")
+        if bootstrap_host is None:
+            raise ValueError(
+                "Multi-node inventory requires a reachable bootstrap host in the control-plane group."
+            )
+
+        inventory_lines = [
+            "all:",
+            "  children:",
+            "    selected_hosts:",
+            "      children:",
+            "        control_plane:",
+            "          hosts:",
+        ]
+        for host in control_plane_hosts:
+            _append_inventory_host(
+                inventory_lines,
+                host,
+                overrides_by_host_id[host.id],
+                runner,
+                temp_dir,
+                "            ",
+                include_node_metadata=True,
+            )
+            inventory_lines.append(
+                f"              lindeploy_is_bootstrap: "
+                f"{'true' if host.id == bootstrap_host_id else 'false'}"
+            )
+            inventory_lines.append("              lindeploy_desired_role: control_plane")
+
+        inventory_lines.extend(
+            [
+                "        workers:",
+                "          hosts:",
+            ]
+        )
+        for host in worker_hosts:
+            _append_inventory_host(
+                inventory_lines,
+                host,
+                overrides_by_host_id[host.id],
+                runner,
+                temp_dir,
+                "            ",
+                include_node_metadata=True,
+            )
+            inventory_lines.append("              lindeploy_is_bootstrap: false")
+            inventory_lines.append("              lindeploy_desired_role: worker")
+
+        inventory_lines.extend(
+            [
+                "        bootstrap:",
+                "          hosts:",
+                f"            {bootstrap_host.name}: {{}}",
+            ]
+        )
+        inventory_path = temp_dir / "inventory.yml"
+        inventory_path.write_text("\n".join(inventory_lines) + "\n", encoding="utf-8")
+        return inventory_path
+
     inventory_lines = [
         "all:",
         "  children:",
@@ -116,32 +513,15 @@ def build_inventory_file(hosts, host_overrides=None):
 
     for host in hosts:
         host_override = overrides_by_host_id.get(host.id, {})
-        inventory_lines.append(f"        {host.name}:")
-        inventory_lines.append(f"          ansible_host: {host.ip_address}")
-        inventory_lines.append(f"          ansible_port: {host_override.get('ssh_port', host.ssh_port)}")
-
-        if not host.credential:
-            continue
-
-        inventory_lines.append(
-            f"          ansible_user: \"{host_override.get('ansible_user', host.credential.username)}\""
+        _append_inventory_host(
+            inventory_lines,
+            host,
+            host_override,
+            runner,
+            temp_dir,
+            "        ",
+            include_node_metadata=True,
         )
-
-        if host.credential.auth_type == "password" and host.credential.password:
-            inventory_lines.append(f"          ansible_password: \"{host.credential.password}\"")
-
-        if host.credential.auth_type == "ssh_key" and host.credential.private_key:
-            key_path = temp_dir / f"{host.name}-{host.credential.id}.pem"
-            key_path.write_text(host.credential.private_key, encoding="utf-8")
-            os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
-            inventory_lines.append(
-                f"          ansible_ssh_private_key_file: \"{runner.to_runner_path(key_path)}\""
-            )
-
-        if host.credential.become_password:
-            inventory_lines.append(
-                f"          ansible_become_password: \"{host.credential.become_password}\""
-            )
 
     inventory_path = temp_dir / "inventory.yml"
     inventory_path.write_text("\n".join(inventory_lines) + "\n", encoding="utf-8")
@@ -149,20 +529,172 @@ def build_inventory_file(hosts, host_overrides=None):
     return inventory_path
 
 
-def build_extra_vars_file(cluster_config=None, host_overrides=None, system_type=None):
+def build_extra_vars_file(
+    cluster_config=None,
+    host_overrides=None,
+    system_type=None,
+    topology=Installation.Topology.SINGLE_NODE,
+    bootstrap_host_id=None,
+    ephemeral_secrets=None,
+):
     temp_dir = Path(tempfile.mkdtemp())
     payload = {
         "installer_type": system_type,
         "cluster_config": cluster_config or {},
         "host_overrides": host_overrides or [],
         "selected_hosts_config": host_overrides or [],
+        "deployment_topology": topology,
     }
+    if system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+        payload.update(ephemeral_secrets or {})
+        if not payload.get("mirror_username"):
+            payload["mirror_username"] = getattr(settings, "OPENSHIFT_MIRROR_USERNAME", "init")
+        if not payload.get("mirror_password"):
+            payload["mirror_password"] = getattr(settings, "OPENSHIFT_MIRROR_PASSWORD", "")
+        payload["redhat_offline_token"] = settings.OPENSHIFT_RED_HAT_OFFLINE_TOKEN
+        payload["openshift_default_version"] = settings.OPENSHIFT_DEFAULT_VERSION
 
-    primary_host = None
-    for host_override in host_overrides or []:
-        if host_override.get("node_role") in {"control_plane", "server"}:
-            primary_host = host_override
-            break
+    if settings.LINDEPLOY_MIRROR_ENABLED:
+        registry_mirrors = settings.LINDEPLOY_REGISTRY_MIRRORS
+        if not registry_mirrors:
+            raise ValueError(
+                "LINDEPLOY_MIRROR_ENABLED requires at least one registry "
+                "endpoint in LINDEPLOY_REGISTRY_MIRRORS_JSON."
+            )
+
+        invalid_endpoints = [
+            endpoint
+            for endpoint in registry_mirrors.values()
+            if not str(endpoint).startswith(("https://", "http://"))
+        ]
+        if invalid_endpoints:
+            raise ValueError(
+                "Every registry mirror endpoint must start with https:// or http://."
+            )
+        insecure_endpoints = [
+            endpoint
+            for endpoint in registry_mirrors.values()
+            if str(endpoint).startswith("http://")
+        ]
+        if insecure_endpoints and not settings.LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP:
+            raise ValueError(
+                "HTTP registry mirrors are disabled. Configure HTTPS or explicitly "
+                "set LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP=True for an isolated lab."
+            )
+
+        mirror_payload = {
+            "lindeploy_mirror_enabled": True,
+            "lindeploy_mirror_allow_insecure_http": (
+                settings.LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP
+            ),
+            "lindeploy_registry_mirrors": registry_mirrors,
+            "lindeploy_system_package_cache_enabled": (
+                settings.LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED
+            ),
+            "lindeploy_mirror_cache_required": settings.LINDEPLOY_MIRROR_CACHE_REQUIRED,
+        }
+
+        requested_profile_id = {
+            InstallationTemplate.SystemType.KUBERNETES: settings.LINDEPLOY_KUBERNETES_PROFILE_ID,
+            InstallationTemplate.SystemType.K3S: settings.LINDEPLOY_K3S_PROFILE_ID,
+        }.get(system_type, "")
+        if requested_profile_id:
+            mirror_payload["lindeploy_mirror_profile_id"] = requested_profile_id
+            profile = MirrorProfile.objects.filter(
+                profile_id=requested_profile_id,
+                verification_state=MirrorProfile.VerificationState.READY,
+            ).first()
+            if settings.LINDEPLOY_MIRROR_CACHE_REQUIRED and profile is None:
+                raise ValueError(
+                    f"Required immutable mirror profile {requested_profile_id} is not ready. "
+                    "Run and verify mirror prewarm before starting this installation."
+                )
+            if profile:
+                if system_type == InstallationTemplate.SystemType.KUBERNETES:
+                    mirror_payload["kubeadm_kubernetes_version"] = profile.exact_version
+                elif system_type == InstallationTemplate.SystemType.K3S:
+                    mirror_payload["k3s_version"] = profile.exact_version
+        if settings.LINDEPLOY_PACKAGE_MIRROR_BASE_URL:
+            package_mirror_url = settings.LINDEPLOY_PACKAGE_MIRROR_BASE_URL
+            if not package_mirror_url.startswith("https://"):
+                raise ValueError(
+                    "LINDEPLOY_PACKAGE_MIRROR_BASE_URL requires an HTTPS "
+                    "LINDEPLOY_PACKAGE_MIRROR_BASE_URL."
+                )
+
+            mirror_payload["lindeploy_package_mirror_base_url"] = package_mirror_url
+
+        ca_file = settings.LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE
+        if ca_file:
+            ca_path = Path(ca_file).expanduser()
+            if not ca_path.is_file():
+                raise ValueError(
+                    "LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE does not reference "
+                    "a readable certificate file."
+                )
+            mirror_payload["lindeploy_mirror_ca_certificate"] = ca_path.read_text(
+                encoding="utf-8"
+            )
+
+        optional_urls = {
+            "k3s_install_script_url": settings.LINDEPLOY_K3S_INSTALL_SCRIPT_URL,
+            "k3s_install_channel_url": settings.LINDEPLOY_K3S_CHANNEL_URL,
+            "k3s_install_artifact_url": settings.LINDEPLOY_K3S_ARTIFACT_URL,
+            "calico_manifest_url": settings.LINDEPLOY_CALICO_MANIFEST_URL,
+            "containerd_repo_baseurl": settings.LINDEPLOY_CONTAINERD_RPM_BASEURL,
+            "containerd_repo_gpgkey": settings.LINDEPLOY_CONTAINERD_RPM_GPGKEY,
+            "containerd_apt_repo_url": settings.LINDEPLOY_CONTAINERD_APT_REPO_URL,
+            "containerd_apt_key_url": settings.LINDEPLOY_CONTAINERD_APT_KEY_URL,
+            "kubernetes_repo_baseurl": settings.LINDEPLOY_KUBERNETES_RPM_BASEURL,
+            "kubernetes_repo_gpgkey": settings.LINDEPLOY_KUBERNETES_RPM_GPGKEY,
+            "kubernetes_apt_repo_url": settings.LINDEPLOY_KUBERNETES_APT_REPO_URL,
+            "kubernetes_apt_repo_key_url": settings.LINDEPLOY_KUBERNETES_APT_KEY_URL,
+        }
+        mirror_payload.update(
+            {key: value for key, value in optional_urls.items() if value}
+        )
+        payload.update(mirror_payload)
+
+    bootstrap_host = None
+
+    if topology == Installation.Topology.MULTI_NODE:
+        control_plane_hosts = [
+            item
+            for item in host_overrides or []
+            if item.get("node_role") in {"control_plane", "server"}
+        ]
+        worker_hosts = [
+            item
+            for item in host_overrides or []
+            if item.get("node_role") in {"worker", "agent"}
+        ]
+        bootstrap_host = next(
+            (
+                item
+                for item in control_plane_hosts
+                if str(item.get("host_id")) == str(bootstrap_host_id)
+            ),
+            None,
+        )
+        payload.update(
+            {
+                "control_plane_hosts": control_plane_hosts,
+                "worker_hosts": worker_hosts,
+                "bootstrap_host_id": bootstrap_host_id,
+                "bootstrap_host_name": bootstrap_host.get("host_name") if bootstrap_host else None,
+                "bootstrap_node_name": bootstrap_host.get("node_name") if bootstrap_host else None,
+                "bootstrap_advertise_address": (
+                    bootstrap_host.get("advertise_address") if bootstrap_host else None
+                ),
+            }
+        )
+
+    primary_host = bootstrap_host
+    if primary_host is None:
+        for host_override in host_overrides or []:
+            if host_override.get("node_role") in {"control_plane", "server"}:
+                primary_host = host_override
+                break
 
     if primary_host:
         payload["primary_host_name"] = primary_host.get("host_name")
@@ -171,6 +703,7 @@ def build_extra_vars_file(cluster_config=None, host_overrides=None, system_type=
 
     for key in (
         "cluster_name",
+        "cluster_name_explicit",
         "version",
         "cluster_domain",
         "pod_cidr",
@@ -180,12 +713,16 @@ def build_extra_vars_file(cluster_config=None, host_overrides=None, system_type=
         "disable_ingress",
         "control_plane_count",
         "worker_count",
+        "target_modification_approved",
+        "cleanup_confirmation",
+        "cleanup_expected_confirmation",
     ):
         if cluster_config and key in cluster_config:
             payload[key] = cluster_config[key]
 
     extra_vars_path = temp_dir / "extra-vars.json"
     extra_vars_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.chmod(extra_vars_path, stat.S_IRUSR | stat.S_IWUSR)
     return extra_vars_path
 
 
@@ -260,6 +797,40 @@ def parse_live_ansible_line(line):
     return None
 
 
+def parse_listed_task_count(stdout_text):
+    """Count the executable task entries emitted by ansible-playbook --list-tasks."""
+    return sum(
+        1
+        for line in stdout_text.splitlines()
+        if re.match(r"^\s{6,}\S.*\s+TAGS:\s*\[.*\]\s*$", line)
+    )
+
+
+def parse_listed_task_work_count(stdout_text, free_strategy_group_sizes=None):
+    """Estimate emitted task headers for plays that run independently per host."""
+    group_sizes = free_strategy_group_sizes or {}
+    current_pattern = ""
+    task_count = 0
+
+    for line in stdout_text.splitlines():
+        play_match = re.match(r"^\s+play #\d+ \((?P<pattern>[^)]+)\):", line)
+        if play_match:
+            current_pattern = play_match.group("pattern").strip()
+            continue
+
+        if not re.match(r"^\s{6,}\S.*\s+TAGS:\s*\[.*\]\s*$", line):
+            continue
+
+        multiplier = (
+            max(0, int(group_sizes[current_pattern]))
+            if current_pattern in group_sizes
+            else 1
+        )
+        task_count += multiplier
+
+    return task_count
+
+
 def parse_play_recap(stdout_text):
     recap_by_host = {}
     in_play_recap = False
@@ -307,26 +878,57 @@ def apply_playbook_results(targets, stdout_text, stderr_text, return_code):
     failed_count = 0
 
     for target in targets:
-        recap = recap_by_host.get(target.host.name)
+        recap = (
+            recap_by_host.get(target.host.name)
+            or recap_by_host.get(target.host.hostname)
+            or recap_by_host.get(target.host.ip_address)
+            or next(
+                (v for k, v in recap_by_host.items() if k.lower() == target.host.name.lower()),
+                None,
+            )
+        )
 
         if recap is not None:
             host_failed = recap["failed"] > 0 or recap["unreachable"] > 0
-            target_status = (
-                InstallationTarget.Status.FAILED
-                if host_failed
-                else InstallationTarget.Status.SUCCESS
-            )
-            output = recap["line"]
+            if (
+                target.installation.topology == Installation.Topology.MULTI_NODE
+                and return_code != 0
+                and not host_failed
+            ):
+                target_status = InstallationTarget.Status.FAILED
+                output = f"Multi-node execution aborted because another host encountered a blocking failure. ({recap['line']})"
+            else:
+                target_status = (
+                    InstallationTarget.Status.FAILED
+                    if host_failed
+                    else InstallationTarget.Status.SUCCESS
+                )
+                output = recap["line"]
         else:
-            target_status = (
-                InstallationTarget.Status.SUCCESS
-                if return_code == 0
-                else InstallationTarget.Status.FAILED
-            )
+            target_status = InstallationTarget.Status.FAILED
+            diagnostic = ""
+            if return_code != 0:
+                combined_lines = [
+                    line.strip()
+                    for line in f"{stderr_text or ''}\n{stdout_text or ''}".splitlines()
+                    if line.strip()
+                ]
+                for line in combined_lines:
+                    if any(
+                        marker in line.lower()
+                        for marker in ("[error]", "error!", "syntax error", "fatal:")
+                    ):
+                        diagnostic = line
+                        break
             output = (
-                "Host completed without an explicit PLAY RECAP line."
+                "Ansible returned without a PLAY RECAP. The execution result "
+                "cannot be verified and is treated as failed."
                 if return_code == 0
-                else "Host status could not be resolved from Ansible PLAY RECAP."
+                else (
+                    f"Host status could not be resolved from Ansible PLAY RECAP ({diagnostic})."
+                    if diagnostic
+                    else "Host status could not be resolved from Ansible PLAY RECAP."
+                )
             )
 
         if target_status == InstallationTarget.Status.SUCCESS:
@@ -334,13 +936,26 @@ def apply_playbook_results(targets, stdout_text, stderr_text, return_code):
         else:
             failed_count += 1
 
+        target_updates = {
+            "status": target_status,
+            "stdout": stdout_text,
+            "stderr": stderr_text,
+            "return_code": return_code,
+            "output": output,
+        }
+        if (
+            target.installation.topology == Installation.Topology.MULTI_NODE
+            and not target.is_bootstrap
+        ):
+            target_updates["join_status"] = (
+                InstallationTarget.JoinStatus.JOINED
+                if target_status == InstallationTarget.Status.SUCCESS
+                else InstallationTarget.JoinStatus.FAILED
+            )
+
         update_target(
             target,
-            status=target_status,
-            stdout=stdout_text,
-            stderr=stderr_text,
-            return_code=return_code,
-            output=output,
+            **target_updates,
         )
 
     return {
@@ -640,6 +1255,34 @@ def run_playbook(
     return result, metadata
 
 
+def inspect_playbook_task_count(
+    repo_root,
+    playbook_relative_path,
+    inventory_path,
+    extra_vars_path=None,
+    free_strategy_group_sizes=None,
+):
+    runner = get_runner()
+    result, metadata = runner.list_playbook_tasks(
+        repo_root=repo_root,
+        playbook_relative_path=playbook_relative_path,
+        inventory_path=inventory_path,
+        extra_vars_path=extra_vars_path,
+    )
+    metadata["raw_task_count"] = (
+        parse_listed_task_count(result.stdout) if result.returncode == 0 else 0
+    )
+    metadata["task_count"] = (
+        parse_listed_task_work_count(
+            result.stdout,
+            free_strategy_group_sizes=free_strategy_group_sizes,
+        )
+        if result.returncode == 0
+        else 0
+    )
+    return result, metadata
+
+
 def update_host_baseline(host, detection):
     host.baseline_state = detection["baseline_state"]
     host.baseline_facts = detection["facts"]
@@ -691,16 +1334,32 @@ def detect_hosts_baseline(hosts):
 
 
 def get_installation_template_by_path(playbook_path, system_type=InstallationTemplate.SystemType.KUBERNETES):
-    return InstallationTemplate.objects.get(
+    templates = InstallationTemplate.objects.filter(
         playbook_path=playbook_path,
         system_type=system_type,
     )
+    template = templates.order_by("id").first()
+    if template is None:
+        raise InstallationTemplate.DoesNotExist
+    if templates.count() > 1:
+        raise ValueError(
+            "Duplicate installation templates were found for "
+            f"'{system_type}' and '{playbook_path}'. Apply the latest backend "
+            "migrations, restart the API service, and retry."
+        )
+    return template
 
 
-def select_installation_template(hosts, deployment_mode="auto", template_id=None, system_type="kubernetes"):
+def select_installation_template(
+    hosts,
+    deployment_mode="auto",
+    template_id=None,
+    system_type="kubernetes",
+    topology=Installation.Topology.SINGLE_NODE,
+):
     normalized_system = (system_type or InstallationTemplate.SystemType.KUBERNETES).strip().lower()
-
     normalized_mode = (deployment_mode or "auto").strip().lower()
+    normalized_topology = (topology or Installation.Topology.SINGLE_NODE).strip().lower()
 
     if normalized_mode == "manual":
         if not template_id:
@@ -709,10 +1368,40 @@ def select_installation_template(hosts, deployment_mode="auto", template_id=None
             id=template_id,
             system_type=normalized_system,
         )
+        if (
+            normalized_topology == Installation.Topology.MULTI_NODE
+            and template.deployment_type not in {
+                InstallationTemplate.DeploymentType.MULTI_NODE,
+                InstallationTemplate.DeploymentType.CLEANUP,
+            }
+        ):
+            raise ValueError("The selected template is not a multi-node installation template.")
+
         return {
             "template": template,
             "strategy": "manual",
             "detections": [],
+        }
+
+    if normalized_topology == Installation.Topology.MULTI_NODE:
+        if normalized_system not in {
+            InstallationTemplate.SystemType.KUBERNETES,
+            InstallationTemplate.SystemType.K3S,
+        }:
+            raise ValueError(f"Installer '{normalized_system}' does not support multi-node yet.")
+
+        template = InstallationTemplate.objects.filter(
+            system_type=normalized_system,
+            deployment_type=InstallationTemplate.DeploymentType.MULTI_NODE,
+        ).order_by("id").first()
+        if template is None:
+            raise InstallationTemplate.DoesNotExist
+
+        return {
+            "template": template,
+            "strategy": "multi_node",
+            "detections": [],
+            "eligible_host_names": [host.name for host in hosts],
         }
 
     if normalized_system == InstallationTemplate.SystemType.K3S:
@@ -844,11 +1533,15 @@ def publish_task_progress(
 
 def push_live_event(tracker, event):
     tracker["recent_events"].append(event)
-    tracker["recent_events"] = tracker["recent_events"][-25:]
+    tracker["recent_events"] = tracker["recent_events"][-100:]
 
 
-def compute_live_playbook_progress(seen_tasks):
-    return min(88, 35 + max(0, seen_tasks - 1) * 3)
+def compute_live_playbook_progress(completed_tasks, total_tasks):
+    if total_tasks <= 0:
+        return min(90, 35 + max(0, completed_tasks))
+
+    completed_ratio = min(1.0, max(0, completed_tasks) / total_tasks)
+    return min(91, 35 + round(completed_ratio * 56))
 
 
 def apply_connectivity_results(targets, connectivity, stdout_text, stderr_text, return_code):
@@ -1038,12 +1731,18 @@ def execute_installation(installation_id, task=None):
         "current_task": "",
         "seen_tasks": 0,
         "completed_tasks": 0,
+        "total_tasks": 0,
         "recent_events": [],
+        "last_output_publish": 0.0,
     }
     celery_task_id = getattr(getattr(task, "request", None), "id", None)
     inventory_content = installation.inventory_content or ""
     connectivity = installation.connectivity or []
     timings = installation.timings or {}
+    openshift_secret_bundle = None
+    ephemeral_secrets = {}
+    ephemeral_extra_vars_paths = []
+    ephemeral_inventory_paths = []
 
     if installation.status == Installation.Status.CANCELLED or installation.cancel_requested:
         return finalize_cancelled_installation(
@@ -1075,6 +1774,14 @@ def execute_installation(installation_id, task=None):
     )
 
     try:
+        if (
+            installation.template.system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO
+            and installation.template.deployment_type != InstallationTemplate.DeploymentType.CLEANUP
+        ):
+            secret_reference = (installation.cluster_config or {}).get("secret_reference")
+            if secret_reference:
+                openshift_secret_bundle, ephemeral_secrets = consume_secret_bundle(secret_reference)
+
         normalized_host_overrides = normalize_host_overrides(
             hosts,
             installation.host_overrides,
@@ -1117,13 +1824,22 @@ def execute_installation(installation_id, task=None):
         inventory_path = build_inventory_file(
             runnable_hosts,
             host_overrides=runnable_host_overrides,
+            topology=installation.topology,
+            bootstrap_host_id=installation.bootstrap_host_id,
         )
-        inventory_content = inventory_path.read_text(encoding="utf-8")
+        ephemeral_inventory_paths.append(inventory_path)
+        inventory_content = redact_inventory_secrets(
+            inventory_path.read_text(encoding="utf-8")
+        )
         extra_vars_path = build_extra_vars_file(
             cluster_config=installation.cluster_config,
             host_overrides=runnable_host_overrides,
             system_type=installation.template.system_type,
+            topology=installation.topology,
+            bootstrap_host_id=installation.bootstrap_host_id,
+            ephemeral_secrets=ephemeral_secrets,
         )
+        ephemeral_extra_vars_paths.append(extra_vars_path)
         inventory_build_seconds = round(time.perf_counter() - inventory_started_at, 3)
         update_installation(
             installation,
@@ -1256,13 +1972,51 @@ def execute_installation(installation_id, task=None):
         inventory_path = build_inventory_file(
             reachable_hosts,
             host_overrides=reachable_host_overrides,
+            topology=installation.topology,
+            bootstrap_host_id=installation.bootstrap_host_id,
         )
-        inventory_content = inventory_path.read_text(encoding="utf-8")
+        ephemeral_inventory_paths.append(inventory_path)
+        inventory_content = redact_inventory_secrets(
+            inventory_path.read_text(encoding="utf-8")
+        )
         extra_vars_path = build_extra_vars_file(
             cluster_config=installation.cluster_config,
             host_overrides=reachable_host_overrides,
             system_type=installation.template.system_type,
+            topology=installation.topology,
+            bootstrap_host_id=installation.bootstrap_host_id,
+            ephemeral_secrets=ephemeral_secrets,
         )
+        ephemeral_extra_vars_paths.append(extra_vars_path)
+        try:
+            control_plane_count = sum(
+                1
+                for item in reachable_host_overrides
+                if item.get("desired_role") == "control_plane"
+            )
+            _, task_plan_metadata = inspect_playbook_task_count(
+                repo_root=ansible_repo_root,
+                playbook_relative_path=installation.template.playbook_path,
+                inventory_path=inventory_path,
+                extra_vars_path=extra_vars_path,
+                free_strategy_group_sizes={
+                    "selected_hosts": len(reachable_targets),
+                    "workers": sum(
+                        1
+                        for item in reachable_host_overrides
+                        if item.get("desired_role") == "worker"
+                    ),
+                    "control_plane:!bootstrap": max(0, control_plane_count - 1),
+                },
+            )
+            live_tracker["total_tasks"] = task_plan_metadata["task_count"]
+            timings["task_plan_seconds"] = task_plan_metadata["execution_seconds"]
+        except (FileNotFoundError, OSError, ValueError):
+            live_tracker["total_tasks"] = 0
+
+        live_output_path = reset_live_output(installation.id)
+        live_output_lock = threading.Lock()
+
         update_installation(
             installation,
             phase=Installation.Phase.RUNNING_PLAYBOOK,
@@ -1277,7 +2031,14 @@ def execute_installation(installation_id, task=None):
             "Installation cancelled before Ansible playbook execution started.",
         )
 
-        def publish_live_playbook_state():
+        def publish_live_playbook_state(force=True):
+            published_at = time.monotonic()
+            if (
+                not force
+                and published_at - live_tracker["last_output_publish"] < 0.5
+            ):
+                return
+            live_tracker["last_output_publish"] = published_at
             publish_task_progress(
                 task,
                 installation,
@@ -1290,6 +2051,7 @@ def execute_installation(installation_id, task=None):
                     "current_task": live_tracker["current_task"],
                     "seen_tasks": live_tracker["seen_tasks"],
                     "completed_tasks": live_tracker["completed_tasks"],
+                    "total_tasks": live_tracker["total_tasks"],
                     "recent_events": live_tracker["recent_events"],
                 },
             )
@@ -1298,11 +2060,18 @@ def execute_installation(installation_id, task=None):
             if is_installation_cancelled(installation):
                 return
 
+            timestamp = timezone.now().isoformat()
+            append_live_output_line(
+                live_output_path,
+                live_output_lock,
+                channel=channel,
+                line=line,
+                timestamp=timestamp,
+            )
             parsed = parse_live_ansible_line(line)
             if not parsed:
+                publish_live_playbook_state(force=False)
                 return
-
-            timestamp = timezone.now().isoformat()
 
             if parsed["kind"] == "play_started":
                 live_tracker["current_play"] = parsed["play"]
@@ -1322,10 +2091,14 @@ def execute_installation(installation_id, task=None):
                 if live_tracker["seen_tasks"] > 0:
                     live_tracker["completed_tasks"] = max(
                         live_tracker["completed_tasks"],
-                        live_tracker["seen_tasks"] - 1,
+                        live_tracker["seen_tasks"],
                     )
 
                 live_tracker["seen_tasks"] += 1
+                live_tracker["total_tasks"] = max(
+                    live_tracker["total_tasks"],
+                    live_tracker["seen_tasks"],
+                )
                 live_tracker["current_role"] = parsed["role"]
                 live_tracker["current_task"] = parsed["task"]
 
@@ -1334,7 +2107,10 @@ def execute_installation(installation_id, task=None):
 
                 update_installation(
                     installation,
-                    progress=compute_live_playbook_progress(live_tracker["seen_tasks"]),
+                    progress=compute_live_playbook_progress(
+                        live_tracker["completed_tasks"],
+                        live_tracker["total_tasks"],
+                    ),
                     summary_message=f"Current task: {task_label}",
                 )
                 push_live_event(
@@ -1368,18 +2144,76 @@ def execute_installation(installation_id, task=None):
 
         publish_live_playbook_state()
 
-        result, playbook_metadata = run_playbook(
-            repo_root=ansible_repo_root,
-            playbook_relative_path=installation.template.playbook_path,
-            inventory_path=inventory_path,
-            extra_vars_path=extra_vars_path,
-            on_stdout_line=lambda line: handle_playbook_line("stdout", line),
-            on_stderr_line=lambda line: handle_playbook_line("stderr", line),
-            on_process_start=lambda process: update_installation(
-                installation,
-                runner_pid=process.pid,
-            ),
-        )
+        telemetry_poller = None
+        if installation.template.system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO:
+            cluster_cfg = installation.cluster_config or {}
+            target_ip = cluster_cfg.get("rendezvous_ip") or "192.168.130.10"
+            cluster_name = cluster_cfg.get("cluster_name") or "sno-01"
+            home_dir = os.environ.get("HOME") or "/home/rayen"
+            assets_dir = f"{home_dir}/.local/share/lindeploy/openshift-agent/{cluster_name}"
+            standard_assets_dir = f"/var/lib/lindeploy/openshift-agent/{cluster_name}"
+            legacy_assets_dir = f"{home_dir}/.local/share/lindeploy/openshift-agent/{cluster_name}"
+            assets_dir = standard_assets_dir if os.path.isdir(standard_assets_dir) else legacy_assets_dir
+
+            def on_telemetry(data):
+                stage = data.get("stage") or ""
+                stage_pct = data.get("stage_percentage") or 0
+                tot_pct = data.get("total_percentage") or 0
+                prog_info = data.get("progress_info") or ""
+                extra = f" ({prog_info})" if prog_info and prog_info != str(stage_pct) + "%" else ""
+                msg = f"Stage: {stage}{extra} - {stage_pct}% (Cluster: {tot_pct}%)"
+                installation.summary_message = msg
+                update_installation(
+                    installation,
+                    summary_message=msg,
+                    progress=max(installation.progress or 0, min(92, 35 + int(tot_pct * 0.57))),
+                )
+                publish_task_progress(
+                    task,
+                    installation,
+                    current_step=4,
+                    total_steps=5,
+                    task_id=celery_task_id,
+                    extra_meta={
+                        "current_play": live_tracker["current_play"],
+                        "current_role": live_tracker["current_role"],
+                        "current_task": live_tracker["current_task"],
+                        "seen_tasks": live_tracker["seen_tasks"],
+                        "completed_tasks": live_tracker["completed_tasks"],
+                        "total_tasks": live_tracker["total_tasks"],
+                        "recent_events": live_tracker["recent_events"],
+                        "telemetry": data,
+                    },
+                )
+
+            try:
+                telemetry_poller = OpenShiftTelemetryPoller(
+                    vm_ip=target_ip,
+                    assets_directory=assets_dir,
+                    on_update_callback=on_telemetry,
+                    poll_interval=5.0,
+                )
+                telemetry_poller.start()
+            except Exception:
+                pass
+
+        try:
+            result, playbook_metadata = run_playbook(
+                repo_root=ansible_repo_root,
+                playbook_relative_path=installation.template.playbook_path,
+                inventory_path=inventory_path,
+                extra_vars_path=extra_vars_path,
+                on_stdout_line=lambda line: handle_playbook_line("stdout", line),
+                on_stderr_line=lambda line: handle_playbook_line("stderr", line),
+                on_process_start=lambda process: update_installation(
+                    installation,
+                    runner_pid=process.pid,
+                ),
+            )
+        finally:
+            if telemetry_poller:
+                telemetry_poller.stop()
+
         timings["playbook_execution_seconds"] = playbook_metadata["execution_seconds"]
         live_tracker["completed_tasks"] = max(
             live_tracker["completed_tasks"],
@@ -1406,6 +2240,7 @@ def execute_installation(installation_id, task=None):
                     "current_task": live_tracker["current_task"],
                     "seen_tasks": live_tracker["seen_tasks"],
                     "completed_tasks": live_tracker["completed_tasks"],
+                    "total_tasks": live_tracker["total_tasks"],
                     "recent_events": live_tracker["recent_events"],
                 },
             )
@@ -1423,6 +2258,15 @@ def execute_installation(installation_id, task=None):
             current_step=5,
             total_steps=5,
             task_id=celery_task_id,
+            extra_meta={
+                "current_play": live_tracker["current_play"],
+                "current_role": live_tracker["current_role"],
+                "current_task": live_tracker["current_task"],
+                "seen_tasks": live_tracker["seen_tasks"],
+                "completed_tasks": live_tracker["completed_tasks"],
+                "total_tasks": live_tracker["total_tasks"],
+                "recent_events": live_tracker["recent_events"],
+            },
         )
 
         playbook_target_results = apply_playbook_results(
@@ -1442,7 +2286,7 @@ def execute_installation(installation_id, task=None):
             if failed_targets == 0 and result.returncode == 0
             else (
                 Installation.Status.PARTIAL_SUCCESS
-                if successful_targets > 0
+                if successful_targets > 0 and installation.topology != Installation.Topology.MULTI_NODE
                 else Installation.Status.FAILED
             )
         )
@@ -1469,8 +2313,8 @@ def execute_installation(installation_id, task=None):
             cancel_requested=False,
             finished_at=timezone.now(),
             command=playbook_metadata["command"],
-            stdout=result.stdout,
-            stderr=result.stderr,
+            stdout=sanitize_log_line(result.stdout),
+            stderr=sanitize_log_line(result.stderr),
             summary_message=summary_message,
             return_code=result.returncode,
             timings=timings,
@@ -1584,3 +2428,21 @@ def execute_installation(installation_id, task=None):
             )
 
         raise
+
+    finally:
+        ephemeral_secrets.clear()
+        for ephemeral_path in ephemeral_extra_vars_paths:
+            try:
+                ephemeral_path.unlink(missing_ok=True)
+                ephemeral_path.parent.rmdir()
+            except OSError:
+                pass
+        for inventory_path in ephemeral_inventory_paths:
+            try:
+                for generated_file in inventory_path.parent.iterdir():
+                    if generated_file.is_file():
+                        generated_file.unlink(missing_ok=True)
+                inventory_path.parent.rmdir()
+            except OSError:
+                pass
+        destroy_secret_bundle(openshift_secret_bundle)

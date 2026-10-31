@@ -1,0 +1,150 @@
+---
+- name: Read official OpenShift client checksums
+  ansible.builtin.uri:
+    url: "{{ openshift_client_checksum_url }}"
+    return_content: true
+    status_code: 200
+  register: openshift_client_checksums
+  retries: 3
+  delay: 10
+  until: openshift_client_checksums.status | default(0) == 200
+
+- name: Select required OpenShift client checksums
+  ansible.builtin.set_fact:
+    openshift_client_archive_checksum: "{{ openshift_client_checksums.content | regex_search('(?m)^([0-9a-f]{64})  openshift-client-linux(?:-' ~ cpu_architecture ~ ')?\\.tar\\.gz$', '\\1') | first | default('') }}"
+    openshift_install_archive_checksum: "{{ openshift_client_checksums.content | regex_search('(?m)^([0-9a-f]{64})  openshift-install-linux(?:-' ~ cpu_architecture ~ ')?\\.tar\\.gz$', '\\1') | first | default('') }}"
+    openshift_oc_mirror_archive_checksum: "{{ openshift_client_checksums.content | regex_search('(?m)^([0-9a-f]{64})  oc-mirror(?:-' ~ cpu_architecture ~ ')?\\.tar\\.gz$', '\\1') | first | default('') }}"
+
+- name: Require verified OpenShift client payloads
+  ansible.builtin.assert:
+    that:
+      - openshift_client_archive_checksum | length == 64
+      - openshift_install_archive_checksum | length == 64
+      - openshift_oc_mirror_archive_checksum | length == 64
+    fail_msg: >-
+      The official checksum manifest does not contain all required OpenShift
+      client, installer, and oc-mirror archives for this release.
+    quiet: true
+
+- name: Download verified OpenShift tools
+  ansible.builtin.get_url:
+    url: "{{ openshift_client_base_url }}/{{ item.file }}"
+    dest: "{{ openshift_mirror_tools_directory }}/{{ item.file }}"
+    checksum: "sha256:{{ item.checksum }}"
+    mode: "0600"
+    timeout: 900
+  loop:
+    - { file: "openshift-client-linux.tar.gz", checksum: "{{ openshift_client_archive_checksum }}" }
+    - { file: "openshift-install-linux.tar.gz", checksum: "{{ openshift_install_archive_checksum }}" }
+    - { file: "oc-mirror.tar.gz", checksum: "{{ openshift_oc_mirror_archive_checksum }}" }
+
+- name: Extract verified OpenShift tools
+  ansible.builtin.unarchive:
+    src: "{{ openshift_mirror_tools_directory }}/{{ item }}"
+    dest: "{{ openshift_mirror_tools_directory }}"
+    remote_src: true
+  loop:
+    - openshift-client-linux.tar.gz
+    - openshift-install-linux.tar.gz
+    - oc-mirror.tar.gz
+
+- name: Render exact release image set
+  ansible.builtin.template:
+    src: imageset-config.yaml.j2
+    dest: "{{ openshift_mirror_imageset_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Locate reusable generated cluster resources
+  ansible.builtin.find:
+    paths: "{{ openshift_mirror_release_workspace }}"
+    patterns: cluster-resources
+    recurse: true
+    file_type: directory
+  register: openshift_mirror_existing_resource_directories
+
+- name: Inspect exact release tag already stored in the mirror
+  ansible.builtin.uri:
+    url: "https://{{ openshift_mirror_registry }}/v2/openshift/release-images/tags/list"
+    user: "{{ mirror_username }}"
+    password: "{{ mirror_password }}"
+    force_basic_auth: true
+    validate_certs: true
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: openshift_mirror_existing_release_tags
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Record reusable mirror state
+  ansible.builtin.set_fact:
+    openshift_mirror_release_cached: >-
+      {{
+        openshift_mirror_existing_release_tags.status | default(0) == 200
+        and openshift_version in
+          (openshift_mirror_existing_release_tags.json.tags | default([]))
+      }}
+    openshift_mirror_resources_cached: >-
+      {{ openshift_mirror_existing_resource_directories.matched | int == 1 }}
+
+- name: Synchronize exact OpenShift release with oc-mirror v2
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_mirror_tools_directory }}/oc-mirror"
+      - --config
+      - "{{ openshift_mirror_imageset_path }}"
+      - --workspace
+      - "file://{{ openshift_mirror_release_workspace }}"
+      - "docker://{{ openshift_mirror_registry }}"
+      - --v2
+  environment:
+    REGISTRY_AUTH_FILE: "{{ openshift_mirror_auth_file }}"
+  register: openshift_oc_mirror_run
+  changed_when: openshift_oc_mirror_run.rc == 0
+  no_log: true
+  when: >-
+    not (openshift_mirror_release_cached | bool)
+    or not (openshift_mirror_resources_cached | bool)
+
+- name: Locate generated cluster resources
+  ansible.builtin.find:
+    paths: "{{ openshift_mirror_release_workspace }}"
+    patterns:
+      - "*ImageDigestMirrorSet*.yaml"
+      - "*imagedigestmirrorset*.yaml"
+      - "idms-*.yaml"
+      - "signature-configmap*.json"
+      - "signature-configmap*.yaml"
+    recurse: true
+    file_type: file
+  register: openshift_mirror_cluster_resources
+
+- name: Locate generated cluster resources directory
+  ansible.builtin.find:
+    paths: "{{ openshift_mirror_release_workspace }}"
+    patterns: cluster-resources
+    recurse: true
+    file_type: directory
+  register: openshift_mirror_cluster_resource_directories
+
+- name: Require generated disconnected cluster resources
+  ansible.builtin.assert:
+    that:
+      - openshift_mirror_cluster_resources.matched | int > 0
+      - openshift_mirror_cluster_resource_directories.matched | int == 1
+    fail_msg: oc-mirror completed without producing release mirror resources.
+    quiet: true
+
+- name: Record generated mirror resource paths
+  ansible.builtin.set_fact:
+    openshift_mirror_generated_resources: >-
+      {{ openshift_mirror_cluster_resources.files
+         | map(attribute='path')
+         | sort
+         | list }}
+    openshift_mirror_cluster_resources_directory: >-
+      {{ openshift_mirror_cluster_resource_directories.files[0].path }}

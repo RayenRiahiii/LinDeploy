@@ -1,0 +1,114 @@
+---
+- name: Read the latest discovered host information
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs/{{ sno_infra_env_id }}/hosts/{{ sno_host_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    status_code: 200
+    return_content: true
+  register: disk_selection_host
+  changed_when: false
+
+- name: Parse the latest disk inventory
+  ansible.builtin.set_fact:
+    disk_selection_inventory: >-
+      {{
+        disk_selection_host.json.inventory
+        | default('{}', true)
+        | from_json
+      }}
+
+- name: Select the exact requested disk path
+  ansible.builtin.set_fact:
+    matching_installation_disks: >-
+      {{
+        disk_selection_inventory.disks
+        | default([])
+        | selectattr('path', 'equalto', installation_disk_path)
+        | list
+      }}
+
+- name: Require exactly one matching disk
+  ansible.builtin.assert:
+    that:
+      - matching_installation_disks | length == 1
+    fail_msg: >-
+      Expected exactly one disk with path {{ installation_disk_path }}.
+      Nothing was changed.
+    quiet: true
+
+- name: Require an adequately sized and eligible disk
+  ansible.builtin.assert:
+    that:
+      - >-
+        matching_installation_disks[0].size_bytes | int
+        >= minimum_installation_disk_bytes | int
+      - >-
+        matching_installation_disks[0]
+        .installation_eligibility.eligible | bool
+    fail_msg: >-
+      Disk {{ installation_disk_path }} is too small or Assisted
+      Installer considers it ineligible. Nothing was changed.
+    quiet: true
+
+- name: Store the validated installation disk
+  ansible.builtin.set_fact:
+    sno_installation_disk: "{{ matching_installation_disks[0] }}"
+    sno_installation_disk_id: "{{ matching_installation_disks[0].id }}"
+    sno_installation_disk_valid: true
+    sno_desired_disks_selected_config:
+      - id: "{{ matching_installation_disks[0].id }}"
+        role: install
+
+- name: Report the validated installation disk
+  ansible.builtin.debug:
+    msg:
+      - "Disk path: {{ sno_installation_disk.path }}"
+      - "Disk ID: {{ sno_installation_disk_id }}"
+      - >-
+        Disk size:
+        {{
+          (sno_installation_disk.size_bytes | int / 1073741824)
+          | round(2)
+        }} GiB
+      - >-
+        Eligible:
+        {{ sno_installation_disk.installation_eligibility.eligible }}
+      - >-
+        Automation mode: {{ automation_mode }}
+      - Installation has not been started and the disk has not been erased.
+
+- name: Assign the installation disk in apply mode
+  ansible.builtin.uri:
+    url: >-
+      {{ assisted_api_url }}/v2/infra-envs/{{ sno_infra_env_id }}/hosts/{{ sno_host_id }}
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ assisted_api_token }}"
+    body_format: json
+    body:
+      disks_selected_config: "{{ sno_desired_disks_selected_config }}"
+    status_code:
+      - 200
+      - 201
+    return_content: true
+  register: assigned_installation_disk
+  when:
+    - automation_mode == 'apply'
+    - >-
+      disk_selection_host.json.disks_selected_config
+      | default([]) != sno_desired_disks_selected_config
+
+- name: Store the configured disk state in apply mode
+  ansible.builtin.set_fact:
+    sno_installation_disk_configured: true
+  when: automation_mode == 'apply'
+
+- name: Report plan-mode disk behavior
+  ansible.builtin.debug:
+    msg: >-
+      Plan mode validated the requested disk but did not assign it
+      to the host.
+  when: automation_mode == 'plan'

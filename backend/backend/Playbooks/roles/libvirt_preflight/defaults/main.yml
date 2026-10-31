@@ -1,0 +1,12 @@
+---
+libvirt_required_commands:
+  - virsh
+  - qemu-img
+  - virt-xml-validate
+  - semanage
+  - restorecon
+libvirt_host_reserved_memory_mb: 8192
+libvirt_host_reserved_disk_gb: 40
+libvirt_allow_cpu_overcommit: false
+libvirt_allow_memory_overcommit: false
+libvirt_allow_storage_overcommit: false

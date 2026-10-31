@@ -284,51 +284,38 @@
 # 2. Host firewall for K3s
 # ==================================================
 
-- name: Check K3s firewalld ports
-  command: "firewall-cmd --permanent --zone={{ k3s_firewalld_zone }} --query-port={{ item }}"
-  register: k3s_firewalld_port_queries
-  changed_when: false
-  failed_when: false
-  loop: "{{ k3s_effective_firewalld_ports | default([]) }}"
-  when:
-    - k3s_manage_firewalld_rules | bool
-    - common_manage_firewalld | default(true) | bool
-    - common_firewalld_state | default('started') != 'stopped'
-
-- name: Add K3s firewalld ports
-  command: "firewall-cmd --permanent --zone={{ k3s_firewalld_zone }} --add-port={{ item.item }}"
-  loop: "{{ k3s_firewalld_port_queries.results | default([]) }}"
-  when:
-    - k3s_manage_firewalld_rules | bool
-    - common_manage_firewalld | default(true) | bool
-    - common_firewalld_state | default('started') != 'stopped'
-    - item.rc is defined
-    - item.rc != 0
-  changed_when: true
+- name: Apply K3s firewalld rules in one idempotent operation
+  command:
+    argv: >-
+      {{
+        [
+          '/bin/sh',
+          '-c',
+          'public_zone=$1; trusted_zone=$2; shift 2; status=0; '
+          ~ 'for item; do case "$item" in '
+          ~ 'port:*) value=${item#port:}; '
+          ~ 'if ! firewall-cmd --permanent --zone="$public_zone" --query-port="$value" >/dev/null 2>&1; then '
+          ~ 'if firewall-cmd --permanent --zone="$public_zone" --add-port="$value" >/dev/null; then printf "added:port:%s\n" "$value"; '
+          ~ 'else printf "failed:port:%s\n" "$value" >&2; status=1; fi; fi;; '
+          ~ 'source:*) value=${item#source:}; '
+          ~ 'if ! firewall-cmd --permanent --zone="$trusted_zone" --query-source="$value" >/dev/null 2>&1; then '
+          ~ 'if firewall-cmd --permanent --zone="$trusted_zone" --add-source="$value" >/dev/null; then printf "added:source:%s\n" "$value"; '
+          ~ 'else printf "failed:source:%s\n" "$value" >&2; status=1; fi; fi;; esac; done; exit "$status"',
+          'k3s-firewalld-apply',
+          k3s_firewalld_zone,
+          k3s_firewalld_trusted_zone
+        ]
+        + (k3s_effective_firewalld_ports | default([]) | map('regex_replace', '^(.*)$', 'port:\1') | list)
+        + (k3s_firewalld_trusted_sources | map('regex_replace', '^(.*)$', 'source:\1') | list)
+      }}
+  register: k3s_firewalld_apply
+  changed_when: (k3s_firewalld_apply.stdout_lines | default([]) | length) > 0
+  failed_when: k3s_firewalld_apply.rc != 0
   notify: Reload firewalld
-
-- name: Check K3s trusted firewalld source CIDRs
-  command: "firewall-cmd --permanent --zone={{ k3s_firewalld_trusted_zone }} --query-source={{ item }}"
-  register: k3s_firewalld_source_queries
-  changed_when: false
-  failed_when: false
-  loop: "{{ k3s_firewalld_trusted_sources }}"
   when:
     - k3s_manage_firewalld_rules | bool
     - common_manage_firewalld | default(true) | bool
     - common_firewalld_state | default('started') != 'stopped'
-
-- name: Add K3s trusted firewalld source CIDRs
-  command: "firewall-cmd --permanent --zone={{ k3s_firewalld_trusted_zone }} --add-source={{ item.item }}"
-  loop: "{{ k3s_firewalld_source_queries.results | default([]) }}"
-  when:
-    - k3s_manage_firewalld_rules | bool
-    - common_manage_firewalld | default(true) | bool
-    - common_firewalld_state | default('started') != 'stopped'
-    - item.rc is defined
-    - item.rc != 0
-  changed_when: true
-  notify: Reload firewalld
 
 # ==================================================
 # 3. K3s configuration
@@ -341,6 +328,96 @@
     owner: root
     group: root
     mode: "0755"
+
+- name: Validate K3s mirror configuration
+  assert:
+    that:
+      - lindeploy_registry_mirrors | length > 0
+      - item.key is string
+      - item.value is string
+      - item.key is match('^[a-zA-Z0-9.-]+(:[0-9]+)?$')
+      - item.value is match('^https?://[^/]+/?$')
+      - >-
+        item.value is match('^https://')
+        or lindeploy_mirror_allow_insecure_http | bool
+    fail_msg: >-
+      Invalid registry mirror entry {{ item.key }}={{ item.value }}. Registry
+      names must not contain a URL scheme and endpoints must be an HTTP(S)
+      origin without a path.
+  loop: "{{ lindeploy_registry_mirrors | dict2items }}"
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Initialize effective K3s registry configuration
+  set_fact:
+    k3s_effective_registries: "{{ k3s_registries }}"
+    k3s_lindeploy_mirror_entries: {}
+    k3s_lindeploy_mirror_tls_entries: {}
+
+- name: Build K3s pull-through mirror entries
+  set_fact:
+    k3s_lindeploy_mirror_entries: >-
+      {{
+        k3s_lindeploy_mirror_entries
+        | combine({item.key: {'endpoint': [item.value | regex_replace('/$', '')]}})
+      }}
+    k3s_lindeploy_mirror_tls_entries: >-
+      {{
+        k3s_lindeploy_mirror_tls_entries
+        | combine({
+            (item.value
+            | regex_replace('^https?://', '')
+            | regex_replace('/$', '')):
+            {'tls': {'ca_file': lindeploy_mirror_ca_path}}
+          })
+      }}
+  loop: "{{ lindeploy_registry_mirrors | dict2items }}"
+  when:
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - lindeploy_mirror_ca_certificate | length > 0
+
+- name: Build K3s pull-through mirror entries without custom CA
+  set_fact:
+    k3s_lindeploy_mirror_entries: >-
+      {{
+        k3s_lindeploy_mirror_entries
+        | combine({item.key: {'endpoint': [item.value | regex_replace('/$', '')]}})
+      }}
+  loop: "{{ lindeploy_registry_mirrors | dict2items }}"
+  when:
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - lindeploy_mirror_ca_certificate | length == 0
+
+- name: Merge LinDeploy mirrors into K3s registry configuration
+  set_fact:
+    k3s_effective_registries: >-
+      {{
+        k3s_registries
+        | combine({'mirrors': k3s_lindeploy_mirror_entries}, recursive=True)
+        | combine(
+            {'configs': k3s_lindeploy_mirror_tls_entries}
+            if k3s_lindeploy_mirror_tls_entries | length > 0
+            else {},
+            recursive=True
+          )
+      }}
+  when: lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+
+- name: Install LinDeploy mirror CA for K3s
+  copy:
+    dest: "{{ lindeploy_mirror_ca_path }}"
+    content: "{{ lindeploy_mirror_ca_certificate }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - lindeploy_mirror_ca_certificate | length > 0
+
+- name: Remove unused LinDeploy K3s mirror CA
+  file:
+    path: "{{ lindeploy_mirror_ca_path }}"
+    state: absent
+  when: not lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
 
 - name: Render K3s config file
   template:
@@ -362,7 +439,7 @@
     mode: "0600"
   no_log: "{{ k3s_hide_sensitive_config | bool }}"
   register: k3s_registries_result
-  when: k3s_registries | length > 0
+  when: k3s_effective_registries | length > 0
   notify: Restart k3s
 
 - name: Remove private registry configuration when not used
@@ -370,7 +447,7 @@
     path: "{{ k3s_registries_config_path }}"
     state: absent
   register: k3s_registries_absent_result
-  when: k3s_registries | length == 0
+  when: k3s_effective_registries | length == 0
   notify: Restart k3s
 
 - name: Set restart requirement for existing K3s install
@@ -422,6 +499,136 @@
 # 4. Installer execution
 # ==================================================
 
+- name: Inspect installed K3s SELinux policy package
+  command:
+    argv:
+      - rpm
+      - --query
+      - k3s-selinux
+  register: k3s_selinux_package_query
+  changed_when: false
+  failed_when: false
+  when:
+    - k3s_install_required | bool
+    - ansible_facts['os_family'] == 'RedHat'
+    - ansible_facts.get('selinux', {}).get('status', 'disabled') != 'disabled'
+
+- name: Resolve mirrored K3s SELinux repository coordinates
+  set_fact:
+    k3s_selinux_rpm_channel: >-
+      {{
+        'testing' if 'testing' in k3s_channel
+        else ('latest' if 'latest' in k3s_channel else 'stable')
+      }}
+    k3s_selinux_rpm_site_infix: >-
+      {{
+        'centos/7'
+        if (ansible_facts['distribution_major_version'] | int) == 7
+        else (
+          'centos/8'
+          if (
+            (ansible_facts['distribution_major_version'] | int) == 8
+            or (ansible_facts['distribution_major_version'] | int) > 36
+          )
+          else 'centos/9'
+        )
+      }}
+  when:
+    - k3s_install_required | bool
+    - ansible_facts['os_family'] == 'RedHat'
+    - ansible_facts.get('selinux', {}).get('status', 'disabled') != 'disabled'
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - lindeploy_package_mirror_base_url | default('') | length > 0
+    - k3s_preinstall_selinux_rpm_from_mirror | bool
+
+- name: Install signed K3s SELinux policy from LinDeploy mirror
+  block:
+    - name: Create temporary mirrored K3s SELinux repository
+      copy:
+        dest: "{{ k3s_selinux_repo_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [{{ k3s_selinux_repo_id }}]
+          name=LinDeploy cached Rancher K3s SELinux policy
+          baseurl={{ lindeploy_package_mirror_base_url }}/rpm.rancher.io/k3s/{{ k3s_selinux_rpm_channel }}/common/{{ k3s_selinux_rpm_site_infix }}/noarch
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=0
+          gpgkey={{ lindeploy_package_mirror_base_url }}/rpm.rancher.io/public.key
+          timeout={{ k3s_selinux_repo_timeout }}
+          minrate=1000
+          retries=1
+
+    - name: Install K3s SELinux policy through isolated mirrored repository
+      block:
+        - name: Install K3s SELinux policy without external repository access
+          dnf:
+            name: k3s-selinux
+            state: present
+            disablerepo: "*"
+            enablerepo: "{{ k3s_selinux_repo_id }}"
+            disable_gpg_check: false
+            update_cache: false
+            lock_timeout: "{{ common_redhat_lock_timeout | default(120) }}"
+          register: k3s_selinux_mirror_install
+      rescue:
+        - name: Report isolated K3s SELinux dependency fallback
+          debug:
+            msg: >-
+              The isolated signed Rancher mirror could not satisfy every
+              K3s SELinux dependency on {{ inventory_hostname }}. Retrying
+              once with the target's original signed repositories enabled.
+
+        - name: Install K3s SELinux policy with signed repository fallback
+          dnf:
+            name: k3s-selinux
+            state: present
+            enablerepo: "{{ k3s_selinux_repo_id }}"
+            disable_gpg_check: false
+            update_cache: false
+            lock_timeout: "{{ common_redhat_lock_timeout | default(120) }}"
+          register: k3s_selinux_mirror_install
+  always:
+    - name: Remove temporary mirrored K3s SELinux repository
+      file:
+        path: "{{ k3s_selinux_repo_file }}"
+        state: absent
+  when:
+    - k3s_install_required | bool
+    - ansible_facts['os_family'] == 'RedHat'
+    - ansible_facts.get('selinux', {}).get('status', 'disabled') != 'disabled'
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - lindeploy_package_mirror_base_url | default('') | length > 0
+    - k3s_preinstall_selinux_rpm_from_mirror | bool
+    - k3s_selinux_package_query.rc | default(1) != 0
+
+- name: Verify mirrored K3s SELinux policy installation
+  command:
+    argv:
+      - rpm
+      - --query
+      - k3s-selinux
+  register: k3s_selinux_package_verified
+  changed_when: false
+  when:
+    - k3s_install_required | bool
+    - ansible_facts['os_family'] == 'RedHat'
+    - ansible_facts.get('selinux', {}).get('status', 'disabled') != 'disabled'
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - lindeploy_package_mirror_base_url | default('') | length > 0
+    - k3s_preinstall_selinux_rpm_from_mirror | bool
+
+- name: Verify K3s SELinux policy payload
+  stat:
+    path: /usr/share/selinux/packages/k3s.pp
+  register: k3s_selinux_policy_payload
+  failed_when: not k3s_selinux_policy_payload.stat.exists
+  when:
+    - k3s_selinux_package_verified is defined
+    - k3s_selinux_package_verified.rc | default(1) == 0
+
 - name: Enforce install script checksum policy when requested
   assert:
     that:
@@ -431,9 +638,31 @@
       k3s_install_script_checksum is empty.
   when: k3s_install_required | bool
 
+- name: Resolve effective K3s install URLs
+  set_fact:
+    k3s_effective_install_script_url: >-
+      {{
+        k3s_install_script_url
+        if (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool)
+        else 'https://get.k3s.io'
+      }}
+    k3s_effective_install_channel_url: >-
+      {{
+        k3s_install_channel_url
+        if (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool)
+        else ''
+      }}
+    k3s_effective_install_artifact_url: >-
+      {{
+        k3s_install_artifact_url
+        if (lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool)
+        else ''
+      }}
+  when: k3s_install_required | bool
+
 - name: Download K3s install script
   get_url:
-    url: "{{ k3s_install_script_url }}"
+    url: "{{ k3s_effective_install_script_url | default(k3s_install_script_url) }}"
     dest: "{{ k3s_install_script_path }}"
     owner: root
     group: root
@@ -457,7 +686,24 @@
             'INSTALL_K3S_EXEC': (['server', k3s_server_args] | reject('equalto', '') | join(' ')),
             'INSTALL_K3S_SKIP_ENABLE': 'true',
             'INSTALL_K3S_SKIP_START': 'true'
-          } | combine(k3s_server_env)
+          }
+          | combine(
+              {'INSTALL_K3S_CHANNEL_URL': k3s_effective_install_channel_url}
+              if (k3s_effective_install_channel_url | default('') | length > 0) else {}
+            )
+          | combine(
+              {'INSTALL_K3S_ARTIFACT_URL': k3s_effective_install_artifact_url}
+              if (k3s_effective_install_artifact_url | default('') | length > 0) else {}
+            )
+          | combine(
+              {'INSTALL_K3S_SKIP_SELINUX_RPM': 'true'}
+              if (
+                k3s_selinux_package_verified is defined
+                and k3s_selinux_package_verified.rc | default(1) == 0
+                and k3s_selinux_policy_payload.stat.exists | default(false)
+              ) else {}
+            )
+          | combine(k3s_server_env)
         }}
       no_log: "{{ k3s_hide_sensitive_config | bool }}"
       register: k3s_install_channel_result
@@ -475,7 +721,20 @@
             'INSTALL_K3S_SKIP_ENABLE': 'true',
             'INSTALL_K3S_SKIP_START': 'true',
             'INSTALL_K3S_VERSION': k3s_version
-          } | combine(k3s_server_env)
+          }
+          | combine(
+              {'INSTALL_K3S_ARTIFACT_URL': k3s_effective_install_artifact_url}
+              if (k3s_effective_install_artifact_url | default('') | length > 0) else {}
+            )
+          | combine(
+              {'INSTALL_K3S_SKIP_SELINUX_RPM': 'true'}
+              if (
+                k3s_selinux_package_verified is defined
+                and k3s_selinux_package_verified.rc | default(1) == 0
+                and k3s_selinux_policy_payload.stat.exists | default(false)
+              ) else {}
+            )
+          | combine(k3s_server_env)
         }}
       no_log: "{{ k3s_hide_sensitive_config | bool }}"
       register: k3s_install_version_result
@@ -580,6 +839,171 @@
 
           diagnostics_file:
           {{ k3s_diagnostics_log_path }}
+
+- name: Restore K3s binary SELinux context from installed policy
+  command:
+    argv:
+      - restorecon
+      - -F
+      - -v
+      - "{{ k3s_binary_path }}"
+  register: k3s_binary_restorecon
+  changed_when: k3s_binary_restorecon.stdout | trim | length > 0
+  when:
+    - k3s_install_required | bool
+    - k3s_selinux_package_verified is defined
+    - k3s_selinux_package_verified.rc | default(1) == 0
+    - k3s_selinux_policy_payload.stat.exists | default(false)
+
+- name: Verify K3s binary SELinux context
+  command:
+    argv:
+      - matchpathcon
+      - -V
+      - "{{ k3s_binary_path }}"
+  changed_when: false
+  when:
+    - k3s_install_required | bool
+    - k3s_selinux_package_verified is defined
+    - k3s_selinux_package_verified.rc | default(1) == 0
+    - k3s_selinux_policy_payload.stat.exists | default(false)
+
+- name: Resolve K3s air-gap architecture
+  set_fact:
+    k3s_airgap_architecture: >-
+      {{
+        {
+          'x86_64': 'amd64',
+          'amd64': 'amd64',
+          'aarch64': 'arm64',
+          'arm64': 'arm64'
+        }.get(ansible_facts['architecture'] | default(''), '')
+      }}
+  when:
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - k3s_use_airgap_images_from_mirror | bool
+    - k3s_install_artifact_url | length > 0
+
+- name: Inspect existing K3s air-gap image archive
+  stat:
+    path: >-
+      {{ k3s_airgap_images_dir }}/k3s-airgap-images-{{ k3s_airgap_architecture }}.tar.zst
+  register: k3s_airgap_archive_stat
+  when:
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - k3s_use_airgap_images_from_mirror | bool
+    - k3s_install_artifact_url | length > 0
+    - k3s_airgap_architecture | length > 0
+
+- name: Prepare verified K3s air-gap images from LinDeploy mirror
+  block:
+    - name: Read installed K3s version for air-gap image selection
+      command: "{{ k3s_binary_path }} --version"
+      register: k3s_airgap_version_output
+      changed_when: false
+
+    - name: Resolve K3s air-gap artifact identity
+      set_fact:
+        k3s_airgap_version: >-
+          {{
+            k3s_airgap_version_output.stdout
+            | regex_search('v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+')
+            | default('', true)
+          }}
+
+    - name: Validate K3s air-gap artifact identity
+      assert:
+        that:
+          - k3s_airgap_version | length > 0
+          - k3s_airgap_architecture in ['amd64', 'arm64']
+        fail_msg: >-
+          LinDeploy could not resolve a supported K3s air-gap artifact for
+          version output '{{ k3s_airgap_version_output.stdout | trim }}' and
+          architecture '{{ ansible_facts['architecture'] | default('unknown') }}'.
+
+    - name: Download K3s release checksums from LinDeploy mirror
+      uri:
+        url: "{{ k3s_install_artifact_url | regex_replace('/+$', '') }}/{{ k3s_airgap_version | urlencode }}/sha256sum-{{ k3s_airgap_architecture }}.txt"
+        method: GET
+        return_content: true
+        follow_redirects: all
+        timeout: 120
+        validate_certs: true
+        status_code: 200
+      register: k3s_airgap_checksums
+      until: k3s_airgap_checksums is succeeded
+      retries: "{{ k3s_airgap_download_retries }}"
+      delay: "{{ k3s_airgap_download_delay }}"
+
+    - name: Resolve verified K3s air-gap image checksum
+      set_fact:
+        k3s_airgap_archive_name: >-
+          k3s-airgap-images-{{ k3s_airgap_architecture }}.tar.zst
+        k3s_airgap_archive_checksum: >-
+          {{
+            (
+              k3s_airgap_checksums.content
+              | regex_findall(
+                  '(?m)^([a-f0-9]{64}) +[ *]?k3s-airgap-images-'
+                  ~ k3s_airgap_architecture
+                  ~ '[.]tar[.]zst *$'
+                )
+              | first
+            )
+            | default('', true)
+          }}
+
+    - name: Validate K3s air-gap image checksum
+      assert:
+        that:
+          - k3s_airgap_archive_checksum | length == 64
+        fail_msg: >-
+          The K3s checksum manifest returned by the LinDeploy mirror does not
+          contain a valid checksum for {{ k3s_airgap_archive_name }}.
+
+    - name: Create K3s air-gap image directory
+      file:
+        path: "{{ k3s_airgap_images_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download verified K3s air-gap images from LinDeploy mirror
+      get_url:
+        url: "{{ k3s_install_artifact_url | regex_replace('/+$', '') }}/{{ k3s_airgap_version | urlencode }}/{{ k3s_airgap_archive_name }}"
+        dest: "{{ k3s_airgap_images_dir }}/{{ k3s_airgap_archive_name }}"
+        owner: root
+        group: root
+        mode: "0644"
+        checksum: "sha256:{{ k3s_airgap_archive_checksum }}"
+        timeout: "{{ k3s_airgap_download_timeout }}"
+      register: k3s_airgap_archive_download
+      until: k3s_airgap_archive_download is succeeded
+      retries: "{{ k3s_airgap_download_retries }}"
+      delay: "{{ k3s_airgap_download_delay }}"
+      notify: Restart k3s
+
+    - name: Enable conditional K3s image archive imports
+      copy:
+        dest: "{{ k3s_airgap_images_dir }}/.cache.json"
+        content: ""
+        owner: root
+        group: root
+        mode: "0644"
+        force: false
+  when:
+    - lindeploy_mirror_effective_enabled | default(lindeploy_mirror_enabled) | bool
+    - k3s_use_airgap_images_from_mirror | bool
+    - k3s_install_artifact_url | length > 0
+    - >-
+      (k3s_install_required | bool)
+      or not (k3s_airgap_archive_stat.stat.exists | default(false))
+
+- name: Require deep cluster validation after K3s image refresh
+  set_fact:
+    k3s_deep_healthcheck_required: true
+  when: k3s_airgap_archive_download.changed | default(false) | bool
 
 - name: Flush K3s restart handler before health checks
   meta: flush_handlers
@@ -717,6 +1141,17 @@
     - k3s_kubectl_access_refresh_required | bool
     - k3s_manage_kubectl_wrapper | bool
 
+- name: Ensure kubectl symlink in /usr/bin for sudo secure_path compatibility
+  file:
+    src: "{{ k3s_kubectl_wrapper_path }}"
+    dest: /usr/bin/kubectl
+    state: link
+    force: true
+  when:
+    - k3s_kubectl_access_refresh_required | bool
+    - k3s_manage_kubectl_wrapper | bool
+    - k3s_kubectl_wrapper_path != "/usr/bin/kubectl"
+
 - name: Query remote user account
   getent:
     database: passwd
@@ -770,11 +1205,150 @@
     block: |
       export K3S_CONFIG_FILE=/dev/null
       export KUBECONFIG="$HOME/.kube/config"
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      alias {{ k3s_kubectl_alias }}=kubectl 2>/dev/null || true
+      {% endif %}
+      {% if k3s_enable_bash_completion | default(true) | bool %}
+      if [ -r {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }} ]; then
+        source {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}
+      fi
+      if [ -r {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }} ]; then
+        source {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}
+      fi
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      if type __start_kubectl >/dev/null 2>&1; then
+        complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      fi
+      {% endif %}
+      {% endif %}
   when:
     - k3s_kubectl_access_refresh_required | bool
     - k3s_copy_kubeconfig_to_remote_user | bool
     - k3s_manage_remote_user_shell_env | bool
     - ansible_user != "root"
+
+- name: Configure kubectl shell environment for root
+  blockinfile:
+    path: /root/.bashrc
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - K3S KUBECTL ENV"
+    block: |
+      export K3S_CONFIG_FILE=/dev/null
+      export KUBECONFIG="$HOME/.kube/config"
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      alias {{ k3s_kubectl_alias }}=kubectl 2>/dev/null || true
+      {% endif %}
+      {% if k3s_enable_bash_completion | default(true) | bool %}
+      if [ -r {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }} ]; then
+        source {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}
+      fi
+      if [ -r {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }} ]; then
+        source {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}
+      fi
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      if type __start_kubectl >/dev/null 2>&1; then
+        complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      fi
+      {% endif %}
+      {% endif %}
+  when:
+    - k3s_kubectl_access_refresh_required | bool
+    - k3s_manage_remote_user_shell_env | bool
+
+- name: Ensure bash-completion package is installed for K3s
+  package:
+    name: bash-completion
+    state: present
+  when: k3s_enable_bash_completion | default(true) | bool
+  failed_when: false
+  ignore_errors: true
+
+- name: Ensure bash-completion directory exists for K3s
+  file:
+    path: "{{ k3s_bash_completion_dir | default('/etc/bash_completion.d') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: k3s_enable_bash_completion | default(true) | bool
+
+- name: Generate system-wide K3s bash auto-completion
+  command: "{{ k3s_binary_path }} completion bash"
+  register: k3s_bash_completion_raw
+  changed_when: false
+  failed_when: false
+  when: k3s_enable_bash_completion | default(true) | bool
+
+- name: Install system-wide K3s bash auto-completion
+  copy:
+    dest: "{{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}"
+    content: "{{ k3s_bash_completion_raw.stdout }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - k3s_enable_bash_completion | default(true) | bool
+    - k3s_bash_completion_raw is defined
+    - k3s_bash_completion_raw.rc | default(1) == 0
+
+- name: Generate system-wide kubectl bash auto-completion for K3s
+  command: "{{ k3s_binary_path }} kubectl completion bash"
+  register: k3s_kubectl_bash_completion_raw
+  changed_when: false
+  failed_when: false
+  when: k3s_enable_bash_completion | default(true) | bool
+
+- name: Install system-wide kubectl bash auto-completion for K3s
+  copy:
+    dest: "{{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}"
+    content: |
+      {{ k3s_kubectl_bash_completion_raw.stdout }}
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      if [[ $(type -t compopt) = "builtin" ]]; then
+          complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      else
+          complete -o default -o nospace -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      fi
+      {% endif %}
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - k3s_enable_bash_completion | default(true) | bool
+    - k3s_kubectl_bash_completion_raw is defined
+    - k3s_kubectl_bash_completion_raw.rc | default(1) == 0
+
+- name: Configure system-wide K3s environment and auto-completion in profile.d
+  copy:
+    dest: "{{ k3s_profile_d_file | default('/etc/profile.d/k3s.sh') }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      export K3S_CONFIG_FILE=/dev/null
+      if [ -z "${KUBECONFIG:-}" ] && [ -r "$HOME/.kube/config" ]; then
+        export KUBECONFIG="$HOME/.kube/config"
+      fi
+      if [ -n "$BASH_VERSION" ]; then
+        {% if k3s_kubectl_alias | default('') | length > 0 %}
+        alias {{ k3s_kubectl_alias }}=kubectl 2>/dev/null || true
+        {% endif %}
+        if [ -r {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }} ]; then
+          . {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}
+        fi
+        if [ -r {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }} ]; then
+          . {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}
+        fi
+        {% if k3s_kubectl_alias | default('') | length > 0 %}
+        if type __start_kubectl >/dev/null 2>&1; then
+          complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+        fi
+        {% endif %}
+      fi
+  when: k3s_enable_bash_completion | default(true) | bool
 
 # ==================================================
 # 6. K3s service and cluster health checks
@@ -820,13 +1394,19 @@
         get pods -n kube-system --no-headers
       register: k3s_kube_system_pods_health
       changed_when: false
-      failed_when: >-
+      failed_when: false
+      retries: "{{ k3s_healthcheck_retries }}"
+      delay: "{{ k3s_healthcheck_delay }}"
+      until: >-
+        k3s_kube_system_pods_health.rc == 0
+        and
         (
           k3s_kube_system_pods_health.stdout_lines
+          | reject('search', '^helm-install-')
           | select('search', '\\s(Error|CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|Pending|Unknown|Failed)\\s')
           | list
           | length
-        ) > 0
+        ) == 0
 
     - name: Wait for CoreDNS rollout
       command: >-
@@ -858,6 +1438,26 @@
         - k3s_deep_healthcheck_required | bool
         - k3s_metrics_server_expected | bool
 
+    - name: Wait for K3s Helm install jobs to complete
+      command: >-
+        {{ k3s_binary_path }} kubectl --kubeconfig={{ k3s_kubeconfig_path }}
+        -n kube-system wait --for=condition=complete job --all --timeout={{ k3s_healthcheck_timeout }}
+      register: k3s_helm_jobs_wait
+      changed_when: false
+      failed_when: false
+      when: k3s_deep_healthcheck_required | bool
+
+    - name: Wait for Traefik rollout
+      command: >-
+        {{ k3s_binary_path }} kubectl --kubeconfig={{ k3s_kubeconfig_path }}
+        -n kube-system rollout status deploy/traefik --timeout={{ k3s_healthcheck_timeout }}
+      register: k3s_traefik_rollout
+      changed_when: false
+      failed_when: false
+      when:
+        - k3s_deep_healthcheck_required | bool
+        - "'traefik' not in k3s_disable_components"
+
     - name: Capture cluster node summary
       command: >-
         {{ k3s_binary_path }} kubectl --kubeconfig={{ k3s_kubeconfig_path }}
@@ -883,13 +1483,18 @@
         get pods -A --no-headers
       register: k3s_cluster_pods_health
       changed_when: false
-      failed_when: >-
+      retries: "{{ k3s_healthcheck_retries }}"
+      delay: "{{ k3s_healthcheck_delay }}"
+      until: >-
+        k3s_cluster_pods_health.rc == 0
+        and
         (
           k3s_cluster_pods_health.stdout_lines
+          | reject('search', '^kube-system\\s+helm-install-')
           | select('search', '\\s(Error|CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|Pending|Unknown|Failed)\\s')
           | list
           | length
-        ) > 0
+        ) == 0
       when: k3s_deep_healthcheck_required | bool
   rescue:
     - name: Gather cluster nodes for diagnostics

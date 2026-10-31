@@ -1,8 +1,46 @@
 # Installation de LinDeploy
 
-Ce guide installe l'environnement de developpement actuel. Les commandes doivent etre adaptees avant une mise en production.
+Ce guide decrit l'installation et le deploiement de LinDeploy, soit en mode **conteneurise 1-Click avec Docker (fortement recommande)**, soit en **environnement de developpement local**.
 
-## 1. Prerequis du controleur
+---
+
+## 0. Deploiement Conteneurise 1-Click avec Docker (Recommande)
+
+C'est la methode recommandee pour faire tourner LinDeploy sur n'importe quel ordinateur ou serveur (**Windows, Linux, macOS**) sans avoir a installer Python, Node.js, Redis ou WSL sur la machine hote.
+
+Toute la pile applicative (Frontend React Nginx, Backend Django, Celery Worker avec Ansible natif Linux, Celery Beat, Redis et Passerelle Miroir) fonctionne de maniere isolee et optimisee dans des conteneurs.
+
+### Prerequis
+- Docker Desktop (Windows / macOS) ou Docker Engine avec Docker Compose v2 (Linux).
+
+### Lancement
+
+#### Sous Windows (PowerShell) :
+\\powershell
+.\start.ps1
+\
+#### Sous Linux ou macOS (Bash) :
+\\ash
+./start.sh
+\
+#### Ou directement avec Docker Compose :
+\\ash
+docker compose up -d --build
+\
+### Ce que le script effectue automatiquement :
+1. **Detection dynamique de l'IP reseau** : Detecte l'adresse IPv4 LAN active de votre machine hote.
+2. **Generation des certificats TLS** : Cree/met a jour automatiquement les certificats TLS pour la passerelle miroir locale.
+3. **Persistance des donnees** : Conserve et initialise la base de donnees SQLite dans \./data/db.sqlite3\.
+4. **Lancement des services** : Demarre les 10 conteneurs de services avec healthchecks.
+
+### Acces aux services :
+- **Dashboard Web** : \http://localhost:5173\ (ou \http://<IP-LAN>:5173\)
+- **API Backend** : \http://localhost:8000/api/- **Passerelle Miroir** : \https://<IP-LAN>:8443/cache/
+### Arret des conteneurs :
+- Sous Windows : \.\stop.ps1- Sous Linux / macOS : \./stop.sh- Ou : \docker compose down
+---
+
+## 1. Prerequis du controleur (Installation locale sans Docker)
 
 - Git;
 - Python 3.12 ou plus recent;
@@ -93,6 +131,13 @@ cd LinDeploy\backend
 celery -A backend worker --loglevel=info --pool=solo
 ```
 
+Start Celery Beat in another terminal so LinDeploy can perform scheduled mirror
+version checks and prewarming:
+
+```powershell
+celery -A backend beat --loglevel=info
+```
+
 Sous Linux, ne pas utiliser `--pool=solo` sauf besoin particulier :
 
 ```bash
@@ -168,3 +213,23 @@ python manage.py migrate
 2. Arreter le worker Celery.
 3. Arreter Django et Vite.
 4. Arreter Redis uniquement lorsqu'aucune tache n'est en attente.
+
+## 9. Activer OpenShift SNO
+
+Appliquer toutes les migrations avant d'ouvrir la page OpenShift :
+
+```powershell
+cd LinDeploy\backend
+.\.venv\Scripts\Activate.ps1
+python manage.py migrate
+```
+
+Le mode connecte exige `OPENSHIFT_RED_HAT_OFFLINE_TOKEN` dans `backend/.env`.
+Le mode deconnecte n'utilise pas ce token, mais exige un pull secret Red Hat, un
+hote RHEL 8/9 x86_64 avec KVM/libvirt, un FQDN DNS stable pour Quay, au moins
+400 GiB disponibles pour le miroir et l'archive officielle
+`mirror-registry.tar.gz`.
+
+Consulter [OpenShift SNO](OPENSHIFT_SNO.md) avant le premier test reel. Utiliser
+une VM SNO et un pool de stockage jetables; ne jamais confirmer un disque
+physique contenant des donnees.

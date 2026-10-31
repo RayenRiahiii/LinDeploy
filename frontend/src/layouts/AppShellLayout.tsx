@@ -1,28 +1,30 @@
 import {
   ActionIcon,
-  Badge,
   Box,
   Group,
-  Paper,
-  Stack,
+  Menu,
   Text,
   ThemeIcon,
-  Title,
   UnstyledButton,
 } from "@mantine/core";
 import {
   IconHistory,
   IconKey,
   IconLayoutDashboard,
+  IconLogout,
   IconMoonStars,
   IconPlayerPlay,
   IconServer,
   IconSun,
   IconTerminal2,
+  IconUser,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import InstallerLabel from "../components/installers/InstallerLabel";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "../context/AuthContext";
+import LanguageSelector from "../components/common/LanguageSelector";
 import lindeployWordmark from "../assets/logo.png";
 import lindeployWordmarkDark from "../assets/darkmodeLogo.png";
 
@@ -31,168 +33,151 @@ type SectionMeta = {
   title: string;
   description: string;
   terminalSection: string;
-  installerId?: "kubernetes" | "k3s" | null;
+  installerId?: "kubernetes" | "k3s" | "openshift_sno" | null;
 };
 
-type NavigationItem = {
+type NavigationItemDef = {
   route: string;
-  label: string;
-  shortLabel: string;
+  labelKey: string;
+  shortLabelKey: string;
   icon: typeof IconLayoutDashboard;
 };
 
-const navigationItems: NavigationItem[] = [
+const navigationItemDefs: NavigationItemDef[] = [
   {
     route: "/dashboard",
-    label: "Dashboard",
-    shortLabel: "Overview",
+    labelKey: "nav.dashboard",
+    shortLabelKey: "nav.dashboardShort",
     icon: IconLayoutDashboard,
   },
   {
     route: "/hosts",
-    label: "Hosts",
-    shortLabel: "Inventory",
+    labelKey: "nav.hosts",
+    shortLabelKey: "nav.hostsShort",
     icon: IconServer,
   },
   {
     route: "/credentials",
-    label: "Credentials",
-    shortLabel: "Access",
+    labelKey: "nav.credentials",
+    shortLabelKey: "nav.credentialsShort",
     icon: IconKey,
   },
   {
     route: "/installers",
-    label: "Installers",
-    shortLabel: "Catalog",
+    labelKey: "nav.installers",
+    shortLabelKey: "nav.installersShort",
     icon: IconPlayerPlay,
   },
   {
     route: "/executions",
-    label: "Executions",
-    shortLabel: "Monitor",
+    labelKey: "nav.executions",
+    shortLabelKey: "nav.executionsShort",
     icon: IconTerminal2,
   },
   {
     route: "/history",
-    label: "History",
-    shortLabel: "Archive",
+    labelKey: "nav.history",
+    shortLabelKey: "nav.historyShort",
     icon: IconHistory,
   },
 ];
 
-const sectionMetaMap: Array<{ match: (pathname: string) => boolean; meta: SectionMeta }> = [
+const sectionMetaDefs = [
   {
-    match: (pathname) => pathname === "/dashboard",
-    meta: {
-      badge: "Operations Overview",
-      title: "Track installers, hosts, credentials, and execution health",
-      description:
-        "Use the dashboard as the control room for current capacity, latest activity, and direct access to the next operational step.",
-      terminalSection: "dashboard_overview",
-    },
+    match: (pathname: string) => pathname === "/dashboard",
+    badgeKey: "sections.dashboard.badge",
+    titleKey: "sections.dashboard.title",
+    descKey: "sections.dashboard.description",
+    terminalSection: "dashboard_overview",
   },
   {
-    match: (pathname) => pathname.startsWith("/hosts"),
-    meta: {
-      badge: "Infrastructure Inventory",
-      title: "Manage targets with a clean operator workflow",
-      description:
-        "Review host definitions, credentials linkage, and machine properties from a structured CRUD workspace.",
-      terminalSection: "hosts_registry",
-    },
+    match: (pathname: string) => pathname.startsWith("/hosts"),
+    badgeKey: "sections.hosts.badge",
+    titleKey: "sections.hosts.title",
+    descKey: "sections.hosts.description",
+    terminalSection: "hosts_registry",
   },
   {
-    match: (pathname) => pathname.startsWith("/credentials"),
-    meta: {
-      badge: "Access Management",
-      title: "Maintain reusable SSH credentials safely and clearly",
-      description:
-        "Create and edit password-based or key-based SSH credentials used by your host inventory.",
-      terminalSection: "credentials_vault",
-    },
+    match: (pathname: string) => pathname.startsWith("/credentials"),
+    badgeKey: "sections.credentials.badge",
+    titleKey: "sections.credentials.title",
+    descKey: "sections.credentials.description",
+    terminalSection: "credentials_vault",
   },
   {
-    match: (pathname) => pathname === "/installers",
-    meta: {
-      badge: "Installer Catalog",
-      title: "Choose the system you want to install",
-      description:
-        "Select the target platform, then open its dedicated workflow page to configure inputs and start a controlled deployment.",
-      terminalSection: "installer_catalog",
-    },
+    match: (pathname: string) => pathname === "/installers",
+    badgeKey: "sections.installers.badge",
+    titleKey: "sections.installers.title",
+    descKey: "sections.installers.description",
+    terminalSection: "installer_catalog",
   },
   {
-    match: (pathname) => pathname === "/installers/kubernetes",
-    meta: {
-      badge: "Kubernetes Installer",
-      title: "Deploy Kubernetes from a focused single-node workflow",
-      description:
-        "Choose the target host, verify SSH connectivity, run the playbook, and keep cleanup actions available from the same operational page.",
-      terminalSection: "kubernetes_installer",
-      installerId: "kubernetes",
-    },
+    match: (pathname: string) => pathname === "/installers/kubernetes",
+    badgeKey: "sections.kubernetes.badge",
+    titleKey: "sections.kubernetes.title",
+    descKey: "sections.kubernetes.description",
+    terminalSection: "kubernetes_installer",
+    installerId: "kubernetes" as const,
   },
   {
-    match: (pathname) => pathname === "/installers/k3s",
-    meta: {
-      badge: "K3s Installer",
-      title: "Deploy K3s from a focused single-node workflow",
-      description:
-        "Choose the target host, verify SSH connectivity, run the playbook, and keep cleanup actions available from the same operational page.",
-      terminalSection: "k3s_installer",
-      installerId: "k3s",
-    },
+    match: (pathname: string) => pathname === "/installers/k3s",
+    badgeKey: "sections.k3s.badge",
+    titleKey: "sections.k3s.title",
+    descKey: "sections.k3s.description",
+    terminalSection: "k3s_installer",
+    installerId: "k3s" as const,
   },
   {
-    match: (pathname) => pathname === "/installers/openshift-sno",
-    meta: {
-      badge: "OpenShift SNO",
-      title: "Prepare the future Single Node OpenShift workflow",
-      description:
-        "This route remains reserved for the installer-specific OpenShift SNO form and execution path.",
-      terminalSection: "openshift_sno_installer",
-    },
+    match: (pathname: string) => pathname === "/installers/openshift-sno",
+    badgeKey: "sections.openshift.badge",
+    titleKey: "sections.openshift.title",
+    descKey: "sections.openshift.description",
+    terminalSection: "openshift_sno_installer",
+    installerId: "openshift_sno" as const,
   },
   {
-    match: (pathname) => pathname.startsWith("/executions"),
-    meta: {
-      badge: "Execution Center",
-      title: "Monitor active and recent installer runs",
-      description:
-        "Follow live progress, inspect task events, and review the final Ansible output from a dedicated execution workspace.",
-      terminalSection: "execution_center",
-    },
+    match: (pathname: string) => pathname.startsWith("/executions"),
+    badgeKey: "sections.executions.badge",
+    titleKey: "sections.executions.title",
+    descKey: "sections.executions.description",
+    terminalSection: "execution_center",
   },
   {
-    match: (pathname) => pathname.startsWith("/history"),
-    meta: {
-      badge: "History Archive",
-      title: "Inspect and prune completed installation records",
-      description:
-        "Review saved installer runs separately from the live monitor and remove obsolete execution history when needed.",
-      terminalSection: "history_archive",
-    },
+    match: (pathname: string) => pathname.startsWith("/history"),
+    badgeKey: "sections.history.badge",
+    titleKey: "sections.history.title",
+    descKey: "sections.history.description",
+    terminalSection: "history_archive",
   },
 ];
 
-function getSectionMeta(pathname: string): SectionMeta {
-  return (
-    sectionMetaMap.find((item) => item.match(pathname))?.meta || {
-      badge: "Control Center",
-      title: "Operate installers, inventory, and execution from one workspace",
-      description:
-        "Navigate through inventory, installer workflows, and execution monitoring from a structured application shell.",
-      terminalSection: "control_center",
-    }
-  );
+function getSectionMeta(pathname: string, t: (key: string, options?: any) => any): SectionMeta {
+  const match = sectionMetaDefs.find((item) => item.match(pathname));
+  if (match) {
+    return {
+      badge: String(t(match.badgeKey)),
+      title: String(t(match.titleKey)),
+      description: String(t(match.descKey)),
+      terminalSection: match.terminalSection,
+      installerId: match.installerId || null,
+    };
+  }
+  return {
+    badge: String(t("sections.default.badge", { defaultValue: "Platform Workspace" })),
+    title: String(t("sections.default.title", { defaultValue: "Operate installers, inventory, and execution from one workspace" })),
+    description: String(t(
+      "sections.default.description",
+      { defaultValue: "Navigate through inventory, installer workflows, and execution monitoring from a structured application shell." }
+    )),
+    terminalSection: "workspace",
+  };
 }
 
 function isActive(pathname: string, route: string) {
   if (route === "/dashboard") {
     return pathname === "/dashboard";
   }
-
-  return pathname === route || pathname.startsWith(`${route}/`);
+  return pathname.startsWith(route);
 }
 
 type AppShellLayoutProps = {
@@ -202,50 +187,59 @@ type AppShellLayoutProps = {
 
 export default function AppShellLayout({ colorScheme, onToggleColorScheme }: AppShellLayoutProps) {
   const location = useLocation();
-  const meta = getSectionMeta(location.pathname);
-  const brandLogo = colorScheme === "dark" ? lindeployWordmarkDark : lindeployWordmark;
+  const { user, logout } = useAuth();
+  const { t } = useTranslation();
   const [topbarHidden, setTopbarHidden] = useState(false);
   const lastScrollYRef = useRef(0);
+  const brandLogo = colorScheme === "dark" ? lindeployWordmarkDark : lindeployWordmark;
 
   useEffect(() => {
-    const handleScroll = () => {
-      const currentY = window.scrollY;
+    lastScrollYRef.current = window.scrollY;
+  }, [location.pathname]);
 
-      if (currentY < 24) {
+  useEffect(() => {
+    function handleScroll() {
+      const currentScrollY = window.scrollY;
+      const delta = currentScrollY - lastScrollYRef.current;
+      const isMobile = window.innerWidth <= 768;
+      const threshold = isMobile ? 8 : 12;
+
+      if (currentScrollY <= 24) {
         setTopbarHidden(false);
-        lastScrollYRef.current = currentY;
-        return;
+      } else if (delta > threshold && currentScrollY > 72) {
+        setTopbarHidden(true);
+      } else if (delta < -threshold) {
+        setTopbarHidden(false);
       }
 
-      const scrollingDown = currentY > lastScrollYRef.current;
-      const delta = Math.abs(currentY - lastScrollYRef.current);
-
-      if (delta > 10) {
-        setTopbarHidden(scrollingDown);
-        lastScrollYRef.current = currentY;
-      }
-    };
+      lastScrollYRef.current = currentScrollY;
+    }
 
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  const meta = getSectionMeta(location.pathname, t);
+
+  const navigationItems = navigationItemDefs.map((item) => ({
+    ...item,
+    label: t(item.labelKey),
+    shortLabel: t(item.shortLabelKey),
+  }));
+
   return (
-    <Box className="app-shell">
+    <Box className="app-canvas">
       <div className="workspace-shell">
         <header className={`workspace-topbar${topbarHidden ? " is-hidden" : ""}`}>
           <div className="topbar-shell">
-            <Paper className="topbar-brand-panel" p="md">
-              <Stack gap={6} className="topbar-brand-block">
-                <Badge color="red" variant="light" size="md" w="fit-content">
-                  Control Center
-                </Badge>
+            <Box className="topbar-brand-panel">
+              <Link to="/dashboard" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }} aria-label="LinDeploy Home">
                 <img src={brandLogo} alt="LinDeploy" className="brand-wordmark" />
-              </Stack>
-            </Paper>
+              </Link>
+            </Box>
 
-            <Paper className="topbar-panel" p="md">
-              <Group gap="sm" className="topbar-nav" justify="center">
+            <Box className="topbar-panel">
+              <Group gap={8} className="topbar-nav" wrap="nowrap">
                 {navigationItems.map((item) => {
                   const active = isActive(location.pathname, item.route);
                   const Icon = item.icon;
@@ -258,13 +252,13 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                       className={`orb-nav-link${active ? " is-active" : ""}`}
                     >
                       <ThemeIcon
+                        size={38}
                         radius="xl"
-                        size={40}
                         variant={active ? "filled" : "light"}
                         color={active ? "red" : "gray"}
                         className="orb-nav-icon"
                       >
-                        <Icon size={17} />
+                        <Icon size={19} />
                       </ThemeIcon>
                       <span className="orb-nav-copy">
                         <span className="orb-nav-title">{item.label}</span>
@@ -274,64 +268,105 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                   );
                 })}
               </Group>
-            </Paper>
+            </Box>
 
             <Box className="hero-terminal topbar-terminal">
-              <Group gap="xs" justify="space-between" wrap="nowrap">
+              <Group gap="sm" justify="space-between" wrap="nowrap">
                 <div className="topbar-terminal-copy">
-                  <Text className="hero-terminal-line topbar-terminal-label">$ workspace</Text>
+                  <Text className="hero-terminal-line topbar-terminal-label">$ {t("topbar.workspace", "workspace")}</Text>
                   <Text className="hero-terminal-line topbar-terminal-value">{meta.terminalSection}</Text>
                 </div>
-                <ActionIcon
-                  size={32}
-                  radius="xl"
-                  variant="light"
-                  color={colorScheme === "dark" ? "yellow" : "dark"}
-                  onClick={onToggleColorScheme}
-                  aria-label={colorScheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                  className="theme-toggle-button"
-                >
-                  {colorScheme === "dark" ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-                </ActionIcon>
+                <Group gap={8} wrap="nowrap">
+                  <LanguageSelector />
+                  <ActionIcon
+                    size={34}
+                    radius="xl"
+                    variant="light"
+                    color={colorScheme === "dark" ? "yellow" : "dark"}
+                    onClick={onToggleColorScheme}
+                    aria-label={colorScheme === "dark" ? t("topbar.switchToLight", "Switch to light mode") : t("topbar.switchToDark", "Switch to dark mode")}
+                    className="theme-toggle-button"
+                  >
+                    {colorScheme === "dark" ? <IconSun size={18} /> : <IconMoonStars size={18} />}
+                  </ActionIcon>
+                  {user && (
+                    <Menu shadow="md" width={220} position="bottom-end">
+                      <Menu.Target>
+                        <UnstyledButton
+                          className="user-profile-button"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 7,
+                            height: 34,
+                            padding: "0 10px 0 4px",
+                            borderRadius: 999,
+                            background: colorScheme === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
+                            border: colorScheme === "dark" ? "1px solid rgba(255, 255, 255, 0.12)" : "1px solid rgba(0, 0, 0, 0.1)",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                          }}
+                          aria-label="User profile and session options"
+                        >
+                          <Box
+                            style={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: "50%",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              background: colorScheme === "dark"
+                                ? "linear-gradient(135deg, rgba(255, 59, 59, 0.3) 0%, rgba(200, 30, 30, 0.5) 100%)"
+                                : "linear-gradient(135deg, rgba(224, 49, 49, 0.15) 0%, rgba(200, 30, 30, 0.25) 100%)",
+                              border: colorScheme === "dark" ? "1px solid rgba(255, 80, 80, 0.45)" : "1px solid rgba(224, 49, 49, 0.3)",
+                              color: colorScheme === "dark" ? "#ff6b6b" : "#d63333",
+                              boxShadow: colorScheme === "dark" ? "0 0 8px rgba(255, 59, 59, 0.25)" : "none",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <IconUser size={13} stroke={2} />
+                          </Box>
+                          <Text
+                            size="xs"
+                            fw={600}
+                            truncate
+                            style={{
+                              maxWidth: 90,
+                              color: "var(--text-primary)",
+                              letterSpacing: "0.2px",
+                            }}
+                          >
+                            {user.first_name || user.username}
+                          </Text>
+                          <IconChevronDown size={11} stroke={2} style={{ opacity: 0.5, marginLeft: -2 }} />
+                        </UnstyledButton>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Label>{t("topbar.signedInAs", "Signed in as")}</Menu.Label>
+                        <Menu.Item disabled leftSection={<IconUser size={14} />}>
+                          <Text size="xs" fw={600} truncate style={{ maxWidth: 170 }}>
+                            {user.email || user.username}
+                          </Text>
+                        </Menu.Item>
+                        <Menu.Divider />
+                        <Menu.Item
+                          color="red"
+                          leftSection={<IconLogout size={14} />}
+                          onClick={logout}
+                        >
+                          {t("topbar.signOut", "Sign out")}
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
+                </Group>
               </Group>
             </Box>
           </div>
         </header>
 
         <main className="workspace-main">
-          <Paper className="hero-panel" p="xl">
-            <Group justify="space-between" align="flex-start" gap="xl">
-              <Stack gap={8}>
-                <Badge color="red" variant="light" size="lg">
-                  {meta.installerId ? (
-                    <InstallerLabel
-                      label={meta.badge}
-                      withLogo
-                      installerId={meta.installerId}
-                    />
-                  ) : (
-                    meta.badge
-                  )}
-                </Badge>
-                <Title order={2} className="hero-title">
-                  {meta.installerId ? (
-                    <InstallerLabel
-                      label={meta.title}
-                      withLogo
-                      installerId={meta.installerId}
-                      className="page-installer-heading"
-                    />
-                  ) : (
-                    meta.title
-                  )}
-                </Title>
-                <Text c="dimmed" maw={760}>
-                  {meta.description}
-                </Text>
-              </Stack>
-            </Group>
-          </Paper>
-
           <Box className="page-content">
             <Outlet />
           </Box>

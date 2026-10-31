@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Container,
   Divider,
   Group,
   Modal,
@@ -17,7 +16,6 @@ import {
   Table,
   Text,
   TextInput,
-  ThemeIcon,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -26,11 +24,14 @@ import {
   IconEye,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconServer,
   IconTrash,
 } from "@tabler/icons-react";
+import PageHeader from "../common/PageHeader";
 import ConfirmDeleteModal from "../crud/ConfirmDeleteModal";
 import { formatApiError, parseApiPayload } from "../../lib/api";
+import { useTranslation } from "react-i18next";
 
 type Host = {
   id: number;
@@ -64,7 +65,7 @@ type Credential = {
   username: string;
 };
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 const CUSTOM_OS_TYPE_VALUE = "__custom__";
 const OS_TYPE_OPTIONS = [
   { value: "ubuntu24.04", label: "Ubuntu 24.04" },
@@ -130,6 +131,7 @@ const emptyForm: HostFormData = {
 };
 
 export default function HostsList() {
+  const { t } = useTranslation();
   const [hosts, setHosts] = useState<Host[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [formData, setFormData] = useState<HostFormData>(emptyForm);
@@ -367,57 +369,49 @@ export default function HostsList() {
   }
 
   return (
-    <Container size="xl" py="xl">
+    <>
       <Stack gap="lg">
-        <Card className="console-panel" padding="xl">
-          <Group justify="space-between" align="flex-start" gap="lg">
-            <Stack gap={6}>
-              <Group gap="sm">
-                <ThemeIcon color="red" variant="light" size="lg" radius="md">
-                  <IconServer size={18} />
-                </ThemeIcon>
-                <div>
-                  <Title order={2}>Hosts Registry</Title>
-                  <Text c="dimmed" size="sm">
-                    Register targets, inspect them, and edit connection properties from a compact operator view.
-                  </Text>
-                </div>
-              </Group>
-
-              <Group gap="sm">
-                <Badge color="red" variant="light">
-                  Total: {hosts.length}
-                </Badge>
-                <Badge color="teal" variant="light">
-                  Enabled: {enabledHostsCount}
-                </Badge>
-                <Badge color="grape" variant="light">
-                  Roles: {new Set(hosts.map((host) => host.node_role)).size}
-                </Badge>
-                <Badge color="gray" variant="outline">
-                  Credentials: {credentials.length}
-                </Badge>
-              </Group>
-            </Stack>
-
-            <Group>
+        <PageHeader
+          icon={<IconServer size={22} />}
+          badge={t("sections.hosts.badge", "Infrastructure Inventory")}
+          badgeColor="red"
+          title={t("hosts.title", "Hosts Registry")}
+          description={t("hosts.description", "Register targets, inspect connection health, and manage machine properties from a centralized operator view.")}
+          badges={
+            <>
+              <Badge color="red" variant="light" size="sm">
+                {t("hosts.total", "Total")}: {hosts.length}
+              </Badge>
+              <Badge color="teal" variant="light" size="sm">
+                {t("hosts.enabled", "Enabled")}: {enabledHostsCount}
+              </Badge>
+              <Badge color="grape" variant="light" size="sm">
+                {t("hosts.roles", "Roles")}: {new Set(hosts.map((host) => host.node_role)).size}
+              </Badge>
+              <Badge color="gray" variant="outline" size="sm">
+                {t("hosts.credentials", "Credentials")}: {credentials.length}
+              </Badge>
+            </>
+          }
+          actions={
+            <>
               <Button
                 variant="default"
                 leftSection={<IconRefresh size={16} />}
                 onClick={fetchHosts}
                 loading={loadingHosts}
               >
-                Refresh
+                {t("common.refresh", "Refresh")}
               </Button>
               <Button leftSection={<IconPlus size={16} />} onClick={openCreateModal}>
-                Add Host
+                {t("hosts.addHost", "Add Host")}
               </Button>
-            </Group>
-          </Group>
-        </Card>
+            </>
+          }
+        />
 
         {error && (
-          <Alert color="red" title="Request failed" variant="light">
+          <Alert color="red" title={t("common.error", "Request failed")} variant="light">
             {error}
           </Alert>
         )}
@@ -426,9 +420,9 @@ export default function HostsList() {
           <Stack gap="md">
             <Group justify="space-between">
               <div>
-                <Title order={3}>Inventory</Title>
+                <Title order={3}>{t("hosts.inventoryTitle", "Inventory")}</Title>
                 <Text c="dimmed" size="sm">
-                  Click Info to inspect a host or Edit to change its properties in a modal window.
+                  {t("hosts.inventorySubtitle", "Click Info to inspect a host or Edit to change its properties in a modal window.")}
                 </Text>
               </div>
               <Badge color="red" variant="dot">
@@ -437,20 +431,21 @@ export default function HostsList() {
             </Group>
 
             <TextInput
-              placeholder="Search by name, IP, hostname, role, or credential"
+              leftSection={<IconSearch size={16} />}
+              placeholder={t("hosts.searchPlaceholder", "Search by name, IP, hostname, role, or credential")}
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
             />
 
             {loadingHosts ? (
-              <Text c="dimmed">Loading hosts...</Text>
+              <Text c="dimmed">{t("hosts.loadingHosts", "Loading hosts...")}</Text>
             ) : filteredHosts.length === 0 ? (
-              <Text c="dimmed">No hosts found.</Text>
+              <Text c="dimmed">{t("hosts.noHostsFound", "No hosts found.")}</Text>
             ) : (
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 {filteredHosts.map((host) => (
-                  <Card key={host.id} className="host-panel" padding="lg">
-                    <Stack gap="sm">
+                  <Card key={host.id} className="host-panel card-grid-item" padding="lg">
+                    <Stack gap="sm" style={{ height: "100%" }}>
                       <Group justify="space-between" align="flex-start">
                         <div>
                           <Text fw={700} size="lg">
@@ -497,20 +492,20 @@ export default function HostsList() {
                         </Table.Tbody>
                       </Table>
 
-                      <Group grow>
+                      <Group grow mt="auto">
                         <Button
                           variant="default"
                           leftSection={<IconEye size={16} />}
                           onClick={() => openDetailsModal(host)}
                         >
-                          Info
+                          {t("common.info", "Info")}
                         </Button>
                         <Button
                           variant="light"
                           leftSection={<IconEdit size={16} />}
                           onClick={() => openEditModal(host)}
                         >
-                          Edit
+                          {t("common.edit", "Edit")}
                         </Button>
                         <Button
                           color="red"
@@ -519,7 +514,7 @@ export default function HostsList() {
                           onClick={() => openDeleteModal(host)}
                           loading={deletingId === host.id}
                         >
-                          Delete
+                          {t("common.delete", "Delete")}
                         </Button>
                       </Group>
                     </Stack>
@@ -534,7 +529,7 @@ export default function HostsList() {
       <Modal
         opened={editorOpened}
         onClose={resetEditor}
-        title={editingId === null ? "Create Host" : "Edit Host"}
+        title={editingId === null ? t("hosts.addHost", "Add Host") : t("hosts.editHost", "Edit Host")}
         centered
         size="lg"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -548,7 +543,7 @@ export default function HostsList() {
             )}
 
             <TextInput
-              label="Name"
+              label={t("common.name", "Name")}
               description="Inventory label used inside the app and generated Ansible inventory."
               placeholder="node-01"
               value={formData.name}
@@ -557,7 +552,7 @@ export default function HostsList() {
             />
 
             <TextInput
-              label="Hostname"
+              label={t("hosts.hostname", "Hostname")}
               description="Optional DNS name or FQDN of the machine."
               placeholder="node-01.example.local"
               value={formData.hostname}
@@ -565,7 +560,7 @@ export default function HostsList() {
             />
 
             <TextInput
-              label="IP Address"
+              label={t("hosts.ipAddress", "IP Address")}
               description="Reachable management IP used by SSH and Ansible."
               placeholder="192.168.100.135"
               value={formData.ip_address}
@@ -574,7 +569,7 @@ export default function HostsList() {
             />
 
             <NumberInput
-              label="SSH Port"
+              label={t("hosts.sshPort", "SSH Port")}
               description="Default is 22 unless the target exposes SSH on a custom port."
               placeholder="22"
               value={formData.ssh_port}
@@ -585,7 +580,7 @@ export default function HostsList() {
             />
 
             <Select
-              label="OS Type"
+              label={t("hosts.osType", "OS Type")}
               description="Used to identify the target distribution during execution."
               placeholder="Select target operating system"
               data={[
@@ -617,7 +612,7 @@ export default function HostsList() {
 
             {(formData.os_type === "" || !isPredefinedOsType(formData.os_type)) && (
               <TextInput
-                label="Custom OS Type"
+                label={t("hosts.customOsType", "Custom OS Type")}
                 description="Only use this when the distribution is not listed above. The backend will normalize the value automatically."
                 placeholder="alma9, oraclelinux9, ubuntu25.04"
                 value={customOsType}
@@ -631,9 +626,9 @@ export default function HostsList() {
             )}
 
             <Select
-              label="Credential"
+              label={t("hosts.credential", "Credential")}
               description="Choose the saved SSH credential that Ansible will use for this host."
-              placeholder={loadingCredentials ? "Loading saved credentials..." : "Select saved SSH credential"}
+              placeholder={loadingCredentials ? t("credentials.loadingCredentials", "Loading saved credentials...") : t("hosts.selectCredential", "Select saved SSH credential")}
               data={credentials.map((credential) => ({
                 value: String(credential.id),
                 label: `${credential.name} (${credential.username})`,
@@ -645,17 +640,17 @@ export default function HostsList() {
             />
 
             <Checkbox
-              label="Enabled for inventory and execution"
+              label={t("hosts.enabledLabel", "Enabled for inventory and execution")}
               checked={formData.enabled}
               onChange={(event) => handleChange("enabled", event.currentTarget.checked)}
             />
 
             <Group justify="flex-end">
               <Button variant="default" onClick={resetEditor}>
-                Cancel
+                {t("common.cancel", "Cancel")}
               </Button>
               <Button type="submit" loading={loading} leftSection={<IconEdit size={16} />}>
-                {editingId === null ? "Create Host" : "Save Changes"}
+                {editingId === null ? t("hosts.addHost", "Create Host") : t("common.save", "Save Changes")}
               </Button>
             </Group>
           </Stack>
@@ -665,7 +660,7 @@ export default function HostsList() {
       <Modal
         opened={detailsOpened}
         onClose={() => setDetailsOpened(false)}
-        title={selectedHost ? `Host Info: ${selectedHost.name}` : "Host Info"}
+        title={selectedHost ? `${t("hosts.hostDetails", "Host Details")}: ${selectedHost.name}` : t("hosts.hostDetails", "Host Details")}
         centered
         size="md"
         classNames={{ content: "terminal-modal", header: "terminal-modal-header" }}
@@ -684,38 +679,38 @@ export default function HostsList() {
             <Table>
               <Table.Tbody>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Name</Table.Td>
+                  <Table.Td c="dimmed">{t("common.name", "Name")}</Table.Td>
                   <Table.Td>{selectedHost.name}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Hostname</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.hostname", "Hostname")}</Table.Td>
                   <Table.Td>{selectedHost.hostname || "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">IP Address</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.ipAddress", "IP Address")}</Table.Td>
                   <Table.Td>{selectedHost.ip_address}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">SSH Port</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.sshPort", "SSH Port")}</Table.Td>
                   <Table.Td>{selectedHost.ssh_port}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">OS Type</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.osType", "OS Type")}</Table.Td>
                   <Table.Td>{selectedHost.os_type || "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Node Role</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.nodeRole", "Node Role")}</Table.Td>
                   <Table.Td>{selectedHost.node_role}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Credential</Table.Td>
+                  <Table.Td c="dimmed">{t("hosts.credential", "Credential")}</Table.Td>
                   <Table.Td>{selectedHost.credential_name || "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">Status</Table.Td>
+                  <Table.Td c="dimmed">{t("common.status", "Status")}</Table.Td>
                   <Table.Td>
                     <Badge color={selectedHost.enabled ? "teal" : "gray"} variant="light">
-                      {selectedHost.enabled ? "enabled" : "disabled"}
+                      {selectedHost.enabled ? t("common.enabled", "enabled") : t("common.disabled", "disabled")}
                     </Badge>
                   </Table.Td>
                 </Table.Tr>
@@ -731,7 +726,7 @@ export default function HostsList() {
                   openEditModal(selectedHost);
                 }}
               >
-                Edit
+                {t("common.edit", "Edit")}
               </Button>
             </Group>
           </Stack>
@@ -740,16 +735,16 @@ export default function HostsList() {
 
       <ConfirmDeleteModal
         opened={hostPendingDelete !== null}
-        title="Delete Host"
+        title={t("hosts.deleteConfirmTitle", "Delete Host")}
         itemName={hostPendingDelete?.name || "this host"}
-        inventoryLabel="hosts inventory"
-        description="This removes the host definition from LinDeploy. It does not uninstall anything from the remote machine."
+        inventoryLabel={t("hosts.inventoryTitle", "hosts inventory")}
+        description={t("hosts.deleteConfirmMessage", { name: hostPendingDelete?.name || "", defaultValue: `Are you sure you want to delete host '${hostPendingDelete?.name}'?` })}
         error={deleteError}
-        errorTitle="Unable to delete host"
+        errorTitle={t("common.error", "Unable to delete host")}
         loading={deletingId !== null}
         onClose={closeDeleteModal}
         onConfirm={() => void handleDelete()}
       />
-    </Container>
+    </>
   );
 }

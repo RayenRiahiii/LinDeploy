@@ -1,0 +1,5 @@
+---
+- import_playbook: openshift_sno_cleanup.yml
+  vars:
+    openshift_cleanup_preserve_iso_override: false
+

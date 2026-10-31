@@ -1,0 +1,245 @@
+---
+- name: Require downloaded OpenShift credentials
+  ansible.builtin.assert:
+    that:
+      - sno_credentials_available | default(false) | bool
+    fail_msg: Cluster verification requires downloaded credentials.
+    quiet: true
+
+- name: Wait for the Kubernetes API
+  ansible.builtin.command:
+    argv:
+      - "{{ oc_binary_path }}"
+      - --kubeconfig
+      - "{{ kubeconfig_path }}"
+      - get
+      - nodes
+      - -o
+      - name
+  register: kubernetes_api_check
+  changed_when: false
+  failed_when: false
+  until:
+    - kubernetes_api_check.rc == 0
+  retries: "{{ api_access_retries }}"
+  delay: "{{ api_access_delay }}"
+
+- name: Require access to the Kubernetes API
+  ansible.builtin.assert:
+    that:
+      - kubernetes_api_check.rc == 0
+    fail_msg: >-
+      OpenShift installation completed, but the Kubernetes API could not be
+      reached using the generated kubeconfig.
+      Details: {{ kubernetes_api_check.stderr | default(kubernetes_api_check.stdout | default('Unknown error')) | trim }}
+    quiet: true
+
+- name: Wait for OpenShift convergence when requested
+  ansible.builtin.command:
+    argv:
+      - "{{ oc_binary_path }}"
+      - --kubeconfig
+      - "{{ kubeconfig_path }}"
+      - get
+      - clusterversion
+      - version
+      - -o
+      - 'jsonpath={.status.conditions[?(@.type=="Available")].status} {.status.conditions[?(@.type=="Progressing")].status}'
+  register: converged_cluster_version
+  changed_when: false
+  failed_when: false
+  until:
+    - converged_cluster_version.rc == 0
+    - converged_cluster_version.stdout | trim == 'True False'
+  retries: "{{ cluster_convergence_retries }}"
+  delay: "{{ cluster_convergence_delay }}"
+  when: wait_for_cluster_convergence | bool
+
+- name: Read current OpenShift convergence state
+  ansible.builtin.command:
+    argv:
+      - "{{ oc_binary_path }}"
+      - --kubeconfig
+      - "{{ kubeconfig_path }}"
+      - get
+      - clusterversion
+      - version
+      - -o
+      - 'jsonpath={.status.conditions[?(@.type=="Available")].status} {.status.conditions[?(@.type=="Progressing")].status}'
+  register: current_cluster_version
+  changed_when: false
+  failed_when: false
+  when: not (wait_for_cluster_convergence | bool)
+
+- name: Store the requested convergence result
+  ansible.builtin.set_fact:
+    sno_cluster_version_result: "{{ converged_cluster_version }}"
+  when: wait_for_cluster_convergence | bool
+
+- name: Store the current convergence result
+  ansible.builtin.set_fact:
+    sno_cluster_version_result: "{{ current_cluster_version }}"
+  when: not (wait_for_cluster_convergence | bool)
+
+- name: Calculate cluster health
+  ansible.builtin.set_fact:
+    sno_cluster_converged: >-
+      {{
+        sno_cluster_version_result.rc == 0
+        and
+        (sno_cluster_version_result.stdout | trim) == 'True False'
+      }}
+
+- name: Enforce convergence when required
+  ansible.builtin.assert:
+    that:
+      - sno_cluster_converged | bool
+    fail_msg: >-
+      The cluster is installed and its API is accessible, but the
+      ClusterVersion is not fully converged.
+    quiet: true
+  when: require_cluster_convergence | bool
+
+- name: Read the installed SNO node
+  ansible.builtin.command:
+    argv:
+      - "{{ oc_binary_path }}"
+      - --kubeconfig
+      - "{{ kubeconfig_path }}"
+      - get
+      - nodes
+      - -o
+      - wide
+  register: installed_sno_nodes
+  changed_when: false
+
+- name: Read machine-readable SNO node readiness
+  ansible.builtin.command:
+    argv:
+      - "{{ oc_binary_path }}"
+      - --kubeconfig
+      - "{{ kubeconfig_path }}"
+      - get
+      - nodes
+      - -o
+      - 'jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
+  register: installed_sno_node_readiness
+  changed_when: false
+
+- name: Require exactly one Ready SNO node
+  ansible.builtin.assert:
+    that:
+      - installed_sno_node_readiness.stdout_lines | length == 1
+      - installed_sno_node_readiness.stdout_lines[0] is match('^.+=True$')
+    fail_msg: >-
+      The Kubernetes API works, but exactly one Ready=True SNO node was not found.
+    quiet: true
+  when: require_workshop_readiness | bool
+
+- name: Wait for critical ClusterOperator conditions
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [oc_binary_path, '--kubeconfig', kubeconfig_path, 'get', 'clusteroperators']
+        + critical_cluster_operators
+        + [
+          '-o',
+          'jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Available")].status}/{.status.conditions[?(@.type=="Progressing")].status}/{.status.conditions[?(@.type=="Degraded")].status}{"\n"}{end}'
+        ]
+      }}
+  register: critical_operator_conditions
+  changed_when: false
+  failed_when: false
+  until:
+    - >-
+      not (require_workshop_readiness | bool)
+      or (
+        critical_operator_conditions.rc == 0
+        and critical_operator_conditions.stdout_lines | length == critical_cluster_operators | length
+        and (
+          critical_operator_conditions.stdout_lines
+          | reject('match', '^.+=True/False/False$')
+          | list
+          | length
+        ) == 0
+      )
+  retries: "{{ critical_operator_retries if require_workshop_readiness | bool else 1 }}"
+  delay: "{{ critical_operator_delay }}"
+
+- name: Require healthy critical ClusterOperators
+  ansible.builtin.assert:
+    that:
+      - critical_operator_conditions.rc == 0
+      - critical_operator_conditions.stdout_lines | length == critical_cluster_operators | length
+      - >-
+        critical_operator_conditions.stdout_lines
+        | reject('match', '^.+=True/False/False$')
+        | list
+        | length == 0
+    fail_msg: >-
+      One or more critical ClusterOperators are not healthy:
+      {{ critical_operator_conditions.stdout_lines | default([]) | join(', ') }}
+    quiet: true
+  when: require_workshop_readiness | bool
+
+- name: Wait for the OpenShift Console route
+  ansible.builtin.uri:
+    url: "https://console-openshift-console.apps.{{ cluster_name }}.{{ base_dns_domain }}/"
+    method: GET
+    validate_certs: "{{ openshift_route_validate_certs }}"
+    follow_redirects: none
+    status_code: [200, 302, 303]
+  register: openshift_console_check
+  until: openshift_console_check.status | default(0) in [200, 302, 303]
+  retries: "{{ openshift_route_retries }}"
+  delay: "{{ openshift_route_delay }}"
+  when:
+    - require_workshop_readiness | bool
+    - validate_console_and_oauth | bool
+
+- name: Wait for the OpenShift OAuth route
+  ansible.builtin.uri:
+    url: "https://oauth-openshift.apps.{{ cluster_name }}.{{ base_dns_domain }}/"
+    method: GET
+    validate_certs: "{{ openshift_route_validate_certs }}"
+    follow_redirects: none
+    status_code: [200, 302, 303, 401, 403]
+  register: openshift_oauth_check
+  until: openshift_oauth_check.status | default(0) in [200, 302, 303, 401, 403]
+  retries: "{{ openshift_route_retries }}"
+  delay: "{{ openshift_route_delay }}"
+  when:
+    - require_workshop_readiness | bool
+    - validate_console_and_oauth | bool
+
+- name: Report the installed cluster
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Installation method: {{ openshift_installation_method }}"
+      - OpenShift installation is complete.
+      - Kubernetes API access succeeded.
+      - "Fully converged: {{ sno_cluster_converged }}"
+      - "Kubeconfig: {{ kubeconfig_path }}"
+      - "{{ installed_sno_nodes.stdout }}"
+      - >-
+        If fully converged is False, inspect:
+        oc --kubeconfig "{{ kubeconfig_path }}" get clusteroperators
+
+- name: Mark the automation workflow complete
+  ansible.builtin.set_fact:
+    sno_automation_completed: >-
+      {{
+        (not require_workshop_readiness | bool)
+        or (
+          sno_cluster_converged | bool
+          and installed_sno_node_readiness.stdout_lines | length == 1
+          and installed_sno_node_readiness.stdout_lines[0] is match('^.+=True$')
+          and (
+            critical_operator_conditions.stdout_lines
+            | reject('match', '^.+=True/False/False$')
+            | list
+            | length == 0
+          )
+        )
+      }}

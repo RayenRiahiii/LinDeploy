@@ -1,0 +1,107 @@
+---
+- name: Wait for Assisted Installer completion
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ assisted_wait_script_path }}"
+      - --api-url
+      - "{{ assisted_api_url }}"
+      - --sso-token-url
+      - "{{ redhat_sso_token_url }}"
+      - --cluster-id
+      - "{{ sno_cluster_id }}"
+      - --expected
+      - installed
+      - --failure
+      - error
+      - --failure
+      - cancelled
+      - --timeout-seconds
+      - >-
+        {{
+          installation_wait_retries | int
+          * installation_wait_delay | int
+        }}
+      - --poll-seconds
+      - "{{ installation_wait_delay }}"
+  environment:
+    REDHAT_OFFLINE_TOKEN: "{{ redhat_offline_token }}"
+  register: installation_completion_wait
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Parse the final Assisted Installer response
+  ansible.builtin.set_fact:
+    completed_sno_cluster: "{{ installation_completion_wait.stdout | from_json }}"
+  when: installation_completion_wait.stdout | default('') | trim | length > 0
+
+- name: Identify a recoverable finalization state
+  ansible.builtin.set_fact:
+    sno_failed_cluster_recoverable: >-
+      {{
+        completed_sno_cluster is defined
+        and
+        (
+          completed_sno_cluster.status == 'finalizing'
+          or
+          (
+            completed_sno_cluster.status == 'error'
+            and
+            (completed_sno_cluster.status_info | default('') | lower)
+            is search('finaliz')
+          )
+        )
+      }}
+
+- name: Select automatic finalization recovery
+  ansible.builtin.set_fact:
+    sno_workflow_action: recover
+    sno_cluster_status: "{{ completed_sno_cluster.status }}"
+  when:
+    - installation_completion_wait.rc != 0
+    - sno_failed_cluster_recoverable | bool
+    - failed_cluster_recovery_approved | bool
+
+- name: Require successful monitoring completion or approved recovery
+  ansible.builtin.assert:
+    that:
+      - >-
+        installation_completion_wait.rc == 0
+        or
+        (
+          sno_failed_cluster_recoverable | bool
+          and failed_cluster_recovery_approved | bool
+        )
+    fail_msg: >-
+      Installation monitoring did not complete successfully:
+      {{ installation_completion_wait.stderr | default('no details reported') }}
+    quiet: true
+
+- name: Store successful Assisted Installer completion
+  ansible.builtin.set_fact:
+    sno_installation_completed: true
+  when: installation_completion_wait.rc == 0
+
+- name: Require an installed cluster on the normal path
+  ansible.builtin.assert:
+    that:
+      - completed_sno_cluster.status == 'installed'
+    fail_msg: >-
+      Assisted Installer returned status {{ completed_sno_cluster.status }}:
+      {{ completed_sno_cluster.status_info | default('no details reported') }}
+    quiet: true
+  when: installation_completion_wait.rc == 0
+
+- name: Report Assisted Installer completion or recovery
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ completed_sno_cluster.name }}"
+      - "Status: {{ completed_sno_cluster.status }}"
+      - >-
+        {{
+          'Assisted Installer completed the disk installation.'
+          if installation_completion_wait.rc == 0
+          else 'Finalization is stalled; LinDeploy will verify the installed cluster API directly.'
+        }}
+      - OpenShift credentials will now be downloaded with a refreshed API token.
