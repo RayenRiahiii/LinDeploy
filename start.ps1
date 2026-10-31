@@ -74,8 +74,10 @@ $NeedCertRegen = $true
 
 if (Test-Path -LiteralPath $MirrorCert) {
     try {
-        $CertText = & wsl.exe bash -lc "openssl x509 -in '$($MirrorCert -replace '\\', '/')' -noout -text 2>/dev/null"
-        if ($CertText -and ($CertText -match [regex]::Escape($DetectedIp))) {
+        $Cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($MirrorCert)
+        $SanExt = $Cert.Extensions | Where-Object { $_.Oid.Value -eq "2.5.29.17" }
+        $SanText = if ($SanExt) { $SanExt.Format($false) } else { "" }
+        if ($SanText -and ($SanText -match [regex]::Escape($DetectedIp))) {
             $NeedCertRegen = $false
             Write-Host "      Certificates already valid for $DetectedIp." -ForegroundColor Green
         }

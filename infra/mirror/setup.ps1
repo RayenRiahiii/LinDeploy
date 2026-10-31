@@ -28,15 +28,35 @@ keyUsage = critical,keyCertSign,cRLSign
 subjectKeyIdentifier = hash
 "@ | Set-Content -Encoding ascii $OpenSslConfig
 
-$WslRoot = (wsl.exe wslpath -a ($MirrorRoot -replace '\\', '/')).Trim()
-if (-not $WslRoot) {
-    throw "Unable to translate the mirror directory to a WSL path."
+function Invoke-MirrorOpenSsl {
+    param([Parameter(Mandatory)][string]$Command)
+
+    # 1. Try WSL if available
+    $hasWsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($hasWsl) {
+        try {
+            $WslRoot = (wsl.exe wslpath -a ($MirrorRoot -replace '\\', '/')).Trim()
+            if ($WslRoot) {
+                & wsl.exe bash -lc "set -e; cd '$WslRoot'; $Command"
+                if ($LASTEXITCODE -eq 0) { return }
+            }
+        } catch {
+            # continue to docker fallback
+        }
+    }
+
+    # 2. Fallback: Use Docker (guaranteed to be available for LinDeploy)
+    Write-Host "      Using Docker container to generate TLS certificates..." -ForegroundColor Cyan
+    docker run --rm -v "${MirrorRoot}:/mirror" -w /mirror nginx:1.28-alpine sh -c "set -e; $Command"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to generate mirror TLS certificates via Docker."
+    }
 }
 
 $CaKey = Join-Path $CertDir "ca.key"
 $CaCertificate = Join-Path $CertDir "ca.crt"
 if ($RotateCa -or -not (Test-Path -LiteralPath $CaKey) -or -not (Test-Path -LiteralPath $CaCertificate)) {
-    wsl.exe bash -lc "set -e; cd '$WslRoot'; openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 3650 -config runtime/openssl.cnf -keyout runtime/certs/ca.key -out runtime/certs/ca.crt"
+    Invoke-MirrorOpenSsl "openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 3650 -config runtime/openssl.cnf -keyout runtime/certs/ca.key -out runtime/certs/ca.crt"
     Write-Host "Created a new LinDeploy mirror CA."
 }
 else {
@@ -64,7 +84,7 @@ DNS.1 = $DnsName
 IP.1 = $ServerIp
 "@ | Set-Content -Encoding ascii $OpenSslConfig
 
-wsl.exe bash -lc "set -e; cd '$WslRoot'; openssl req -new -newkey rsa:3072 -nodes -config runtime/openssl.cnf -keyout runtime/certs/mirror.key -out runtime/certs/mirror.csr; openssl x509 -req -sha256 -days 825 -in runtime/certs/mirror.csr -CA runtime/certs/ca.crt -CAkey runtime/certs/ca.key -CAcreateserial -extensions server_ext -extfile runtime/openssl.cnf -out runtime/certs/mirror.crt; chmod 600 runtime/certs/*.key"
+Invoke-MirrorOpenSsl "openssl req -new -newkey rsa:3072 -nodes -config runtime/openssl.cnf -keyout runtime/certs/mirror.key -out runtime/certs/mirror.csr; openssl x509 -req -sha256 -days 825 -in runtime/certs/mirror.csr -CA runtime/certs/ca.crt -CAkey runtime/certs/ca.key -CAcreateserial -extensions server_ext -extfile runtime/openssl.cnf -out runtime/certs/mirror.crt; chmod 600 runtime/certs/*.key 2>/dev/null || true"
 
 $MirrorEnv = Join-Path $MirrorRoot ".env"
 if (-not (Test-Path -LiteralPath $MirrorEnv)) {
