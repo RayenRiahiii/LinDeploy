@@ -3,7 +3,6 @@ import {
   Box,
   Group,
   Menu,
-  Paper,
   Text,
   ThemeIcon,
   UnstyledButton,
@@ -233,14 +232,14 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
       <div className="workspace-shell">
         <header className={`workspace-topbar${topbarHidden ? " is-hidden" : ""}`}>
           <div className="topbar-shell">
-            <Paper className="topbar-brand-panel" p="xs">
+            <Box className="topbar-brand-panel">
               <Link to="/dashboard" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }} aria-label="LinDeploy Home">
                 <img src={brandLogo} alt="LinDeploy" className="brand-wordmark" />
               </Link>
-            </Paper>
+            </Box>
 
-            <Paper className="topbar-panel" p="md">
-              <Group gap="sm" className="topbar-nav" wrap="nowrap">
+            <Box className="topbar-panel">
+              <Group gap={8} className="topbar-nav" wrap="nowrap">
                 {navigationItems.map((item) => {
                   const active = isActive(location.pathname, item.route);
                   const Icon = item.icon;
@@ -253,13 +252,13 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                       className={`orb-nav-link${active ? " is-active" : ""}`}
                     >
                       <ThemeIcon
-                        size={28}
+                        size={38}
                         radius="xl"
                         variant={active ? "filled" : "light"}
                         color={active ? "red" : "gray"}
                         className="orb-nav-icon"
                       >
-                        <Icon size={17} />
+                        <Icon size={19} />
                       </ThemeIcon>
                       <span className="orb-nav-copy">
                         <span className="orb-nav-title">{item.label}</span>
@@ -269,10 +268,10 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                   );
                 })}
               </Group>
-            </Paper>
+            </Box>
 
             <Box className="hero-terminal topbar-terminal">
-              <Group gap="xs" justify="space-between" wrap="nowrap">
+              <Group gap="sm" justify="space-between" wrap="nowrap">
                 <div className="topbar-terminal-copy">
                   <Text className="hero-terminal-line topbar-terminal-label">$ {t("topbar.workspace", "workspace")}</Text>
                   <Text className="hero-terminal-line topbar-terminal-value">{meta.terminalSection}</Text>
@@ -280,7 +279,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                 <Group gap={8} wrap="nowrap">
                   <LanguageSelector />
                   <ActionIcon
-                    size={32}
+                    size={34}
                     radius="xl"
                     variant="light"
                     color={colorScheme === "dark" ? "yellow" : "dark"}
@@ -299,7 +298,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                             display: "flex",
                             alignItems: "center",
                             gap: 7,
-                            height: 32,
+                            height: 34,
                             padding: "0 10px 0 4px",
                             borderRadius: 999,
                             background: colorScheme === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
@@ -333,7 +332,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                             fw={600}
                             truncate
                             style={{
-                              maxWidth: 85,
+                              maxWidth: 90,
                               color: "var(--text-primary)",
                               letterSpacing: "0.2px",
                             }}

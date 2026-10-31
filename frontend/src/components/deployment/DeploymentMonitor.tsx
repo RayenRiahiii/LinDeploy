@@ -27,6 +27,7 @@ import {
   IconTerminal2,
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   type ExecutionStage,
   formatDuration,
@@ -118,6 +119,7 @@ export default function DeploymentMonitor({
   onCancel,
   isOpenShift = false,
 }: DeploymentMonitorProps) {
+  const { t } = useTranslation();
 
   const [detailsOpen, setDetailsOpen] = useState(false);
   const status = loading ? live.status : result?.status;
@@ -190,20 +192,20 @@ export default function DeploymentMonitor({
     if (secondsSinceActivity < 15) {
       return {
         color: "teal",
-        label: `Active (heartbeat ${secondsSinceActivity}s ago)`,
+        label: t("monitor.activeHeartbeat", { count: secondsSinceActivity, defaultValue: `Active (heartbeat ${secondsSinceActivity}s ago)` }),
       };
     }
     if (secondsSinceActivity < 60) {
       return {
         color: "blue",
-        label: `Working (${secondsSinceActivity}s ago)`,
+        label: t("monitor.workingHeartbeat", { count: secondsSinceActivity, defaultValue: `Working (${secondsSinceActivity}s ago)` }),
       };
     }
     return {
       color: "yellow",
-      label: `In progress (${formatDuration(secondsSinceActivity)} since last event)`,
+      label: t("monitor.inProgressHeartbeat", { time: formatDuration(secondsSinceActivity), defaultValue: `In progress (${formatDuration(secondsSinceActivity)} since last event)` }),
     };
-  }, [loading, secondsSinceActivity]);
+  }, [loading, secondsSinceActivity, t]);
 
   const filteredLines = useMemo(() => {
     let resultLines = outputLines;
@@ -306,26 +308,41 @@ export default function DeploymentMonitor({
     isReset ||
     (live.title || "").toLowerCase().includes("cleanup") ||
     (result?.message || "").toLowerCase().includes("cleanup");
-  const actionNoun = isReset ? "Cluster Reset" : isCleanup ? "Cleanup" : "Deployment";
-  const cancelLabel = isReset ? "Cancel Reset" : isCleanup ? "Cancel Cleanup" : "Cancel Installation";
+  const actionNoun = isReset
+    ? t("monitor.resetResult", "Cluster Reset")
+    : isCleanup
+      ? t("monitor.cleanupResult", "Cleanup")
+      : t("wizard.stepExecution", "Deployment");
+  const cancelLabel = isReset
+    ? t("execution.cancelReset", "Cancel Reset")
+    : isCleanup
+      ? t("execution.cancelCleanup", "Cancel Cleanup")
+      : t("execution.cancelInstallation", "Cancel Installation");
 
   return (
     <Card className="console-panel" padding="lg">
       <Stack gap="lg">
         <Group justify="space-between" align="center">
           <div>
-            <Title order={3}>{actionNoun} Monitor</Title>
+            <Title order={3}>
+              {t("monitor.title", { action: actionNoun, defaultValue: `${actionNoun} Monitor` })}
+            </Title>
             <Text size="sm" c="dimmed" mt={4}>
               {isReset
-                ? "Live progress and pipeline status for the cluster reset run."
+                ? t("monitor.descReset", "Live progress and pipeline status for the cluster reset run.")
                 : isCleanup
-                  ? "Live progress and pipeline status for the cluster cleanup / uninstallation run."
-                  : "Live progress and pipeline status for the current installer run."}
+                  ? t("monitor.descCleanup", "Live progress and pipeline status for the cluster cleanup / uninstallation run.")
+                  : t("monitor.descInstall", "Live progress and pipeline status for the current installer run.")}
             </Text>
           </div>
           <Group className="monitor-header-actions" gap="sm" justify="flex-end">
-            <Badge color={loading ? "red" : getStatusColor(result?.status)} variant="light">
-              {loading ? "running" : `last run ${result?.status ?? "idle"}`}
+            <Badge
+              color={loading ? "red" : getStatusColor(result?.status)}
+              variant="light"
+            >
+              {loading
+                ? t("execution.statusRunning", "running")
+                : `${t("monitor.lastResult", "last run")} ${result?.status ?? "idle"}`}
             </Badge>
             {loading && onCancel && (
               <Button
@@ -361,28 +378,32 @@ export default function DeploymentMonitor({
               </div>
 
               <div className="monitor-details">
-                <Title order={4}>{loading ? live.title : "Last Execution Result"}</Title>
+                <Title order={4}>
+                  {loading ? live.title : t("monitor.lastResult", "Last Execution Result")}
+                </Title>
                 <Text c="dimmed" size="sm" mt={4}>
-                  {loading ? activeStage.label : result?.message || "No execution yet."}
+                  {loading
+                    ? activeStage.label
+                    : result?.message || t("monitor.noExecutionYet", "No execution yet.")}
                 </Text>
                 <Text c="dimmed" size="sm">
                   {loading
                     ? activeStage.detail
                     : result?.status === "success"
                       ? (isReset
-                          ? "The cluster reset completed and artifacts were cleared."
+                          ? t("monitor.resetSuccess", "The cluster reset completed and artifacts were cleared.")
                           : isCleanup
-                            ? "The cleanup workflow completed and target resources were removed."
-                            : "The installer completed and the target cluster is ready for validation.")
+                            ? t("monitor.cleanupSuccess", "The cleanup workflow completed and target resources were removed.")
+                            : t("monitor.installSuccess", "The installer completed and the target cluster is ready for validation."))
                       : result?.status === "failed"
                         ? (isReset
-                            ? "The cluster reset stopped before all targets were cleared."
+                            ? t("monitor.resetFailed", "The cluster reset stopped before all targets were cleared.")
                             : isCleanup
-                              ? "The cleanup workflow stopped before all target state was removed."
-                              : "The installer stopped before cluster validation completed.")
+                              ? t("monitor.cleanupFailed", "The cleanup workflow stopped before all target state was removed.")
+                              : t("monitor.installFailed", "The installer stopped before cluster validation completed."))
                         : result?.status === "cancelled"
-                          ? `${actionNoun} was cancelled by user.`
-                          : "Launch a playbook to start tracking pipeline execution."}
+                          ? t("monitor.actionCancelled", { action: actionNoun, defaultValue: `${actionNoun} was cancelled by user.` })
+                          : t("monitor.noExecutionYet", "Launch a playbook to start tracking pipeline execution.")}
                 </Text>
 
                 {loading && live.summaryMessage && <Text size="sm" mt={6}>{live.summaryMessage}</Text>}
@@ -395,7 +416,7 @@ export default function DeploymentMonitor({
                       </ThemeIcon>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <Group justify="space-between" align="center" wrap="wrap" gap="xs">
-                          <Text size="xs" c="dimmed" fw={700}>CURRENT TASK</Text>
+                          <Text size="xs" c="dimmed" fw={700}>{t("monitor.currentTask", "CURRENT TASK")}</Text>
                           <Group gap="xs">
                             {heartbeatStatus && (
                               <Badge color={heartbeatStatus.color} variant="dot" size="xs">
@@ -403,12 +424,12 @@ export default function DeploymentMonitor({
                               </Badge>
                             )}
                             <Badge color="blue" variant="light" size="xs">
-                              Task time: {formatDuration(taskElapsedSeconds)}
+                              {t("monitor.taskTime", { time: formatDuration(taskElapsedSeconds), defaultValue: `Task time: ${formatDuration(taskElapsedSeconds)}` })}
                             </Badge>
                           </Group>
                         </Group>
                         <Text size="sm" fw={800}>{live.currentTask || live.currentPlay}</Text>
-                        {live.currentRole && <Text size="xs" c="dimmed">Role: {live.currentRole}</Text>}
+                        {live.currentRole && <Text size="xs" c="dimmed">{t("monitor.rolePrefix", { role: live.currentRole, defaultValue: `Role: ${live.currentRole}` })}</Text>}
                       </div>
                     </Group>
                   </div>
@@ -418,10 +439,10 @@ export default function DeploymentMonitor({
                   <Card withBorder padding="xs" mt="xs" radius="md" style={{ background: "rgba(255, 107, 107, 0.05)", borderColor: "rgba(255, 107, 107, 0.2)" }}>
                     <Group justify="space-between" mb={4}>
                       <Badge color="red" variant="light" size="sm">
-                        OpenShift Telemetry: {live.telemetry.stage || live.telemetry.cluster_status || "Installing"}
+                        {t("monitor.openShiftTelemetry", { stage: live.telemetry.stage || live.telemetry.cluster_status || "Installing", defaultValue: `OpenShift Telemetry: ${live.telemetry.stage || live.telemetry.cluster_status || "Installing"}` })}
                       </Badge>
                       <Text size="xs" fw={700} c="dimmed">
-                        Node: {live.telemetry.stage_percentage ?? 0}% | Cluster: {live.telemetry.total_percentage ?? 0}%
+                        {t("monitor.nodeClusterPercent", { node: live.telemetry.stage_percentage ?? 0, cluster: live.telemetry.total_percentage ?? 0, defaultValue: `Node: ${live.telemetry.stage_percentage ?? 0}% | Cluster: ${live.telemetry.total_percentage ?? 0}%` })}
                       </Text>
                     </Group>
                     <Progress
@@ -446,8 +467,8 @@ export default function DeploymentMonitor({
                 {loading && (live.seenTasks > 0 || live.completedTasks > 0) && (
 
                   <Text size="sm" mt={6}>
-                    Completed tasks: {live.completedTasks}
-                    {live.totalTasks > 0 ? ` / ${live.totalTasks} planned` : ` | ${live.seenTasks} observed`}
+                    {t("monitor.completedTasks", { completed: live.completedTasks, defaultValue: `Completed tasks: ${live.completedTasks}` })}
+                    {live.totalTasks > 0 ? t("monitor.plannedTasks", { count: live.totalTasks, defaultValue: ` / ${live.totalTasks} planned` }) : t("monitor.observedTasks", { count: live.seenTasks, defaultValue: ` | ${live.seenTasks} observed` })}
                   </Text>
                 )}
 
@@ -458,7 +479,7 @@ export default function DeploymentMonitor({
                     </Badge>
                   )}
                   {installationId && (
-                    <Badge color="gray" variant="outline">installation #{installationId}</Badge>
+                    <Badge color="gray" variant="outline">{t("monitor.installationNum", { id: installationId, defaultValue: `installation #${installationId}` })}</Badge>
                   )}
                   {loading && (
                     <Button
@@ -468,13 +489,13 @@ export default function DeploymentMonitor({
                       leftSection={<IconTerminal2 size={14} />}
                       rightSection={detailsOpen ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                     >
-                      {detailsOpen ? "Hide job output" : "View job output"}
+                      {detailsOpen ? t("monitor.hideOutput", "Hide job output") : t("monitor.viewOutput", "View job output")}
                     </Button>
                   )}
                 </Group>
               </div>
 
-              <Badge color="red" variant="filled">elapsed: {formatDuration(duration)}</Badge>
+              <Badge color="red" variant="filled">{t("monitor.elapsed", { time: formatDuration(duration), defaultValue: `elapsed: ${formatDuration(duration)}` })}</Badge>
             </Group>
 
             <Progress
@@ -489,7 +510,7 @@ export default function DeploymentMonitor({
             <Modal
               opened={loading && detailsOpen}
               onClose={() => setDetailsOpen(false)}
-              title="Live Playbook Job Output"
+              title={t("monitor.liveJobOutput", "Live Playbook Job Output")}
               size="78rem"
               centered
               classNames={{ content: "job-output-modal-content", header: "terminal-modal-header" }}
@@ -497,8 +518,8 @@ export default function DeploymentMonitor({
               <div className="monitor-detail-drawer monitor-detail-modal-body">
                 <Group justify="space-between" align="center" mb="md">
                   <div>
-                    <Text fw={800}>Live job output</Text>
-                    <Text size="xs" c="dimmed">Ansible activity reported by the controller, similar to an AAP job stream.</Text>
+                    <Text fw={800}>{t("monitor.liveJobOutput", "Live job output")}</Text>
+                    <Text size="xs" c="dimmed">{t("monitor.liveJobOutputDesc", "Ansible activity reported by the controller, similar to an AAP job stream.")}</Text>
                   </div>
                   <Group gap="xs">
                     {heartbeatStatus && (
@@ -506,24 +527,24 @@ export default function DeploymentMonitor({
                         {heartbeatStatus.label}
                       </Badge>
                     )}
-                    <Badge color="gray" variant="outline">{recentEvents.length} recent events</Badge>
+                    <Badge color="gray" variant="outline">{t("monitor.recentEvents", { count: recentEvents.length, defaultValue: `${recentEvents.length} recent events` })}</Badge>
                   </Group>
                 </Group>
 
                 <div className="monitor-detail-grid">
                   <div>
-                    <Text size="xs" c="dimmed" fw={700}>PLAY</Text>
-                    <Text size="sm" fw={600}>{live.currentPlay || "Preparing execution"}</Text>
+                    <Text size="xs" c="dimmed" fw={700}>{t("monitor.play", "PLAY")}</Text>
+                    <Text size="sm" fw={600}>{live.currentPlay || t("monitor.preparingExecution", "Preparing execution")}</Text>
                   </div>
                   <div>
-                    <Text size="xs" c="dimmed" fw={700}>ROLE</Text>
-                    <Text size="sm" fw={600}>{live.currentRole || "Waiting for role context"}</Text>
+                    <Text size="xs" c="dimmed" fw={700}>{t("monitor.role", "ROLE")}</Text>
+                    <Text size="sm" fw={600}>{live.currentRole || t("monitor.waitingRole", "Waiting for role context")}</Text>
                   </div>
                   <div>
-                    <Text size="xs" c="dimmed" fw={700}>TASKS</Text>
+                    <Text size="xs" c="dimmed" fw={700}>{t("monitor.tasks", "TASKS")}</Text>
                     <Text size="sm" fw={600}>
-                      {live.completedTasks} completed
-                      {live.totalTasks > 0 ? ` / ${live.totalTasks} planned` : ` / ${live.seenTasks} observed`}
+                      {t("monitor.tasksCompleted", { completed: live.completedTasks, defaultValue: `${live.completedTasks} completed` })}
+                      {live.totalTasks > 0 ? t("monitor.plannedTasks", { count: live.totalTasks, defaultValue: ` / ${live.totalTasks} planned` }) : t("monitor.observedTasks", { count: live.seenTasks, defaultValue: ` / ${live.seenTasks} observed` })}
                     </Text>
                   </div>
                 </div>
@@ -539,7 +560,7 @@ export default function DeploymentMonitor({
                         </ThemeIcon>
                         <div>
                           <Text size="sm" fw={700}>{host}</Text>
-                          <Text size="xs" c="dimmed">{activity.status} · {activity.results} updates</Text>
+                          <Text size="xs" c="dimmed">{t("monitor.hostActivityUpdates", { status: activity.status, count: activity.results, defaultValue: `${activity.status} · ${activity.results} updates` })}</Text>
                         </div>
                       </div>
                     ))}
@@ -550,14 +571,14 @@ export default function DeploymentMonitor({
                   <div className="monitor-job-stream-header">
                     <Group gap="sm" wrap="wrap" justify="space-between" style={{ width: "100%" }}>
                       <Group gap="xs">
-                        <span>ANSIBLE PLAYBOOK OUTPUT</span>
+                        <span>{t("monitor.ansibleOutput", "ANSIBLE PLAYBOOK OUTPUT")}</span>
                         <Badge color="gray" variant="light" size="xs">
                           {filteredLines.length} / {outputLines.length} lines
                         </Badge>
                       </Group>
                       <Group gap="xs">
                         <TextInput
-                          placeholder="Filter logs..."
+                          placeholder={t("monitor.filterLogs", "Filter logs...")}
                           size="xs"
                           leftSection={<IconSearch size={12} />}
                           rightSection={
@@ -571,13 +592,13 @@ export default function DeploymentMonitor({
                         />
                         <Checkbox
                           size="xs"
-                          label="Hide skipped"
+                          label={t("monitor.hideSkipped", "Hide skipped")}
                           checked={hideSkipping}
                           onChange={(e) => setHideSkipping(e.currentTarget.checked)}
                         />
                         <Checkbox
                           size="xs"
-                          label="Errors only"
+                          label={t("monitor.errorsOnly", "Errors only")}
                           checked={errorsOnly}
                           onChange={(e) => setErrorsOnly(e.currentTarget.checked)}
                         />
@@ -611,8 +632,8 @@ export default function DeploymentMonitor({
                         <IconTerminal2 size={24} />
                         <Text size="sm" c="dimmed">
                           {outputLines.length > 0
-                            ? "No log lines match current filters."
-                            : "Waiting for Ansible to produce job output."}
+                            ? t("monitor.noLogLines", "No log lines match current filters.")
+                            : t("monitor.waitingOutput", "Waiting for Ansible to produce job output.")}
                         </Text>
                       </div>
                     )}
@@ -626,7 +647,7 @@ export default function DeploymentMonitor({
                       leftSection={<IconChevronDown size={14} />}
                       onClick={scrollToBottom}
                     >
-                      {unreadCount > 0 ? `${unreadCount} new lines · Jump to latest` : "Jump to latest"}
+                      {unreadCount > 0 ? `${unreadCount} new lines · ${t("monitor.jumpToLatest", "Jump to latest")}` : t("monitor.jumpToLatest", "Jump to latest")}
                     </Button>
                   )}
                 </div>
@@ -635,7 +656,7 @@ export default function DeploymentMonitor({
           </div>
 
           <div className="monitor-pipeline-panel">
-            <Text fw={600} mb="sm">Pipeline</Text>
+            <Text fw={600} mb="sm">{t("monitor.pipeline", "Pipeline")}</Text>
             <Stack gap="sm">
               {stages.map((stage, index) => {
                 const completed =

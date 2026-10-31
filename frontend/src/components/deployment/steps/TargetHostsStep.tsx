@@ -21,6 +21,7 @@ import {
   IconPlugConnected,
   IconServer,
 } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 import { type DeploymentTopology } from "../../installers/DeploymentTopologySelector";
 import { type InstallerId } from "../../../features/installers/catalog";
 import {
@@ -80,6 +81,7 @@ export default function TargetHostsStep({
   onBackToTopology,
   onContinueToInstallation,
 }: TargetHostsStepProps) {
+  const { t } = useTranslation();
   const enabledHosts = hosts.filter((host) => host.enabled);
 
   return (
@@ -92,23 +94,27 @@ export default function TargetHostsStep({
             </ThemeIcon>
             <div>
               <Title order={3}>
-                {topology === "multi_node" ? "Assign Host Roles" : "Select Hosts"}
+                {topology === "multi_node"
+                  ? t("targets.assignHostRoles", "Assign Host Roles")
+                  : t("targets.selectHosts", "Select Hosts")}
               </Title>
               <Text size="sm" c="dimmed" mt={4}>
                 {topology === "multi_node"
-                  ? "Assign each machine to the Master or Worker role, then select the initialization host."
-                  : "Choose one or more enabled targets from the inventory. SSH user and port are taken directly from the host record."}
+                  ? t("targets.multiNodeHelp", "Assign each machine to the Master or Worker role, then select the initialization host.")
+                  : t("targets.singleNodeHelp", "Choose one or more enabled targets from the inventory. SSH user and port are taken directly from the host record.")}
               </Text>
             </div>
           </Group>
           <Badge color="gray" variant="light">
-            {topology === "multi_node" ? "role assignment" : "hosts inventory"}
+            {topology === "multi_node"
+              ? t("sections.hosts.badge", "role assignment")
+              : t("hosts.title", "hosts inventory")}
           </Badge>
         </Group>
 
         {topology === "multi_node" && (
           <TextInput
-            label="Cluster name"
+            label={t("targets.clusterName", "Cluster name")}
             description="Optional shared name. Changing it on an existing cluster requires Reset Cluster first."
             placeholder={`${selectedInstaller}-production`}
             value={clusterConfig.cluster_name}
@@ -125,7 +131,7 @@ export default function TargetHostsStep({
 
         {enabledHosts.length === 0 ? (
           <Text c="dimmed">
-            No enabled hosts are available. Add or enable a host before launching an installation.
+            {t("targets.noEnabledHosts", "No enabled hosts are available. Add or enable a host before launching an installation.")}
           </Text>
         ) : (
           <div className="host-selection-grid">
@@ -209,14 +215,14 @@ export default function TargetHostsStep({
                       {topology === "multi_node"
                         ? isControlPlane
                           ? bootstrapHostId === host.id
-                            ? "Bootstrap Master"
-                            : "Master"
+                            ? t("targets.bootstrap", "Bootstrap Master")
+                            : t("targets.master", "Master")
                           : isWorker
-                            ? "Worker"
-                            : "Available"
+                            ? t("targets.worker", "Worker")
+                            : t("common.available", "Available")
                         : isSelected
-                          ? "Selected"
-                          : "Available"}
+                          ? t("targets.selected", "Selected")
+                          : t("common.available", "Available")}
                     </Badge>
                   </Group>
 
@@ -226,7 +232,7 @@ export default function TargetHostsStep({
                       <Text fw={700}>{host.credential_username || "-"}</Text>
                     </div>
                     <div className="host-selection-metric">
-                      <Text size="xs" c="dimmed">SSH Port</Text>
+                      <Text size="xs" c="dimmed">{t("hosts.sshPort", "SSH Port")}</Text>
                       <Text fw={700}>{host.ssh_port}</Text>
                     </div>
                   </div>
@@ -240,7 +246,7 @@ export default function TargetHostsStep({
                     >
                       {topology === "single_node" && (
                         <TextInput
-                          label="Cluster name"
+                          label={t("targets.clusterName", "Cluster name")}
                           description="Optional. Changing it after installation requires Reset Cluster first."
                           placeholder={`${selectedInstaller}-${normalizeNodeName(host.hostname || host.name)}`}
                           value={hostIdentity.cluster_name}
@@ -251,7 +257,7 @@ export default function TargetHostsStep({
                         />
                       )}
                       <TextInput
-                        label="Node name"
+                        label={t("targets.nodeName", "Node name")}
                         description="Optional DNS name. Changing it after installation requires Reset Cluster first."
                         placeholder={normalizeNodeName(host.hostname || host.name, `node-${host.id}`)}
                         value={hostIdentity.node_name}
@@ -266,7 +272,7 @@ export default function TargetHostsStep({
                   {topology === "multi_node" && (
                     <div className="host-role-control" style={{ marginTop: 12 }}>
                       <Text size="xs" fw={700} c="dimmed" mb={8}>
-                        Cluster Role
+                        {t("hosts.nodeRole", "Cluster Role")}
                       </Text>
                       <SegmentedControl
                         value={assignedRole}
@@ -284,7 +290,7 @@ export default function TargetHostsStep({
                             label: (
                               <Center style={{ gap: 6 }}>
                                 <IconCircleMinus size={13} />
-                                <span>Unused</span>
+                                <span>{t("targets.unassigned", "Unused")}</span>
                               </Center>
                             ),
                             value: "unassigned",
@@ -293,7 +299,7 @@ export default function TargetHostsStep({
                             label: (
                               <Center style={{ gap: 6 }}>
                                 <IconCrown size={13} />
-                                <span>Master</span>
+                                <span>{t("targets.master", "Master")}</span>
                               </Center>
                             ),
                             value: "control_plane",
@@ -302,7 +308,7 @@ export default function TargetHostsStep({
                             label: (
                               <Center style={{ gap: 6 }}>
                                 <IconHammer size={13} />
-                                <span>Worker</span>
+                                <span>{t("targets.worker", "Worker")}</span>
                               </Center>
                             ),
                             value: "worker",
@@ -317,7 +323,7 @@ export default function TargetHostsStep({
                           checked={bootstrapHostId === host.id}
                           onChange={() => onSetBootstrapHostId(host.id)}
                           disabled={loading}
-                          label="Bootstrap Master (initializes cluster)"
+                          label={t("targets.bootstrap", "Bootstrap Master (initializes cluster)")}
                           size="xs"
                         />
                       )}
@@ -336,14 +342,14 @@ export default function TargetHostsStep({
               onClick={onBackToTopology}
               leftSection={<IconArrowLeft size={16} />}
             >
-              Back to topology
+              {t("targets.backToTopology", "Back to topology")}
             </Button>
             <Button
               onClick={onContinueToInstallation}
               disabled={!topologyReady}
               rightSection={<IconArrowRight size={16} />}
             >
-              Continue to installation
+              {t("targets.continueToInstallation", "Continue to installation")}
             </Button>
           </Group>
         )}

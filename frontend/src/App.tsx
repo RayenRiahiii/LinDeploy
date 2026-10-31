@@ -1,4 +1,5 @@
 import AppRouter from "./router/AppRouter";
+import { AuthProvider } from "./context/AuthContext";
 import "./App.css";
 
 type AppProps = {
@@ -7,5 +8,9 @@ type AppProps = {
 };
 
 export default function App({ colorScheme, onToggleColorScheme }: AppProps) {
-  return <AppRouter colorScheme={colorScheme} onToggleColorScheme={onToggleColorScheme} />;
+  return (
+    <AuthProvider>
+      <AppRouter colorScheme={colorScheme} onToggleColorScheme={onToggleColorScheme} />
+    </AuthProvider>
+  );
 }

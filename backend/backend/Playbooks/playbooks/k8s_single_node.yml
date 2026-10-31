@@ -48,6 +48,39 @@
           No Kubernetes system changes were applied.
       when: (kubernetes_k3s_conflict_artifacts.stdout_lines | length) > 0
 
+    - name: Probe conflicting existing Kubernetes installation artifacts
+      command:
+        argv:
+          - /bin/sh
+          - -c
+          - |
+            for path; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                printf '%s\n' "$path"
+              fi
+            done
+          - k8s-existing-check
+          - /etc/kubernetes/admin.conf
+          - /etc/kubernetes/manifests/kube-apiserver.yaml
+          - /var/lib/etcd/member
+          - /var/lib/kubelet/config.yaml
+      register: kubernetes_existing_conflict_artifacts
+      changed_when: false
+      when: k8s_fail_on_existing_cluster | default(true) | bool
+
+    - name: Refuse Kubernetes installation while Kubernetes is already present
+      fail:
+        msg: >-
+          Kubernetes cannot be installed on {{ inventory_hostname }} because
+          an existing Kubernetes cluster is already present on this host. Run
+          the Kubernetes cleanup workflow on this target, verify that Kubernetes is
+          removed, and retry the installation. Detected artifacts:
+          {{ kubernetes_existing_conflict_artifacts.stdout_lines | join(', ') }}.
+          No Kubernetes system changes were applied.
+      when:
+        - k8s_fail_on_existing_cluster | default(true) | bool
+        - (kubernetes_existing_conflict_artifacts.stdout_lines | default([]) | length) > 0
+
     - name: Gather minimal installation facts
       setup:
         gather_subset:

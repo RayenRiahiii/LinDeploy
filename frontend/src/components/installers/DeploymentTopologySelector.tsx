@@ -7,6 +7,7 @@ import {
   IconServer,
   IconTopologyFull,
 } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 
 export type DeploymentTopology = "single_node" | "multi_node";
 
@@ -25,40 +26,54 @@ export default function DeploymentTopologySelector({
   onChange,
   disabled,
 }: DeploymentTopologySelectorProps) {
+  const { t } = useTranslation();
   const isMultiNode = topology === "multi_node";
   const multiNodeDisabled = installerId === "openshift_sno";
 
   const topologyOptions = [
     {
       value: "single_node" as const,
-      title: "Single-node per target",
-      badge: "Independent clusters",
-      summary: `Every selected host becomes a complete, independent ${installerLabel} cluster.`,
-      bestFor: "Labs, isolated workloads, edge sites, and independent test environments.",
+      title: t("topology.singleNodeTitle", "Single-node per target"),
+      badge: t("topology.singleNodeBadge", "Independent clusters"),
+      summary: t("topology.singleNodeSummary", {
+        installer: installerLabel,
+        defaultValue: `Every selected host becomes a complete, independent ${installerLabel} cluster.`,
+      }),
+      bestFor: t("topology.singleNodeBestFor", "Labs, isolated workloads, edge sites, and independent test environments."),
       points: [
-        { icon: IconServer, text: "Control plane and workloads share one host" },
-        { icon: IconCheck, text: "Failure is isolated to that host's cluster" },
+        { icon: IconServer, text: t("topology.singleNodePoint1", "Control plane and workloads share one host") },
+        { icon: IconCheck, text: t("topology.singleNodePoint2", "Failure is isolated to that host's cluster") },
       ],
       isOptionDisabled: false,
     },
     {
       value: "multi_node" as const,
-      title: multiNodeDisabled ? "Multi-node cluster (Coming Soon)" : "Multi-node cluster",
-      badge: multiNodeDisabled ? "In Development" : "Shared cluster",
+      title: multiNodeDisabled
+        ? `${t("topology.multiNodeTitle", "Multi-node cluster")} (${t("common.comingSoon", "Coming soon")})`
+        : t("topology.multiNodeTitle", "Multi-node cluster"),
+      badge: multiNodeDisabled
+        ? t("topology.multiNodeDevBadge", "In Development")
+        : t("topology.multiNodeBadge", "Shared cluster"),
       summary: multiNodeDisabled
-        ? `Multi-node clustering for ${installerLabel} is currently in development. Single-node mode is fully supported.`
-        : `Selected hosts work together as one shared ${installerLabel} cluster with assigned roles.`,
+        ? t("topology.multiNodeDevSummary", {
+            installer: installerLabel,
+            defaultValue: `Multi-node clustering for ${installerLabel} is currently in development. Single-node mode is fully supported.`,
+          })
+        : t("topology.multiNodeSummary", {
+            installer: installerLabel,
+            defaultValue: `Selected hosts work together as one shared ${installerLabel} cluster with assigned roles.`,
+          }),
       bestFor: multiNodeDisabled
-        ? "Worker/agent join automation for OpenShift SNO is scheduled for an upcoming release."
-        : "Shared services, production clusters, high availability, and scalable container workloads.",
+        ? t("topology.singleNodeBestFor", "Labs, isolated workloads, edge sites, and independent test environments.")
+        : t("topology.multiNodeBestFor", "Shared services, production clusters, high availability, and scalable container workloads."),
       points: multiNodeDisabled
         ? [
-            { icon: IconCheck, text: "Single-node mode is fully supported" },
-            { icon: IconCheck, text: "Multi-node join playbook coming soon" },
+            { icon: IconCheck, text: t("topology.singleNodePoint1", "Single-node mode is fully supported") },
+            { icon: IconCheck, text: t("common.comingSoon", "Multi-node join playbook coming soon") },
           ]
         : [
-            { icon: IconCrown, text: "Master host initializes and coordinates the cluster" },
-            { icon: IconHammer, text: "Worker nodes join to execute container workloads" },
+            { icon: IconCrown, text: t("topology.multiNodePoint1", "Master host initializes and coordinates the cluster") },
+            { icon: IconHammer, text: t("topology.multiNodePoint2", "Worker nodes join to execute container workloads") },
           ],
       isOptionDisabled: multiNodeDisabled,
     },
@@ -73,14 +88,14 @@ export default function DeploymentTopologySelector({
               <IconTopologyFull size={18} />
             </ThemeIcon>
             <div>
-              <Title order={3}>Deployment Topology</Title>
+              <Title order={3}>{t("topology.title", "Deployment Topology")}</Title>
               <Text size="sm" c="dimmed" mt={4}>
-                Select the architecture that matches how these machines should operate after deployment.
+                {t("topology.description", "Select the architecture that matches how these machines should operate after deployment.")}
               </Text>
             </div>
           </Group>
           <Badge color={isMultiNode ? "teal" : "gray"} variant="light">
-            {isMultiNode ? "shared cluster" : "independent clusters"}
+            {isMultiNode ? t("topology.sharedCluster", "shared cluster") : t("topology.independentClusters", "independent clusters")}
           </Badge>
         </Group>
 
@@ -94,7 +109,7 @@ export default function DeploymentTopologySelector({
               label: (
                 <Center style={{ gap: 8 }}>
                   <IconServer size={15} />
-                  <span>Single-node per target</span>
+                  <span>{t("topology.singleNodeTitle", "Single-node per target")}</span>
                 </Center>
               ),
               value: "single_node",
@@ -103,14 +118,18 @@ export default function DeploymentTopologySelector({
               label: (
                 <Center style={{ gap: 8 }}>
                   <IconNetwork size={15} />
-                  <span>{multiNodeDisabled ? "Multi-node (Coming Soon)" : "Multi-node cluster"}</span>
+                  <span>
+                    {multiNodeDisabled
+                      ? `${t("topology.multiNodeTitle", "Multi-node")} (${t("common.comingSoon", "Coming soon")})`
+                      : t("topology.multiNodeTitle", "Multi-node cluster")}
+                  </span>
                 </Center>
               ),
               value: "multi_node",
               disabled: multiNodeDisabled,
             },
           ]}
-          aria-label="Deployment topology"
+          aria-label={t("topology.title", "Deployment topology")}
         />
 
         <div className="topology-comparison-grid">
@@ -165,10 +184,6 @@ export default function DeploymentTopologySelector({
             );
           })}
         </div>
-
-        <Text size="xs" c="dimmed">
-          You can change this choice before execution. LinDeploy will adapt the next step to host selection or role assignment.
-        </Text>
       </Stack>
     </Card>
   );

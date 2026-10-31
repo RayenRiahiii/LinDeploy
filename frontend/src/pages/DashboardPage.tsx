@@ -56,7 +56,7 @@ type DashboardSummary = {
   } | null;
 };
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 
 function getStatusColor(status?: string | null) {
   if (status === "success") return "teal";

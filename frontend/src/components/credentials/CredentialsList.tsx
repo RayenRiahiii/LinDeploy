@@ -55,7 +55,7 @@ type CredentialFormData = {
   become_password: string;
 };
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 
 const emptyForm: CredentialFormData = {
   name: "",
@@ -71,7 +71,7 @@ const credentialApiErrorOptions = {
     name: "Credential name",
     auth_type: "Authentication type",
     username: "Username",
-    private_key: "Private key",
+    private_key: "SSH public key",
     password: "SSH password",
     become_password: "Become password",
   },
@@ -227,11 +227,11 @@ export default function CredentialsList() {
       }
 
       notifications.show({
-        title: editingId === null ? "Credential created" : "Credential updated",
+        title: editingId === null ? t("credentials.createSuccessTitle", "Credential created") : t("credentials.updateSuccessTitle", "Credential updated"),
         message:
           editingId === null
-            ? "The credential was added successfully."
-            : "The credential was updated successfully.",
+            ? t("credentials.createSuccess", "The credential was added successfully.")
+            : t("credentials.updateSuccess", "The credential was updated successfully."),
         color: "teal",
       });
 
@@ -280,8 +280,8 @@ export default function CredentialsList() {
       }
 
       notifications.show({
-        title: "Credential deleted",
-        message: "The credential was removed successfully.",
+        title: t("credentials.deleteSuccess", "Credential deleted"),
+        message: t("credentials.deleteSuccess", "The credential was removed successfully."),
         color: "red",
       });
 
@@ -406,19 +406,19 @@ export default function CredentialsList() {
                       <Table withColumnBorders={false} horizontalSpacing="sm" verticalSpacing="xs">
                         <Table.Tbody>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Auth Type</Table.Td>
-                            <Table.Td>{credential.auth_type}</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.authType", "Auth Type")}</Table.Td>
+                            <Table.Td>{credential.auth_type === "ssh_key" ? t("credentials.sshKeyAuth", "SSH Key") : t("credentials.passwordAuth", "Password")}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Password</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.password", "Password")}</Table.Td>
                             <Table.Td>{maskSecret(credential.password)}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Private Key</Table.Td>
-                            <Table.Td>{credential.private_key ? "stored" : "-"}</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.sshPublicKey", "SSH Public Key")}</Table.Td>
+                            <Table.Td>{credential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
-                            <Table.Td c="dimmed">Become Password</Table.Td>
+                            <Table.Td c="dimmed">{t("credentials.becomePassword", "Become Password")}</Table.Td>
                             <Table.Td>{maskSecret(credential.become_password)}</Table.Td>
                           </Table.Tr>
                         </Table.Tbody>
@@ -469,14 +469,14 @@ export default function CredentialsList() {
         <form onSubmit={handleSubmit}>
           <Stack gap="md">
             {editorError && (
-              <Alert color="red" title="Unable to save credential" variant="light">
+              <Alert color="red" title={t("common.error", "Unable to save credential")} variant="light">
                 {editorError}
               </Alert>
             )}
 
             <TextInput
-              label="Credential Name"
-              description="Reusable label for this SSH access profile."
+              label={t("credentials.name", "Credential Name")}
+              description={t("credentials.nameDesc", "Reusable label for this SSH access profile.")}
               placeholder="linux-admin-ssh-key"
               value={formData.name}
               onChange={(event) => handleChange("name", event.currentTarget.value)}
@@ -484,8 +484,8 @@ export default function CredentialsList() {
             />
 
             <TextInput
-              label="Username"
-              description="Remote account used to connect over SSH."
+              label={t("credentials.username", "Username")}
+              description={t("credentials.usernameDesc", "Remote account used to connect over SSH.")}
               placeholder="adminuser"
               value={formData.username}
               onChange={(event) => handleChange("username", event.currentTarget.value)}
@@ -493,7 +493,7 @@ export default function CredentialsList() {
             />
 
             <Radio.Group
-              label="Authentication Type"
+              label={t("credentials.authType", "Authentication Type")}
               value={formData.auth_type}
               onChange={(value) => handleChange("auth_type", value as "ssh_key" | "password")}
             >
@@ -503,7 +503,7 @@ export default function CredentialsList() {
                   label={
                     <Group gap={6}>
                       <IconLockPassword size={16} />
-                      <span>Password</span>
+                      <span>{t("credentials.passwordAuth", "Password")}</span>
                     </Group>
                   }
                 />
@@ -512,7 +512,7 @@ export default function CredentialsList() {
                   label={
                     <Group gap={6}>
                       <IconKey size={16} />
-                      <span>SSH Key</span>
+                      <span>{t("credentials.sshKeyAuth", "SSH Key")}</span>
                     </Group>
                   }
                 />
@@ -521,18 +521,18 @@ export default function CredentialsList() {
 
             {formData.auth_type === "password" ? (
               <PasswordInput
-                label="SSH Password"
-                description="Password used for SSH login on the target host."
-                placeholder="Enter the remote user's SSH password"
+                label={t("credentials.password", "SSH Password")}
+                description={t("credentials.passwordDesc", "Password used for SSH login on the target host.")}
+                placeholder={t("credentials.passwordPlaceholder", "Enter the remote user's SSH password")}
                 value={formData.password}
                 onChange={(event) => handleChange("password", event.currentTarget.value)}
                 required
               />
             ) : (
               <Textarea
-                label="Private Key"
-                description="Paste the private key that matches the public key installed on the host."
-                placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
+                label={t("credentials.sshPublicKey", "SSH Public Key")}
+                description={t("credentials.sshPublicKeyDesc", "Paste the SSH public key installed on the host.")}
+                placeholder={t("credentials.sshPublicKeyPlaceholder", "ssh-ed25519 AAAAC3... or ssh-rsa AAAAB3...")}
                 value={formData.private_key}
                 onChange={(event) => handleChange("private_key", event.currentTarget.value)}
                 minRows={6}
@@ -541,9 +541,9 @@ export default function CredentialsList() {
             )}
 
             <PasswordInput
-              label="Become Password"
-              description="Optional sudo or become password if privilege escalation requires it."
-              placeholder="Leave empty if sudo does not require a password"
+              label={t("credentials.becomePassword", "Become Password")}
+              description={t("credentials.becomePasswordDesc", "Optional sudo or become password if privilege escalation requires it.")}
+              placeholder={t("credentials.becomePasswordPlaceholder", "Leave empty if sudo does not require a password")}
               value={formData.become_password}
               onChange={(event) => handleChange("become_password", event.currentTarget.value)}
             />
@@ -594,8 +594,8 @@ export default function CredentialsList() {
                   <Table.Td>{selectedCredential.auth_type}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td c="dimmed">{t("credentials.privateKey", "Private Key")}</Table.Td>
-                  <Table.Td>{selectedCredential.private_key ? "stored" : "-"}</Table.Td>
+                  <Table.Td c="dimmed">{t("credentials.sshPublicKey", "SSH Public Key")}</Table.Td>
+                  <Table.Td>{selectedCredential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td c="dimmed">{t("credentials.password", "Password")}</Table.Td>

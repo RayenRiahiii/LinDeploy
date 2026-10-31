@@ -284,79 +284,38 @@
 # 2. Host firewall for K3s
 # ==================================================
 
-- name: Check K3s firewalld ports
+- name: Apply K3s firewalld rules in one idempotent operation
   command:
-    argv:
-      - timeout
-      - "{{ common_firewalld_command_timeout | default(20) | string }}"
-      - firewall-cmd
-      - --permanent
-      - "--zone={{ k3s_firewalld_zone }}"
-      - "--query-port={{ item }}"
-  register: k3s_firewalld_port_queries
-  changed_when: false
-  failed_when: k3s_firewalld_port_queries.rc not in [0, 1]
-  loop: "{{ k3s_effective_firewalld_ports | default([]) }}"
-  when:
-    - k3s_manage_firewalld_rules | bool
-    - common_manage_firewalld | default(true) | bool
-    - common_firewalld_state | default('started') != 'stopped'
-
-- name: Add K3s firewalld ports
-  command:
-    argv:
-      - timeout
-      - "{{ common_firewalld_command_timeout | default(20) | string }}"
-      - firewall-cmd
-      - --permanent
-      - "--zone={{ k3s_firewalld_zone }}"
-      - "--add-port={{ item.item }}"
-  loop: "{{ k3s_firewalld_port_queries.results | default([]) }}"
-  when:
-    - k3s_manage_firewalld_rules | bool
-    - common_manage_firewalld | default(true) | bool
-    - common_firewalld_state | default('started') != 'stopped'
-    - item.rc is defined
-    - item.rc == 1
-  changed_when: true
+    argv: >-
+      {{
+        [
+          '/bin/sh',
+          '-c',
+          'public_zone=$1; trusted_zone=$2; shift 2; status=0; '
+          ~ 'for item; do case "$item" in '
+          ~ 'port:*) value=${item#port:}; '
+          ~ 'if ! firewall-cmd --permanent --zone="$public_zone" --query-port="$value" >/dev/null 2>&1; then '
+          ~ 'if firewall-cmd --permanent --zone="$public_zone" --add-port="$value" >/dev/null; then printf "added:port:%s\n" "$value"; '
+          ~ 'else printf "failed:port:%s\n" "$value" >&2; status=1; fi; fi;; '
+          ~ 'source:*) value=${item#source:}; '
+          ~ 'if ! firewall-cmd --permanent --zone="$trusted_zone" --query-source="$value" >/dev/null 2>&1; then '
+          ~ 'if firewall-cmd --permanent --zone="$trusted_zone" --add-source="$value" >/dev/null; then printf "added:source:%s\n" "$value"; '
+          ~ 'else printf "failed:source:%s\n" "$value" >&2; status=1; fi; fi;; esac; done; exit "$status"',
+          'k3s-firewalld-apply',
+          k3s_firewalld_zone,
+          k3s_firewalld_trusted_zone
+        ]
+        + (k3s_effective_firewalld_ports | default([]) | map('regex_replace', '^(.*)$', 'port:\1') | list)
+        + (k3s_firewalld_trusted_sources | map('regex_replace', '^(.*)$', 'source:\1') | list)
+      }}
+  register: k3s_firewalld_apply
+  changed_when: (k3s_firewalld_apply.stdout_lines | default([]) | length) > 0
+  failed_when: k3s_firewalld_apply.rc != 0
   notify: Reload firewalld
-
-- name: Check K3s trusted firewalld source CIDRs
-  command:
-    argv:
-      - timeout
-      - "{{ common_firewalld_command_timeout | default(20) | string }}"
-      - firewall-cmd
-      - --permanent
-      - "--zone={{ k3s_firewalld_trusted_zone }}"
-      - "--query-source={{ item }}"
-  register: k3s_firewalld_source_queries
-  changed_when: false
-  failed_when: k3s_firewalld_source_queries.rc not in [0, 1]
-  loop: "{{ k3s_firewalld_trusted_sources }}"
   when:
     - k3s_manage_firewalld_rules | bool
     - common_manage_firewalld | default(true) | bool
     - common_firewalld_state | default('started') != 'stopped'
-
-- name: Add K3s trusted firewalld source CIDRs
-  command:
-    argv:
-      - timeout
-      - "{{ common_firewalld_command_timeout | default(20) | string }}"
-      - firewall-cmd
-      - --permanent
-      - "--zone={{ k3s_firewalld_trusted_zone }}"
-      - "--add-source={{ item.item }}"
-  loop: "{{ k3s_firewalld_source_queries.results | default([]) }}"
-  when:
-    - k3s_manage_firewalld_rules | bool
-    - common_manage_firewalld | default(true) | bool
-    - common_firewalld_state | default('started') != 'stopped'
-    - item.rc is defined
-    - item.rc == 1
-  changed_when: true
-  notify: Reload firewalld
 
 # ==================================================
 # 3. K3s configuration
@@ -1182,6 +1141,17 @@
     - k3s_kubectl_access_refresh_required | bool
     - k3s_manage_kubectl_wrapper | bool
 
+- name: Ensure kubectl symlink in /usr/bin for sudo secure_path compatibility
+  file:
+    src: "{{ k3s_kubectl_wrapper_path }}"
+    dest: /usr/bin/kubectl
+    state: link
+    force: true
+  when:
+    - k3s_kubectl_access_refresh_required | bool
+    - k3s_manage_kubectl_wrapper | bool
+    - k3s_kubectl_wrapper_path != "/usr/bin/kubectl"
+
 - name: Query remote user account
   getent:
     database: passwd
@@ -1235,11 +1205,150 @@
     block: |
       export K3S_CONFIG_FILE=/dev/null
       export KUBECONFIG="$HOME/.kube/config"
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      alias {{ k3s_kubectl_alias }}=kubectl 2>/dev/null || true
+      {% endif %}
+      {% if k3s_enable_bash_completion | default(true) | bool %}
+      if [ -r {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }} ]; then
+        source {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}
+      fi
+      if [ -r {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }} ]; then
+        source {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}
+      fi
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      if type __start_kubectl >/dev/null 2>&1; then
+        complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      fi
+      {% endif %}
+      {% endif %}
   when:
     - k3s_kubectl_access_refresh_required | bool
     - k3s_copy_kubeconfig_to_remote_user | bool
     - k3s_manage_remote_user_shell_env | bool
     - ansible_user != "root"
+
+- name: Configure kubectl shell environment for root
+  blockinfile:
+    path: /root/.bashrc
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - K3S KUBECTL ENV"
+    block: |
+      export K3S_CONFIG_FILE=/dev/null
+      export KUBECONFIG="$HOME/.kube/config"
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      alias {{ k3s_kubectl_alias }}=kubectl 2>/dev/null || true
+      {% endif %}
+      {% if k3s_enable_bash_completion | default(true) | bool %}
+      if [ -r {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }} ]; then
+        source {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}
+      fi
+      if [ -r {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }} ]; then
+        source {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}
+      fi
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      if type __start_kubectl >/dev/null 2>&1; then
+        complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      fi
+      {% endif %}
+      {% endif %}
+  when:
+    - k3s_kubectl_access_refresh_required | bool
+    - k3s_manage_remote_user_shell_env | bool
+
+- name: Ensure bash-completion package is installed for K3s
+  package:
+    name: bash-completion
+    state: present
+  when: k3s_enable_bash_completion | default(true) | bool
+  failed_when: false
+  ignore_errors: true
+
+- name: Ensure bash-completion directory exists for K3s
+  file:
+    path: "{{ k3s_bash_completion_dir | default('/etc/bash_completion.d') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: k3s_enable_bash_completion | default(true) | bool
+
+- name: Generate system-wide K3s bash auto-completion
+  command: "{{ k3s_binary_path }} completion bash"
+  register: k3s_bash_completion_raw
+  changed_when: false
+  failed_when: false
+  when: k3s_enable_bash_completion | default(true) | bool
+
+- name: Install system-wide K3s bash auto-completion
+  copy:
+    dest: "{{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}"
+    content: "{{ k3s_bash_completion_raw.stdout }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - k3s_enable_bash_completion | default(true) | bool
+    - k3s_bash_completion_raw is defined
+    - k3s_bash_completion_raw.rc | default(1) == 0
+
+- name: Generate system-wide kubectl bash auto-completion for K3s
+  command: "{{ k3s_binary_path }} kubectl completion bash"
+  register: k3s_kubectl_bash_completion_raw
+  changed_when: false
+  failed_when: false
+  when: k3s_enable_bash_completion | default(true) | bool
+
+- name: Install system-wide kubectl bash auto-completion for K3s
+  copy:
+    dest: "{{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}"
+    content: |
+      {{ k3s_kubectl_bash_completion_raw.stdout }}
+      {% if k3s_kubectl_alias | default('') | length > 0 %}
+      if [[ $(type -t compopt) = "builtin" ]]; then
+          complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      else
+          complete -o default -o nospace -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+      fi
+      {% endif %}
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - k3s_enable_bash_completion | default(true) | bool
+    - k3s_kubectl_bash_completion_raw is defined
+    - k3s_kubectl_bash_completion_raw.rc | default(1) == 0
+
+- name: Configure system-wide K3s environment and auto-completion in profile.d
+  copy:
+    dest: "{{ k3s_profile_d_file | default('/etc/profile.d/k3s.sh') }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      export K3S_CONFIG_FILE=/dev/null
+      if [ -z "${KUBECONFIG:-}" ] && [ -r "$HOME/.kube/config" ]; then
+        export KUBECONFIG="$HOME/.kube/config"
+      fi
+      if [ -n "$BASH_VERSION" ]; then
+        {% if k3s_kubectl_alias | default('') | length > 0 %}
+        alias {{ k3s_kubectl_alias }}=kubectl 2>/dev/null || true
+        {% endif %}
+        if [ -r {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }} ]; then
+          . {{ k3s_bash_completion_k3s_file | default('/etc/bash_completion.d/k3s') }}
+        fi
+        if [ -r {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }} ]; then
+          . {{ k3s_bash_completion_kubectl_file | default('/etc/bash_completion.d/kubectl') }}
+        fi
+        {% if k3s_kubectl_alias | default('') | length > 0 %}
+        if type __start_kubectl >/dev/null 2>&1; then
+          complete -o default -F __start_kubectl {{ k3s_kubectl_alias }} 2>/dev/null || true
+        fi
+        {% endif %}
+      fi
+  when: k3s_enable_bash_completion | default(true) | bool
 
 # ==================================================
 # 6. K3s service and cluster health checks

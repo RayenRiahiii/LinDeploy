@@ -12,6 +12,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconAlertCircle, IconCheck, IconTrash } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 import { getInstallerLogo, type InstallerId } from "../../../features/installers/catalog";
 import { type InstallationTarget, type LaunchResult } from "../types";
 
@@ -22,7 +23,7 @@ type PlatformConflictModalProps = {
   onLaunchConflictCleanup: () => void;
   blockedInstallerLabel: string;
   conflictCleanupLabel: string;
-  conflictCleanupSystem: InstallerId;
+  conflictCleanupSystem: InstallerId | null;
   hasKubernetesIdentityConflict: boolean;
   conflictCleanupTargetIds: number[];
   platformConflictTargets: InstallationTarget[];
@@ -46,11 +47,17 @@ export default function PlatformConflictModal({
   hasConflictCleanupOption,
   result,
 }: PlatformConflictModalProps) {
+  const { t } = useTranslation();
+  const isSameSystem =
+    conflictCleanupLabel.trim().toLowerCase() === blockedInstallerLabel.trim().toLowerCase();
+
   return (
     <Modal
       opened={opened}
       onClose={onClose}
-      title={`Action required before ${blockedInstallerLabel} installation`}
+      title={t("conflictRequiredTitle", "Action required before {{installer}} installation", {
+        installer: blockedInstallerLabel,
+      })}
       size="64rem"
       centered
       closeOnClickOutside={false}
@@ -59,22 +66,39 @@ export default function PlatformConflictModal({
       <Stack gap="lg">
         <Stack gap="md" align="center" className="modal-status-hero">
           <div className="success-logo-shell">
-            <img
-              src={getInstallerLogo(conflictCleanupSystem)}
-              alt={`${conflictCleanupLabel} logo`}
-              className="success-logo"
-            />
+            {conflictCleanupSystem && (
+              <img
+                src={getInstallerLogo(conflictCleanupSystem)}
+                alt={`${conflictCleanupLabel} logo`}
+                className="success-logo"
+              />
+            )}
           </div>
           <div>
             <Title order={2}>
               {hasKubernetesIdentityConflict
-                ? "Kubernetes cluster names cannot be changed in place"
-                : `${conflictCleanupLabel} is already installed`}
+                ? t("conflictClusterNameCannotChange", "Kubernetes cluster names cannot be changed in place")
+                : t("conflictAlreadyInstalled", "{{installer}} is already installed", {
+                    installer: conflictCleanupLabel,
+                  })}
             </Title>
             <Text c="dimmed" size="sm" mt={4}>
               {hasKubernetesIdentityConflict
-                ? "Reset every node in this cluster before reinstalling it with new cluster or node names."
-                : `${blockedInstallerLabel} cannot safely share this target with the existing ${conflictCleanupLabel} cluster.`}
+                ? t(
+                    "conflictResetBeforeRename",
+                    "Reset every node in this cluster before reinstalling it with new cluster or node names."
+                  )
+                : isSameSystem
+                ? t(
+                    "conflictSamePlatformSubtitle",
+                    "An existing {{installer}} cluster is already present on this host. You can choose to keep it or clean it up to install a fresh cluster.",
+                    { installer: conflictCleanupLabel }
+                  )
+                : t(
+                    "conflictCannotShare",
+                    "{{installer}} cannot safely share this target with the existing {{conflict}} cluster.",
+                    { installer: blockedInstallerLabel, conflict: conflictCleanupLabel }
+                  )}
             </Text>
           </div>
         </Stack>
@@ -83,26 +107,54 @@ export default function PlatformConflictModal({
           color="yellow"
           variant="light"
           icon={<IconAlertCircle size={18} />}
-          title={`${blockedInstallerLabel} installation was safely stopped`}
+          title={t("conflictStoppedTitle", "{{installer}} installation was safely stopped", {
+            installer: blockedInstallerLabel,
+          })}
         >
           {hasKubernetesIdentityConflict
-            ? `No rename was attempted. Reset Cluster will target all ${conflictCleanupTargetIds.length} machines from this deployment before the new names are applied.`
-            : `No ${blockedInstallerLabel} system changes were applied to the affected targets. Cleanup ${conflictCleanupLabel} first, then retry the ${blockedInstallerLabel} installation.`}
+            ? t(
+                "conflictStoppedRename",
+                "No rename was attempted. Reset Cluster will target all {{count}} machines from this deployment before the new names are applied.",
+                { count: conflictCleanupTargetIds.length }
+              )
+            : isSameSystem
+            ? t(
+                "conflictSamePlatformAlert",
+                "No system changes were applied to the affected targets. You can clean up the host to perform a fresh install, or keep your existing cluster."
+              )
+            : t(
+                "conflictStoppedCleanup",
+                "No {{installer}} system changes were applied to the affected targets. Cleanup {{conflict}} first, then retry the {{installer}} installation.",
+                { installer: blockedInstallerLabel, conflict: conflictCleanupLabel }
+              )}
         </Alert>
 
         {result?.status === "partial_success" && (
           <Alert color="teal" variant="light" icon={<IconCheck size={18} />}>
-            {blockedInstallerLabel} completed on {succeededResultTargets.length} other target(s). Cleanup will
-            run only on the targets listed below.
+            {t(
+              "conflictPartialSucceeded",
+              "{{installer}} completed on {{count}} other target(s). Cleanup will run only on the targets listed below.",
+              { installer: blockedInstallerLabel, count: succeededResultTargets.length }
+            )}
           </Alert>
         )}
 
         <div>
-          <Title order={4}>Targets requiring {conflictCleanupLabel} cleanup</Title>
+          <Title order={4}>
+            {t("conflictTargetsRequiring", "Targets requiring {{installer}} cleanup", {
+              installer: conflictCleanupLabel,
+            })}
+          </Title>
           <Text size="sm" c="dimmed" mt={4}>
             {hasKubernetesIdentityConflict
-              ? `${conflictCleanupTargetIds.length} cluster target(s) must be reset together.`
-              : `${platformConflictTargets.length} target(s) are blocked by an existing ${conflictCleanupLabel} installation.`}
+              ? t("conflictResetTogether", "{{count}} cluster target(s) must be reset together.", {
+                  count: conflictCleanupTargetIds.length,
+                })
+              : t(
+                  "conflictBlockedBy",
+                  "{{count}} target(s) are blocked by an existing {{installer}} installation.",
+                  { count: platformConflictTargets.length, installer: conflictCleanupLabel }
+                )}
           </Text>
         </div>
 
@@ -112,15 +164,27 @@ export default function PlatformConflictModal({
               <Stack gap="sm">
                 <Group justify="space-between" align="center">
                   <Text fw={700}>{target.host_name}</Text>
-                  <Badge color="yellow" variant="light">{conflictCleanupLabel} detected</Badge>
+                  <Badge color="yellow" variant="light">
+                    {t("conflictDetected", "{{installer}} detected", {
+                      installer: conflictCleanupLabel,
+                    })}
+                  </Badge>
                 </Group>
                 <Text size="sm">
                   {target.operator_issue?.detail ||
-                    `An existing ${conflictCleanupLabel} installation is preventing a safe ${blockedInstallerLabel} deployment.`}
+                    t(
+                      "conflictPreventingDeploy",
+                      "An existing {{installer}} installation is preventing a safe {{blocked}} deployment.",
+                      { installer: conflictCleanupLabel, blocked: blockedInstallerLabel }
+                    )}
                 </Text>
                 {Boolean(target.operator_issue?.artifacts?.length) && (
                   <div className="target-output-panel">
-                    <Text size="sm" fw={600} mb="xs">Detected {conflictCleanupLabel} artifacts</Text>
+                    <Text size="sm" fw={600} mb="xs">
+                      {t("conflictArtifactsDetected", "Detected {{installer}} artifacts", {
+                        installer: conflictCleanupLabel,
+                      })}
+                    </Text>
                     <Stack gap={4}>
                       {target.operator_issue?.artifacts?.map((artifact) => (
                         <Code key={`${target.id}-${artifact}`} block>{artifact}</Code>
@@ -136,18 +200,23 @@ export default function PlatformConflictModal({
           ))}
         </SimpleGrid>
 
-        <Alert color="red" variant="light" title="Cleanup impact">
-          The next step opens the registered {conflictCleanupLabel} cleanup options and explains
-          what will be removed. Cleanup starts only after your confirmation.
+        <Alert color="red" variant="light" title={t("conflictCleanupImpact", "Cleanup impact")}>
+          {t(
+            "conflictCleanupImpactDesc",
+            "The next step opens the registered {{installer}} cleanup options and explains what will be removed. Cleanup starts only after your confirmation.",
+            { installer: conflictCleanupLabel }
+          )}
         </Alert>
 
         <Group justify="space-between" align="center" wrap="wrap">
           <Button variant="subtle" onClick={onViewFullReport}>
-            View full deployment report
+            {t("conflictViewFullReport", "View full deployment report")}
           </Button>
           <Group>
             <Button variant="default" onClick={onClose}>
-              Close
+              {isSameSystem
+                ? t("conflictKeepExistingBtn", "Keep existing cluster")
+                : t("common.close", "Close")}
             </Button>
             <Button
               color="red"
@@ -155,7 +224,11 @@ export default function PlatformConflictModal({
               onClick={onLaunchConflictCleanup}
               disabled={!hasConflictCleanupOption}
             >
-              Cleanup {conflictCleanupLabel}
+              {isSameSystem
+                ? t("conflictCleanupAndReinstallBtn", "Cleanup & Reinstall")
+                : t("conflictCleanupBtn", "Cleanup {{installer}}", {
+                    installer: conflictCleanupLabel,
+                  })}
             </Button>
           </Group>
         </Group>
@@ -163,4 +236,3 @@ export default function PlatformConflictModal({
     </Modal>
   );
 }
-

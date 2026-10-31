@@ -16,6 +16,7 @@ import {
   type ExecutionStage,
   formatPhaseLabel as formatExecutionPhaseLabel,
 } from "../../features/executions/presentation";
+import i18n from "../../i18n";
 
 export const stageMap: ExecutionStage[] = [
   {
@@ -59,8 +60,54 @@ export const pipelineStageMap: ExecutionStage[] = stageMap.filter(
   (stage) => stage.phase !== "failed" && stage.phase !== "cancelled"
 );
 
+export function getLocalizedStageMap(): ExecutionStage[] {
+  return [
+    {
+      phase: "queued",
+      label: i18n.t("monitor.stages.queuedLabel", "Queued for execution"),
+      detail: i18n.t("monitor.stages.queuedDetail", "The request is stored and waiting for the worker to start the installation task."),
+    },
+    {
+      phase: "ssh_check",
+      label: i18n.t("monitor.stages.sshCheckLabel", "Verifying SSH connectivity"),
+      detail: i18n.t("monitor.stages.sshCheckDetail", "The backend is building inventory and validating access to each selected machine."),
+    },
+    {
+      phase: "running_playbook",
+      label: i18n.t("monitor.stages.runningPlaybookLabel", "Running Ansible playbook"),
+      detail: i18n.t("monitor.stages.runningPlaybookDetail", "Node preparation, runtime configuration, and cluster bootstrap tasks are currently executing."),
+    },
+    {
+      phase: "finalizing",
+      label: i18n.t("monitor.stages.finalizingLabel", "Finalizing result"),
+      detail: i18n.t("monitor.stages.finalizingDetail", "The backend is collecting logs, timings, and final Ansible status."),
+    },
+    {
+      phase: "completed",
+      label: i18n.t("monitor.stages.completedLabel", "Completed"),
+      detail: i18n.t("monitor.stages.completedDetail", "The installation finished successfully and the final output is stored."),
+    },
+    {
+      phase: "failed",
+      label: i18n.t("monitor.stages.failedLabel", "Failed"),
+      detail: i18n.t("monitor.stages.failedDetail", "The installation stopped with an error. Inspect the captured output below."),
+    },
+    {
+      phase: "cancelled",
+      label: i18n.t("monitor.stages.cancelledLabel", "Cancelled"),
+      detail: i18n.t("monitor.stages.cancelledDetail", "The installation was stopped by the user before completion."),
+    },
+  ];
+}
+
+export function getLocalizedPipelineStageMap(): ExecutionStage[] {
+  return getLocalizedStageMap().filter(
+    (stage) => stage.phase !== "failed" && stage.phase !== "cancelled"
+  );
+}
+
 export function formatPhaseLabel(phase?: string) {
-  return formatExecutionPhaseLabel(stageMap, phase);
+  return formatExecutionPhaseLabel(getLocalizedStageMap(), phase);
 }
 
 
@@ -97,106 +144,127 @@ export function getExecutionPresentation(
   installerLabel?: string,
   isResetExecution?: boolean
 ) {
-  const actionLabel = isResetExecution ? "Cluster reset" : isCleanupExecution ? "Cleanup" : "Installation";
+  const actionLabel = isResetExecution
+    ? i18n.t("results.clusterReset", "Cluster reset")
+    : isCleanupExecution
+      ? i18n.t("results.cleanup", "Cleanup")
+      : i18n.t("results.installation", "Installation");
 
   if (status === "cancelled") {
     return {
-      title: `${actionLabel} cancelled`,
-      summary: `${actionLabel} was stopped before completing. Selected hosts were released.`,
+      title: i18n.t("results.actionCancelledTitle", { action: actionLabel, defaultValue: `${actionLabel} cancelled` }),
+      summary: i18n.t("results.actionCancelledSummary", { action: actionLabel, defaultValue: `${actionLabel} was stopped before completing. Selected hosts were released.` }),
       recommendation: isCleanupExecution
-        ? "Review host state and rerun cleanup if needed before starting a new deployment."
-        : "Run cluster cleanup or reset before initiating another installation on these hosts.",
+        ? i18n.t("results.actionCancelledCleanupRec", "Review host state and rerun cleanup if needed before starting a new deployment.")
+        : i18n.t("results.actionCancelledInstallRec", "Run cluster cleanup or reset before initiating another installation on these hosts."),
     };
   }
 
   if (isResetExecution && status === "failed") {
     return {
-      title: "Cluster reset failed",
-      summary: "The cluster reset playbook encountered errors before clearing state on all targets.",
-      recommendation: "Inspect host logs, resolve blocking resources or locks, then retry the reset.",
+      title: i18n.t("results.resetFailedTitle", "Cluster reset failed"),
+      summary: i18n.t("results.resetFailedSummary", "The cluster reset playbook encountered errors before clearing state on all targets."),
+      recommendation: i18n.t("results.resetFailedRec", "Inspect host logs, resolve blocking resources or locks, then retry the reset."),
     };
   }
 
   if (isResetExecution && status === "partial_success") {
     return {
-      title: "Cluster reset completed with issues",
-      summary: "Cluster reset succeeded on some hosts, but others could not be cleared.",
-      recommendation: "Review the failed hosts and retry reset only on affected targets.",
+      title: i18n.t("results.resetPartialTitle", "Cluster reset completed with issues"),
+      summary: i18n.t("results.resetPartialSummary", "Cluster reset succeeded on some hosts, but others could not be cleared."),
+      recommendation: i18n.t("results.resetPartialRec", "Review the failed hosts and retry reset only on affected targets."),
     };
   }
 
   if (isResetExecution) {
     return {
-      title: "Cluster reset completed successfully",
-      summary: "Cluster state and CNI artifacts were removed. System packages are preserved for faster reinstall.",
-      recommendation: "Hosts are ready for a clean deployment of the same platform.",
+      title: i18n.t("results.resetSuccessTitle", "Cluster reset completed successfully"),
+      summary: i18n.t("results.resetSuccessSummary", "Cluster state and CNI artifacts were removed. System packages are preserved for faster reinstall."),
+      recommendation: i18n.t("results.resetSuccessRec", "Hosts are ready for a clean deployment of the same platform."),
     };
   }
 
   if (isCleanupExecution && status === "failed") {
     return {
-      title: "Cleanup failed",
-      summary: "The cleanup workflow stopped before the selected target state was fully removed.",
-      recommendation: "Review each affected host below, correct the reported issue, then retry cleanup only on those targets.",
+      title: i18n.t("results.cleanupFailedTitle", "Cleanup failed"),
+      summary: i18n.t("results.cleanupFailedSummary", "The cleanup workflow stopped before the selected target state was fully removed."),
+      recommendation: i18n.t("results.cleanupFailedRec", "Review each affected host below, correct the reported issue, then retry cleanup only on those targets."),
     };
   }
 
   if (isCleanupExecution && status === "partial_success") {
     return {
-      title: "Cleanup completed with issues",
-      summary: "Cleanup succeeded on at least one target, but other machines still require attention.",
-      recommendation: "Validate cleaned hosts and retry only the targets that remain in a failed state.",
+      title: i18n.t("results.cleanupPartialTitle", "Cleanup completed with issues"),
+      summary: i18n.t("results.cleanupPartialSummary", "Cleanup succeeded on at least one target, but other machines still require attention."),
+      recommendation: i18n.t("results.cleanupPartialRec", "Validate cleaned hosts and retry only the targets that remain in a failed state."),
     };
   }
 
   if (isCleanupExecution) {
     return {
-      title: "Cleanup completed successfully",
-      summary:
-        "The cleanup workflow finished successfully and the selected target state was removed without blocking errors.",
-      recommendation:
-        "Run the post-cleanup checks on the processed hosts to confirm that cluster state and runtime artifacts were removed as expected.",
+      title: i18n.t("results.cleanupSuccessTitle", "Cleanup completed successfully"),
+      summary: i18n.t(
+        "results.cleanupSuccessSummary",
+        "The cleanup workflow finished successfully and the selected target state was removed without blocking errors."
+      ),
+      recommendation: i18n.t(
+        "results.cleanupSuccessRec",
+        "Run the post-cleanup checks on the processed hosts to confirm that cluster state and runtime artifacts were removed as expected."
+      ),
     };
   }
 
   if (status === "partial_success") {
     return {
-      title: "Installation completed with partial success",
-      summary:
-        "At least one selected target completed successfully, but one or more hosts still require operator intervention.",
-      recommendation:
-        "Review the failed hosts first, correct the reported issue, then retry only the affected targets.",
+      title: i18n.t("results.installPartialTitle", "Installation completed with partial success"),
+      summary: i18n.t(
+        "results.installPartialSummary",
+        "At least one selected target completed successfully, but one or more hosts still require operator intervention."
+      ),
+      recommendation: i18n.t(
+        "results.installPartialRec",
+        "Review the failed hosts first, correct the reported issue, then retry only the affected targets."
+      ),
     };
   }
 
   if (status === "failed") {
     return {
-      title: "Installation failed",
-      summary:
-        "The workflow did not reach a successful final state on the selected targets.",
-      recommendation:
-        "Use the host-level output below to identify the root cause before retrying.",
+      title: i18n.t("results.installFailedTitle", "Installation failed"),
+      summary: i18n.t(
+        "results.installFailedSummary",
+        "The workflow did not reach a successful final state on the selected targets."
+      ),
+      recommendation: i18n.t(
+        "results.installFailedRec",
+        "Use the host-level output below to identify the root cause before retrying."
+      ),
     };
   }
 
   return {
-    title: "Installation completed successfully",
-    summary: `${installerLabel || "The selected installer"} completed successfully and the target nodes should now be ready for validation.`,
-    recommendation:
-      "Run the validation commands on each successful host, then proceed with workload onboarding.",
+    title: i18n.t("results.installSuccessTitle", "Installation completed successfully"),
+    summary: i18n.t("results.installSuccessSummary", {
+      installer: installerLabel || "The selected installer",
+      defaultValue: `${installerLabel || "The selected installer"} completed successfully and the target nodes should now be ready for validation.`,
+    }),
+    recommendation: i18n.t(
+      "results.installSuccessRec",
+      "Run the validation commands on each successful host, then proceed with workload onboarding."
+    ),
   };
 }
 
 export function getFailureStage(message?: string): string {
   const normalized = (message || "").toLowerCase();
-  if (normalized.includes("baseline detection")) return "Target eligibility check";
-  if (normalized.includes("ssh") || normalized.includes("unreachable")) return "SSH connectivity";
-  if (normalized.includes("cleanup")) return "Cleanup launch";
-  if (normalized.includes("inventory")) return "Inventory generation";
+  if (normalized.includes("baseline detection")) return i18n.t("results.stageBaseline", "Target eligibility check");
+  if (normalized.includes("ssh") || normalized.includes("unreachable")) return i18n.t("results.stageSsh", "SSH connectivity");
+  if (normalized.includes("cleanup")) return i18n.t("results.stageCleanup", "Cleanup launch");
+  if (normalized.includes("inventory")) return i18n.t("results.stageInventory", "Inventory generation");
   if (normalized.includes("bootstrap") || normalized.includes("rendezvous") || normalized.includes("agent_install")) return "OpenShift Agent bootstrap";
   if (normalized.includes("target_boot") || normalized.includes("discovery iso") || normalized.includes("running vm")) return "Target VM Boot";
   if (normalized.includes("mirror") || normalized.includes("dns") || normalized.includes("preflight")) return "Preflight verification";
-  return "Playbook launch or execution";
+  return i18n.t("results.stagePlaybook", "Playbook launch or execution");
 }
 
 export function getPrecheckPresentation(precheck?: PrecheckResult | null) {
@@ -204,21 +272,29 @@ export function getPrecheckPresentation(precheck?: PrecheckResult | null) {
 
   if (failedHosts === 0) {
     return {
-      title: "SSH verification completed successfully",
-      summary:
-        "All selected targets accepted the SSH validation and are ready for playbook execution.",
-      recommendation:
-        "You can start the installation now. Keep this report for traceability if needed.",
+      title: i18n.t("results.precheckSuccessTitle", "SSH verification completed successfully"),
+      summary: i18n.t(
+        "results.precheckSuccessSummary",
+        "All selected targets accepted the SSH validation and are ready for playbook execution."
+      ),
+      recommendation: i18n.t(
+        "results.precheckSuccessRec",
+        "You can start the installation now. Keep this report for traceability if needed."
+      ),
       color: "teal" as const,
     };
   }
 
   return {
-    title: "SSH verification completed with issues",
-    summary:
-      "At least one selected target failed the SSH validation. Healthy hosts are still identified below.",
-    recommendation:
-      "Correct SSH access, privilege escalation, or network reachability on the failing hosts before retrying them.",
+    title: i18n.t("results.precheckIssuesTitle", "SSH verification completed with issues"),
+    summary: i18n.t(
+      "results.precheckIssuesSummary",
+      "At least one selected target failed the SSH validation. Healthy hosts are still identified below."
+    ),
+    recommendation: i18n.t(
+      "results.precheckIssuesRec",
+      "Correct SSH access, privilege escalation, or network reachability on the failing hosts before retrying them."
+    ),
     color: "yellow" as const,
   };
 }

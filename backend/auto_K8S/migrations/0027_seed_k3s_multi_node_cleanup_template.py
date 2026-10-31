@@ -38,3 +38,4 @@ class Migration(migrations.Migration):
             unseed_k3s_multi_node_cleanup_template,
         ),
     ]
+

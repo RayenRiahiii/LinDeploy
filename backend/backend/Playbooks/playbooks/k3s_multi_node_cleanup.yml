@@ -51,8 +51,10 @@
       failed_when: false
 
     - name: Cordon and delete worker nodes from cluster API
-      shell: |
-        timeout 10s /usr/local/bin/k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml delete node {{ hostvars[item].lindeploy_node_name | default(item) }} --ignore-not-found --timeout=5s </dev/null >/dev/null 2>&1 || true
+      command: >-
+        /usr/local/bin/k3s kubectl --kubeconfig=/etc/rancher/k3s/k3s.yaml
+        delete node {{ hostvars[item].lindeploy_node_name | default(item) }}
+        --ignore-not-found --timeout=15s
       loop: "{{ groups.get('workers', []) }}"
       when:
         - k3s_multi_cleanup_apiserver_check is succeeded
@@ -64,7 +66,7 @@
   hosts: workers
   become: true
   gather_facts: false
-  strategy: free
+  strategy: linear
   any_errors_fatal: true
   vars_files:
     - ../vars/release_k3s_v1.36.3.yml
@@ -76,7 +78,7 @@
   hosts: "control_plane:!bootstrap"
   become: true
   gather_facts: false
-  strategy: free
+  strategy: linear
   any_errors_fatal: true
   vars_files:
     - ../vars/release_k3s_v1.36.3.yml

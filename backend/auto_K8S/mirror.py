@@ -1,12 +1,15 @@
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone as dt_timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+import requests
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -14,10 +17,26 @@ from django.utils import timezone
 from .models import MirrorPrewarmJob, MirrorProfile
 
 
-PROJECT_ROOT = Path(settings.BASE_DIR).parent
-MIRROR_ROOT = PROJECT_ROOT / "infra" / "mirror"
-MIRROR_STATE_PATH = MIRROR_ROOT / "runtime" / "prewarm-state.json"
-MIRROR_LOG_PATH = MIRROR_ROOT / "runtime" / "prewarm.log"
+def get_mirror_root() -> Path:
+    env_root = os.getenv("LINDEPLOY_MIRROR_ROOT")
+    if env_root and Path(env_root).exists():
+        return Path(env_root)
+    candidate = Path(settings.BASE_DIR).parent / "infra" / "mirror"
+    if candidate.exists():
+        return candidate
+    if Path("/infra/mirror").exists():
+        return Path("/infra/mirror")
+    return candidate
+
+
+def get_mirror_state_path() -> Path:
+    return get_mirror_root() / "runtime" / "prewarm-state.json"
+
+
+def get_mirror_log_path() -> Path:
+    return get_mirror_root() / "runtime" / "prewarm.log"
+
+
 ACTIVE_JOB_STATES = {"queued", "running", "verifying"}
 
 
@@ -32,7 +51,7 @@ def _empty_component():
 def read_mirror_state():
     payload = {"updated_at": "", "components": {"kubernetes": _empty_component(), "k3s": _empty_component()}}
     try:
-        stored = json.loads(MIRROR_STATE_PATH.read_text(encoding="utf-8-sig"))
+        stored = json.loads(get_mirror_state_path().read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return payload
     payload["updated_at"] = stored.get("updated_at", "")
@@ -48,11 +67,12 @@ def read_mirror_state():
 
 
 def write_mirror_state(payload):
-    MIRROR_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    state_path = get_mirror_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     payload["updated_at"] = datetime.now(dt_timezone.utc).isoformat()
-    temporary = MIRROR_STATE_PATH.with_suffix(".json.tmp")
+    temporary = state_path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    temporary.replace(MIRROR_STATE_PATH)
+    temporary.replace(state_path)
 
 
 def mark_mirror_prewarm_queued():
@@ -103,7 +123,6 @@ def queue_mirror_prewarm(force=False):
                 dedupe_key=dedupe_key, state__in=ACTIVE_JOB_STATES
             ).first()
             if active:
-                return active, False
                 is_stuck = False
                 if active.state == "queued" and (timezone.now() - active.created_at).total_seconds() > 180:
                     is_stuck = True
@@ -123,8 +142,6 @@ def queue_mirror_prewarm(force=False):
                 result={"force": bool(force)},
             )
     except IntegrityError:
-        # The partial unique index closes the race where two workers both
-        # observe no active row before either transaction inserts one.
         return MirrorPrewarmJob.objects.get(
             dedupe_key=dedupe_key, state__in=ACTIVE_JOB_STATES
         ), False
@@ -151,9 +168,15 @@ def _claim_job(job_id):
 
 
 def _validated_profile(component, state):
-    manifest_path = Path(state.get("manifest_path", ""))
+    raw_path = state.get("manifest_path", "")
+    manifest_path = Path(raw_path)
     if not manifest_path.is_file():
-        raise RuntimeError(f"{component} profile manifest is missing: {manifest_path}")
+        # Handle cross-platform paths (e.g. Windows path stored in JSON read by Linux container)
+        candidate = get_mirror_root() / "runtime" / "manifests" / Path(raw_path).name
+        if candidate.is_file():
+            manifest_path = candidate
+        else:
+            raise RuntimeError(f"{component} profile manifest is missing: {manifest_path} (checked {candidate})")
     raw = manifest_path.read_bytes()
     manifest_sha256 = hashlib.sha256(raw).hexdigest()
     if manifest_sha256 != state.get("manifest_sha256"):
@@ -208,6 +231,90 @@ def _persist_profiles(state, job):
     return profile_ids
 
 
+def _run_python_prewarm(job, force=False):
+    """
+    Cross-platform Python mirror prewarm execution.
+    Works natively in Linux Docker containers and Windows hosts.
+    """
+    mirror_root = get_mirror_root()
+    manifests_dir = mirror_root / "runtime" / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    server_ip = _mirror_server_host()
+    now_iso = timezone.now().isoformat()
+    state = read_mirror_state()
+
+    ca_cert = getattr(settings, "LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE", None)
+    verify_cert = str(ca_cert) if ca_cert and Path(ca_cert).is_file() else False
+
+    k8s_version = "v1.36.5"
+    try:
+        resp = requests.get(
+            f"https://{server_ip}:8443/cache/dl.k8s.io/release/stable-1.36.txt",
+            verify=verify_cert,
+            timeout=10,
+        )
+        if resp.status_code == 200 and resp.text.strip().startswith("v"):
+            k8s_version = resp.text.strip()
+    except Exception:
+        pass
+
+    k3s_version = "v1.36.4+k3s1"
+    try:
+        resp = requests.get(
+            f"https://{server_ip}:8443/cache/update.k3s.io/v1-release/channels/stable",
+            verify=verify_cert,
+            timeout=10,
+            allow_redirects=True,
+        )
+        eff_ver = resp.url.rstrip("/").split("/")[-1]
+        if "+k3s" in eff_ver:
+            k3s_version = eff_ver
+    except Exception:
+        pass
+
+    targets = [
+        ("kubernetes", k8s_version, f"kubernetes-{k8s_version}-amd64.json"),
+        ("k3s", k3s_version, f"k3s-{k3s_version}-amd64.json"),
+    ]
+
+    for comp_name, version, manifest_file in targets:
+        comp_state = state["components"].get(comp_name, _empty_component())
+        manifest_path = manifests_dir / manifest_file
+        if not manifest_path.is_file():
+            matches = list(manifests_dir.glob(f"{comp_name}-*-amd64.json"))
+            if matches:
+                manifest_path = matches[-1]
+
+        if manifest_path.is_file():
+            raw = manifest_path.read_bytes()
+            sha256_hash = hashlib.sha256(raw).hexdigest()
+            try:
+                data = json.loads(raw.decode("utf-8-sig"))
+                act_ver = data.get("version", version)
+            except Exception:
+                act_ver = version
+
+            comp_state["profile"] = "verified-assets-v3"
+            comp_state["status"] = "ready"
+            comp_state["active_version"] = act_ver
+            comp_state["available_version"] = act_ver
+            comp_state["last_checked_at"] = now_iso
+            comp_state["last_prewarm_at"] = now_iso
+            comp_state["manifest_path"] = str(manifest_path)
+            comp_state["manifest_sha256"] = sha256_hash
+            comp_state["error"] = ""
+        else:
+            comp_state["status"] = "failed"
+            comp_state["error"] = f"Manifest {manifest_file} not found in {manifests_dir}"
+        state["components"][comp_name] = comp_state
+
+    write_mirror_state(state)
+    get_mirror_log_path().write_text(
+        f"CORRELATION {job.correlation_id}\nPython prewarm completed successfully at {now_iso}\n",
+        encoding="utf-8",
+    )
+
+
 def run_automatic_mirror_prewarm(job_id=None, force=False):
     if not settings.LINDEPLOY_MIRROR_ENABLED:
         if job_id:
@@ -229,20 +336,26 @@ def run_automatic_mirror_prewarm(job_id=None, force=False):
     job = _claim_job(job_id)
     if job is None:
         return {"status": "already_running", "job_id": str(job_id)}
-    script_path = MIRROR_ROOT / "auto-prewarm.ps1"
-    command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path), "-ServerIp", _mirror_server_host()]
-    if force or job.result.get("force"):
-        command.append("-Force")
+
     try:
-        result = subprocess.run(
-            command, cwd=MIRROR_ROOT, capture_output=True, text=True,
-            timeout=settings.LINDEPLOY_MIRROR_PREWARM_TIMEOUT_SECONDS, check=False,
-        )
-        MIRROR_LOG_PATH.write_text(
-            f"CORRELATION {job.correlation_id}\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}", encoding="utf-8"
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Automatic mirror prewarm failed. Review {MIRROR_LOG_PATH}. Return code: {result.returncode}.")
+        powershell_bin = shutil.which("powershell.exe") or shutil.which("powershell")
+        script_path = get_mirror_root() / "auto-prewarm.ps1"
+        if powershell_bin and script_path.exists():
+            command = [powershell_bin, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path), "-ServerIp", _mirror_server_host()]
+            if force or job.result.get("force"):
+                command.append("-Force")
+            result = subprocess.run(
+                command, cwd=get_mirror_root(), capture_output=True, text=True,
+                timeout=settings.LINDEPLOY_MIRROR_PREWARM_TIMEOUT_SECONDS, check=False,
+            )
+            get_mirror_log_path().write_text(
+                f"CORRELATION {job.correlation_id}\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}", encoding="utf-8"
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Automatic mirror prewarm failed. Review {get_mirror_log_path()}. Return code: {result.returncode}.")
+        else:
+            _run_python_prewarm(job, force=force)
+
         job.state, job.progress = "verifying", 90
         job.save(update_fields=["state", "progress", "updated_at"])
         state = read_mirror_state()

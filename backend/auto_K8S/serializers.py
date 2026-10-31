@@ -90,44 +90,51 @@ def extract_host_failure_context(target: InstallationTarget) -> str:
 
 
 def classify_installation_target_issue(target: InstallationTarget):
-    if target.status != InstallationTarget.Status.FAILED:
+    if target.status not in (
+        InstallationTarget.Status.FAILED,
+        InstallationTarget.Status.CANCELLED,
+    ):
         return None
 
     failure_context = extract_host_failure_context(target)
     issue_definition = None
     artifact_stop_marker = None
 
-    if "K3s installation artifacts are still present" in failure_context:
+    if (
+        "K3s installation artifacts are still present" in failure_context
+        or "an existing K3s cluster is already present" in failure_context
+    ):
         issue_definition = {
             "code": "k3s_conflict",
             "title": "K3s is already installed",
             "detail": (
-                "Kubernetes was not installed on this target because an existing K3s "
-                "installation owns conflicting cluster services and files."
+                "An existing K3s installation was detected on this target. "
+                "LinDeploy safely stopped the installation to prevent cluster corruption and port conflicts."
             ),
             "recommended_action": (
-                "Run the K3s cleanup workflow on this target, then retry the Kubernetes installation."
+                "Run the K3s cleanup workflow on this target to install a clean cluster, or keep the existing cluster."
             ),
             "cleanup_system": InstallationTemplate.SystemType.K3S,
         }
-        artifact_stop_marker = "No Kubernetes system changes"
+        artifact_stop_marker = "No"
     elif (
         "Kubernetes installation artifacts are still present" in failure_context
+        or "an existing Kubernetes cluster is already present" in failure_context
         or "K3s requires a clean target host. Conflicting artifacts were detected" in failure_context
     ):
         issue_definition = {
             "code": "kubernetes_conflict",
             "title": "Kubernetes is already installed",
             "detail": (
-                "K3s was not installed on this target because an existing Kubernetes "
-                "installation owns conflicting cluster services and files."
+                "An existing Kubernetes installation was detected on this target. "
+                "LinDeploy safely stopped the installation to prevent cluster corruption and port conflicts."
             ),
             "recommended_action": (
-                "Run the Kubernetes cleanup workflow on this target, then retry the K3s installation."
+                "Run the Kubernetes cleanup workflow on this target to install a clean cluster, or keep the existing cluster."
             ),
             "cleanup_system": InstallationTemplate.SystemType.KUBERNETES,
         }
-        artifact_stop_marker = "No K3s system changes"
+        artifact_stop_marker = "No"
     elif "Existing Kubernetes cluster identity does not match" in failure_context:
         issue_definition = {
             "code": "kubernetes_identity_conflict",

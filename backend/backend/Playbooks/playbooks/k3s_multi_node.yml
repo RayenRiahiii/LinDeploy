@@ -15,32 +15,13 @@
           at least one agent (worker), and exactly one bootstrap host that also
           belongs to the control-plane group.
 
-- name: Prepare K3s multi-node hosts
+- name: Probe conflicting platform artifacts on K3s multi-node hosts
   hosts: selected_hosts
   become: true
   gather_facts: false
   strategy: linear
   any_errors_fatal: true
-  vars_files:
-    - ../vars/release_k3s_v1.36.3.yml
-  vars:
-    common_selinux_mode: enforcing
-    common_firewalld_enabled: true
-    common_firewalld_state: started
-    common_firewalld_ports:
-      - 6443/tcp
-      - 10250/tcp
-      - 2379/tcp
-      - 2380/tcp
-      - 8472/udp
-      - 51820/udp
-    common_firewalld_sources: >-
-      {{
-        [k3s_cluster_cidr | default('10.42.0.0/16'), k3s_service_cidr | default('10.43.0.0/16')]
-        + (groups.get('selected_hosts', []) | map('extract', hostvars, 'ansible_host') | list)
-      }}
-
-  pre_tasks:
+  tasks:
     - name: Probe conflicting Kubernetes installation artifacts
       command:
         argv:
@@ -74,6 +55,65 @@
           No K3s system changes were applied.
       when: k3s_k8s_conflict_artifacts.stdout_lines | length > 0
 
+    - name: Probe conflicting existing K3s installation artifacts
+      command:
+        argv:
+          - /bin/sh
+          - -c
+          - |
+            for path; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                printf '%s\n' "$path"
+              fi
+            done
+          - k3s-existing-check
+          - /usr/local/bin/k3s
+          - /etc/rancher/k3s/k3s.yaml
+          - /etc/systemd/system/k3s.service
+          - /var/lib/rancher/k3s/server
+      register: k3s_existing_conflict_artifacts
+      changed_when: false
+      when: k3s_fail_on_existing_cluster | default(true) | bool
+
+    - name: Refuse K3s installation while K3s is already present
+      fail:
+        msg: >-
+          K3s cannot be installed on {{ inventory_hostname }} because an
+          existing K3s cluster is already present on this host. Run the
+          K3s cleanup workflow on this target, verify that K3s is removed,
+          and retry the installation. Detected artifacts:
+          {{ k3s_existing_conflict_artifacts.stdout_lines | join(', ') }}.
+          No K3s system changes were applied.
+      when:
+        - k3s_fail_on_existing_cluster | default(true) | bool
+        - (k3s_existing_conflict_artifacts.stdout_lines | default([]) | length) > 0
+
+- name: Prepare K3s multi-node hosts
+  hosts: selected_hosts
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/release_k3s_v1.36.3.yml
+  vars:
+    common_selinux_mode: enforcing
+    common_firewalld_enabled: true
+    common_firewalld_state: started
+    common_firewalld_ports:
+      - 6443/tcp
+      - 10250/tcp
+      - 2379/tcp
+      - 2380/tcp
+      - 8472/udp
+      - 51820/udp
+    common_firewalld_sources: >-
+      {{
+        [k3s_cluster_cidr | default('10.42.0.0/16'), k3s_service_cidr | default('10.43.0.0/16')]
+        + (groups.get('selected_hosts', []) | map('extract', hostvars, 'ansible_host') | list)
+      }}
+
+  pre_tasks:
     - name: Gather minimal installation facts
       setup:
         gather_subset:

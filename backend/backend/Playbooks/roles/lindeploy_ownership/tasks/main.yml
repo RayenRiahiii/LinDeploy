@@ -81,9 +81,11 @@
       - lindeploy_ownership_existing.platform == lindeploy_ownership_platform
       - >-
         lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
+        or (lindeploy_ownership_existing.state | default('') == 'cleaned')
         or lindeploy_ownership_existing.target_id == (lindeploy_target_id | string)
       - >-
         lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
+        or (lindeploy_ownership_existing.state | default('') == 'cleaned')
         or lindeploy_ownership_existing.cluster_id == (lindeploy_ownership_cluster_id | string)
       - lindeploy_ownership_existing.machine_id == lindeploy_ownership_machine_id
       - lindeploy_ownership_existing.system_uuid == lindeploy_ownership_system_uuid

@@ -32,6 +32,7 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import lindeployLogoDark from "../assets/darkmodeLogo.png";
 import { useAuth } from "../context/AuthContext";
 import LanguageSelector from "../components/common/LanguageSelector";
@@ -72,6 +73,7 @@ type LoginPageProps = {
 };
 
 export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPageProps) {
+  const { t } = useTranslation();
   const { loginWithGoogle, loginWithPassword, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -93,8 +95,12 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
       password: "",
     },
     validate: {
-      usernameOrEmail: (val) => (val.trim().length === 0 ? "Username or email is required" : null),
-      password: (val) => (val.length === 0 ? "Password is required" : null),
+      usernameOrEmail: (val) =>
+        val.trim().length === 0
+          ? t("auth.usernameOrEmailRequired", "Username or email is required")
+          : null,
+      password: (val) =>
+        val.length === 0 ? t("auth.passwordRequired", "Password is required") : null,
     },
   });
 
@@ -107,14 +113,16 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
 
     if (result.success) {
       notifications.show({
-        title: "Welcome to LinDeploy",
-        message: "Authentication successful.",
+        title: t("auth.welcomeTitle", "Welcome to LinDeploy"),
+        message: t("auth.loginSuccess", "Authentication successful."),
         color: "teal",
         icon: <IconCheck size={18} />,
       });
       navigate(from, { replace: true });
     } else {
-      setErrorMessage(result.error || "Authentication failed. Check your credentials.");
+      setErrorMessage(
+        result.error || t("auth.loginFailedDefault", "Authentication failed. Check your credentials.")
+      );
     }
   };
 
@@ -150,14 +158,16 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
 
               if (res.success) {
                 notifications.show({
-                  title: "Single Sign-On Successful",
-                  message: "Logged in with your Google account.",
+                  title: t("auth.ssoSuccessTitle", "Single Sign-On Successful"),
+                  message: t("auth.ssoSuccessMessage", "Logged in with your Google account."),
                   color: "teal",
                   icon: <IconCheck size={18} />,
                 });
                 navigate(from, { replace: true });
               } else {
-                setErrorMessage(res.error || "Google authentication failed.");
+                setErrorMessage(
+                  res.error || t("auth.ssoFailedDefault", "Google authentication failed.")
+                );
               }
             }
           },
@@ -185,7 +195,7 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
       }, 100);
       return () => clearInterval(interval);
     }
-  }, [colorScheme, from, loginWithGoogle, navigate]);
+  }, [colorScheme, from, loginWithGoogle, navigate, t]);
 
   const isDark = colorScheme === "dark";
 
@@ -199,7 +209,12 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
         color: isDark ? "#e6edf3" : "#1f2328",
       }}
     >
-      <Group justify="space-between" px="xl" py="sm" style={{ borderBottom: `1px solid ${isDark ? "#1f242d" : "#e1e4e8"}` }}>
+      <Group
+        justify="space-between"
+        px="xl"
+        py="sm"
+        style={{ borderBottom: `1px solid ${isDark ? "#1f242d" : "#e1e4e8"}` }}
+      >
         <Group gap="xs">
           <ThemeIcon size={24} radius="sm" color="red" variant="filled">
             <IconServer size={14} />
@@ -211,7 +226,13 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
 
         <Group gap="sm">
           <LanguageSelector />
-          <Tooltip label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}>
+          <Tooltip
+            label={
+              isDark
+                ? t("topbar.switchToLight", "Switch to light mode")
+                : t("topbar.switchToDark", "Switch to dark mode")
+            }
+          >
             <ActionIcon
               variant="default"
               size="md"
@@ -267,11 +288,17 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                 </Box>
 
                 <Box style={{ borderLeft: "3px solid #EE0000", paddingLeft: "1rem" }}>
-                  <Title order={2} style={{ fontSize: "1.55rem", fontWeight: 700, color: "#ffffff", lineHeight: 1.3 }}>
-                    Deploy Kubernetes, K3s & OpenShift
+                  <Title
+                    order={2}
+                    style={{ fontSize: "1.55rem", fontWeight: 700, color: "#ffffff", lineHeight: 1.3 }}
+                  >
+                    {t("auth.heroTitle", "Deploy Kubernetes, K3s & OpenShift")}
                   </Title>
                   <Text size="sm" c="dimmed" mt="xs" style={{ color: "#9ca3af" }}>
-                    Automated cluster deployment engine for Kubernetes, lightweight K3s, and OpenShift SNO on bare-metal and virtual machines.
+                    {t(
+                      "auth.heroDesc",
+                      "Automated cluster deployment engine for Kubernetes, lightweight K3s, and OpenShift SNO on bare-metal and virtual machines."
+                    )}
                   </Text>
                 </Box>
               </Stack>
@@ -282,11 +309,14 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                     <IconShieldLock size={12} />
                   </ThemeIcon>
                   <Text size="xs" fw={600} style={{ color: "#d1d5db" }}>
-                    Automated Playbooks & Live Monitoring
+                    {t("auth.heroFeatureTitle", "Automated Playbooks & Live Monitoring")}
                   </Text>
                 </Group>
                 <Text size="xs" style={{ color: "#6b7280" }}>
-                  Run preflight checks, execute multi-node Ansible playbooks, and track cluster deployment progress in real time.
+                  {t(
+                    "auth.heroFeatureDesc",
+                    "Run preflight checks, execute multi-node Ansible playbooks, and track cluster deployment progress in real time."
+                  )}
                 </Text>
               </Stack>
             </Grid.Col>
@@ -296,23 +326,31 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                 <Box>
                   <Group justify="space-between" align="baseline">
                     <Title order={2} style={{ fontWeight: 700, letterSpacing: -0.3 }}>
-                      Log in to LinDeploy
+                      {t("auth.loginTitle", "Sign in to LinDeploy")}
                     </Title>
                   </Group>
                   <Text size="sm" c="dimmed" mt={4}>
-                    Sign in to deploy and manage your Kubernetes, K3s, and OpenShift clusters.
+                    {t(
+                      "auth.loginSubtitle",
+                      "Sign in to deploy and manage your Kubernetes, K3s, and OpenShift clusters."
+                    )}
                   </Text>
                 </Box>
 
                 {errorMessage && (
-                  <Alert icon={<IconAlertCircle size={16} />} title="Authentication Error" color="red" radius="sm">
+                  <Alert
+                    icon={<IconAlertCircle size={16} />}
+                    title={t("auth.authError", "Authentication Error")}
+                    color="red"
+                    radius="sm"
+                  >
                     {errorMessage}
                   </Alert>
                 )}
 
                 <Stack gap="xs">
                   <Text size="xs" fw={600} tt="uppercase" c="dimmed" style={{ letterSpacing: 0.5 }}>
-                    Single Sign-On
+                    {t("auth.sso", "Single Sign-On")}
                   </Text>
 
                   <Box
@@ -328,7 +366,7 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                 <Divider
                   label={
                     <Text size="xs" c="dimmed" fw={600}>
-                      OR ACCOUNT CREDENTIALS
+                      {t("auth.orCredentials", "OR ACCOUNT CREDENTIALS")}
                     </Text>
                   }
                   labelPosition="center"
@@ -338,8 +376,8 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                 <form onSubmit={form.onSubmit(handlePasswordLogin)}>
                   <Stack gap="md">
                     <TextInput
-                      label="Email or Username"
-                      placeholder="admin or user@company.com"
+                      label={t("auth.usernameOrEmail", "Email or Username")}
+                      placeholder={t("auth.usernameOrEmailPlaceholder", "admin or user@company.com")}
                       required
                       size="sm"
                       leftSection={<IconMail size={16} />}
@@ -353,8 +391,8 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                     />
 
                     <PasswordInput
-                      label="Password"
-                      placeholder="Enter your password"
+                      label={t("auth.password", "Password")}
+                      placeholder={t("auth.passwordPlaceholder", "Enter your password")}
                       required
                       size="sm"
                       leftSection={<IconLock size={16} />}
@@ -379,7 +417,7 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                         marginTop: "0.5rem",
                       }}
                     >
-                      Log in
+                      {t("auth.signIn", "Log in")}
                     </Button>
                   </Stack>
                 </form>
@@ -394,9 +432,9 @@ export default function LoginPage({ colorScheme, onToggleColorScheme }: LoginPag
                   }}
                 >
                   <Text size="xs" c="dimmed">
-                    Don't have an account yet?{" "}
+                    {t("auth.noAccountPrefix", "Don't have an account yet?")}{" "}
                     <Anchor component={Link} to="/signup" fw={600} style={{ color: "#EE0000" }}>
-                      Create an account
+                      {t("auth.createAccount", "Create an account")}
                     </Anchor>
                   </Text>
                 </Paper>

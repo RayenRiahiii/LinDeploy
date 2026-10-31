@@ -52,7 +52,7 @@ export default function InstallersPage() {
                     />
                   </Text>
                   <Text c="dimmed" size="sm" mt={6}>
-                    {installer.description}
+                    {t(`installers.${installer.id}Desc`, installer.description)}
                   </Text>
                 </div>
                 <Badge color={isAvailable ? "teal" : "gray"} variant="light">

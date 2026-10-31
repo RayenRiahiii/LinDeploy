@@ -153,25 +153,54 @@
     state: present
     update_cache: "{{ kubernetes_redhat_update_cache }}"
     disable_excludes: "{{ kubernetes_repo_name }}"
-    allow_downgrade: true
   when: ansible_facts["os_family"] == "RedHat"
-
-- name: Unhold Kubernetes packages before installing on Debian family
-  command:
-    argv: "{{ ['apt-mark', 'unhold'] + kubernetes_packages }}"
-  failed_when: false
-  changed_when: false
-  when: ansible_facts["os_family"] == "Debian"
 
 - name: Install Kubernetes packages on Debian family
   apt:
     name: "{{ kubernetes_packages_debian }}"
     state: present
-    allow_downgrade: true
-    allow_change_held_packages: true
     lock_timeout: "{{ kubernetes_apt_lock_timeout }}"
     update_cache: false
   when: ansible_facts["os_family"] == "Debian"
+
+- name: Verify Kubernetes binaries are physically present on disk
+  stat:
+    path: "/usr/bin/{{ item }}"
+  register: kubernetes_binaries_stat
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Unhold missing Kubernetes packages before reinstall on Debian family
+  command:
+    argv: "{{ ['apt-mark', 'unhold', item.item] }}"
+  loop: "{{ kubernetes_binaries_stat.results }}"
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - not (item.stat.exists | default(false))
+  changed_when: true
+  failed_when: false
+
+- name: Reinstall missing Kubernetes packages on Debian family
+  command:
+    argv: "{{ ['apt-get', 'install', '--reinstall', '-y', item.item] }}"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  loop: "{{ kubernetes_binaries_stat.results }}"
+  when:
+    - ansible_facts["os_family"] == "Debian"
+    - not (item.stat.exists | default(false))
+  changed_when: true
+
+- name: Reinstall missing Kubernetes packages on RedHat family
+  command:
+    argv: "{{ ['dnf', 'reinstall', '-y', '--disableexcludes=' ~ kubernetes_repo_name, item.item] }}"
+  loop: "{{ kubernetes_binaries_stat.results }}"
+  when:
+    - ansible_facts["os_family"] == "RedHat"
+    - not (item.stat.exists | default(false))
+  changed_when: true
 
 - name: Read currently held Debian packages
   command: apt-mark showhold

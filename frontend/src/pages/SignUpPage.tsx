@@ -33,6 +33,7 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import lindeployLogoDark from "../assets/darkmodeLogo.png";
 import { useAuth } from "../context/AuthContext";
 import LanguageSelector from "../components/common/LanguageSelector";
@@ -43,6 +44,7 @@ type SignUpPageProps = {
 };
 
 export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpPageProps) {
+  const { t } = useTranslation();
   const { loginWithGoogle, registerWithPassword, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
@@ -65,9 +67,13 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
       confirmPassword: "",
     },
     validate: {
-      email: (val) => (!val.includes("@") ? "Valid email required" : null),
-      password: (val) => (val.length < 6 ? "Password must have at least 6 characters" : null),
-      confirmPassword: (val, values) => (val !== values.password ? "Passwords do not match" : null),
+      email: (val) => (!val.includes("@") ? t("auth.validEmailRequired", "Valid email required") : null),
+      password: (val) =>
+        val.length < 6
+          ? t("auth.passwordMinValidation", "Password must have at least 6 characters")
+          : null,
+      confirmPassword: (val, values) =>
+        val !== values.password ? t("auth.passwordsMismatch", "Passwords do not match") : null,
     },
   });
 
@@ -86,14 +92,14 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
 
     if (result.success) {
       notifications.show({
-        title: "Account Created",
-        message: "Your LinDeploy account has been provisioned.",
+        title: t("auth.accountCreatedTitle", "Account Created"),
+        message: t("auth.accountCreatedMessage", "Your LinDeploy account has been provisioned."),
         color: "teal",
         icon: <IconCheck size={18} />,
       });
       navigate("/dashboard", { replace: true });
     } else {
-      setErrorMessage(result.error || "Registration failed.");
+      setErrorMessage(result.error || t("auth.registrationFailedDefault", "Registration failed."));
     }
   };
 
@@ -129,14 +135,16 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
 
               if (res.success) {
                 notifications.show({
-                  title: "Single Sign-On Successful",
-                  message: "Logged in with your Google account.",
+                  title: t("auth.ssoSuccessTitle", "Single Sign-On Successful"),
+                  message: t("auth.ssoSuccessMessage", "Logged in with your Google account."),
                   color: "teal",
                   icon: <IconCheck size={18} />,
                 });
                 navigate("/dashboard", { replace: true });
               } else {
-                setErrorMessage(res.error || "Google authentication failed.");
+                setErrorMessage(
+                  res.error || t("auth.ssoFailedDefault", "Google authentication failed.")
+                );
               }
             }
           },
@@ -164,7 +172,7 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
       }, 100);
       return () => clearInterval(interval);
     }
-  }, [colorScheme, loginWithGoogle, navigate]);
+  }, [colorScheme, loginWithGoogle, navigate, t]);
 
   const isDark = colorScheme === "dark";
 
@@ -178,7 +186,12 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
         color: isDark ? "#e6edf3" : "#1f2328",
       }}
     >
-      <Group justify="space-between" px="xl" py="sm" style={{ borderBottom: `1px solid ${isDark ? "#1f242d" : "#e1e4e8"}` }}>
+      <Group
+        justify="space-between"
+        px="xl"
+        py="sm"
+        style={{ borderBottom: `1px solid ${isDark ? "#1f242d" : "#e1e4e8"}` }}
+      >
         <Group gap="xs">
           <ThemeIcon size={24} radius="sm" color="red" variant="filled">
             <IconServer size={14} />
@@ -190,7 +203,13 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
 
         <Group gap="sm">
           <LanguageSelector />
-          <Tooltip label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}>
+          <Tooltip
+            label={
+              isDark
+                ? t("topbar.switchToLight", "Switch to light mode")
+                : t("topbar.switchToDark", "Switch to dark mode")
+            }
+          >
             <ActionIcon
               variant="default"
               size="md"
@@ -246,11 +265,17 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                 </Box>
 
                 <Box style={{ borderLeft: "3px solid #EE0000", paddingLeft: "1rem" }}>
-                  <Title order={2} style={{ fontSize: "1.55rem", fontWeight: 700, color: "#ffffff", lineHeight: 1.3 }}>
-                    Deploy Kubernetes, K3s & OpenShift
+                  <Title
+                    order={2}
+                    style={{ fontSize: "1.55rem", fontWeight: 700, color: "#ffffff", lineHeight: 1.3 }}
+                  >
+                    {t("auth.heroTitle", "Deploy Kubernetes, K3s & OpenShift")}
                   </Title>
                   <Text size="sm" c="dimmed" mt="xs" style={{ color: "#9ca3af" }}>
-                    Automated cluster deployment engine for Kubernetes, lightweight K3s, and OpenShift SNO on bare-metal and virtual machines.
+                    {t(
+                      "auth.heroDesc",
+                      "Automated cluster deployment engine for Kubernetes, lightweight K3s, and OpenShift SNO on bare-metal and virtual machines."
+                    )}
                   </Text>
                 </Box>
               </Stack>
@@ -261,11 +286,14 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                     <IconShieldLock size={12} />
                   </ThemeIcon>
                   <Text size="xs" fw={600} style={{ color: "#d1d5db" }}>
-                    Automated Playbooks & Live Monitoring
+                    {t("auth.heroFeatureTitle", "Automated Playbooks & Live Monitoring")}
                   </Text>
                 </Group>
                 <Text size="xs" style={{ color: "#6b7280" }}>
-                  Run preflight checks, execute multi-node Ansible playbooks, and track cluster deployment progress in real time.
+                  {t(
+                    "auth.heroFeatureDesc",
+                    "Run preflight checks, execute multi-node Ansible playbooks, and track cluster deployment progress in real time."
+                  )}
                 </Text>
               </Stack>
             </Grid.Col>
@@ -274,15 +302,23 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
               <Stack gap="md">
                 <Box>
                   <Title order={2} style={{ fontWeight: 700, letterSpacing: -0.3 }}>
-                    Create your account
+                    {t("auth.signUpTitle", "Create your account")}
                   </Title>
                   <Text size="sm" c="dimmed" mt={4}>
-                    Sign up to deploy and manage your Kubernetes, K3s, and OpenShift clusters.
+                    {t(
+                      "auth.signUpSubtitle",
+                      "Sign up to deploy and manage your Kubernetes, K3s, and OpenShift clusters."
+                    )}
                   </Text>
                 </Box>
 
                 {errorMessage && (
-                  <Alert icon={<IconAlertCircle size={16} />} title="Registration Error" color="red" radius="sm">
+                  <Alert
+                    icon={<IconAlertCircle size={16} />}
+                    title={t("auth.registrationError", "Registration Error")}
+                    color="red"
+                    radius="sm"
+                  >
                     {errorMessage}
                   </Alert>
                 )}
@@ -292,7 +328,7 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                 <Divider
                   label={
                     <Text size="xs" c="dimmed" fw={600}>
-                      OR ACCOUNT CREDENTIALS
+                      {t("auth.orCredentials", "OR ACCOUNT CREDENTIALS")}
                     </Text>
                   }
                   labelPosition="center"
@@ -303,7 +339,7 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                   <Stack gap="xs">
                     <Group grow>
                       <TextInput
-                        label="First Name"
+                        label={t("auth.firstName", "First Name")}
                         placeholder="Alex"
                         size="xs"
                         leftSection={<IconUser size={14} />}
@@ -316,7 +352,7 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                         }}
                       />
                       <TextInput
-                        label="Last Name"
+                        label={t("auth.lastName", "Last Name")}
                         placeholder="Morgan"
                         size="xs"
                         leftSection={<IconUser size={14} />}
@@ -331,7 +367,7 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                     </Group>
 
                     <TextInput
-                      label="Email"
+                      label={t("auth.email", "Email")}
                       placeholder="alex.morgan@company.com"
                       required
                       size="xs"
@@ -347,8 +383,8 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
 
                     <Group grow>
                       <PasswordInput
-                        label="Password"
-                        placeholder="At least 8 characters"
+                        label={t("auth.password", "Password")}
+                        placeholder={t("auth.passwordMinLength", "At least 6 characters")}
                         required
                         size="xs"
                         leftSection={<IconLock size={14} />}
@@ -362,8 +398,8 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                       />
 
                       <PasswordInput
-                        label="Confirm Password"
-                        placeholder="Re-enter password"
+                        label={t("auth.confirmPassword", "Confirm Password")}
+                        placeholder={t("auth.confirmPasswordPlaceholder", "Re-enter password")}
                         required
                         size="xs"
                         leftSection={<IconLock size={14} />}
@@ -389,7 +425,7 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                         marginTop: "0.5rem",
                       }}
                     >
-                      Create Account
+                      {t("auth.createAccountBtn", "Create Account")}
                     </Button>
                   </Stack>
                 </form>
@@ -404,9 +440,9 @@ export default function SignUpPage({ colorScheme, onToggleColorScheme }: SignUpP
                   }}
                 >
                   <Text size="xs" c="dimmed">
-                    Already have an account?{" "}
+                    {t("auth.haveAccountPrefix", "Already have an account?")}{" "}
                     <Anchor component={Link} to="/login" fw={600} style={{ color: "#EE0000" }}>
-                      Log in here
+                      {t("auth.signInLink", "Log in here")}
                     </Anchor>
                   </Text>
                 </Paper>

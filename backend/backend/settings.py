@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 
 
 def env_bool(name, default=False):
@@ -107,10 +107,11 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 if env_bool("USE_SQLITE", False) or not os.getenv("DB_NAME"):
+    sqlite_path = os.getenv("SQLITE_PATH")
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            "NAME": Path(sqlite_path) if sqlite_path else BASE_DIR / "db.sqlite3",
         }
     }
 else:
@@ -292,3 +293,8 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": timedelta(hours=LINDEPLOY_MIRROR_PREWARM_INTERVAL_HOURS),
     }
 }
+
+
+# Google OAuth
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()

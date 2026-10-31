@@ -45,7 +45,7 @@
   uri:
     url: >-
       {{ lindeploy_package_mirror_base_url
-         | regex_replace('/cache/?$', '/healthz') }}
+         | regex_replace('/cache(/.*)?$', '') }}/healthz
     method: HEAD
     validate_certs: true
     return_content: false

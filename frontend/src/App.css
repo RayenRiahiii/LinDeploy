@@ -141,8 +141,7 @@
 }
 
 .workspace-shell {
-  width: min(1440px, calc(100% - 28px));
-  width: min(1380px, calc(100% - 32px));
+  width: min(1600px, calc(100% - 32px));
   margin: 0 auto;
   padding: 10px 0 32px;
 }
@@ -152,7 +151,7 @@
   top: 8px;
   z-index: 30;
   transition: transform 220ms ease, opacity 220ms ease, visibility 220ms ease;
-  width: min(1380px, calc(100% - 32px));
+  width: min(1600px, calc(100% - 32px));
   margin: 0 auto;
 }
 
@@ -165,7 +164,7 @@
 
 .topbar-shell {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 1fr auto 1fr;
   gap: 14px;
   align-items: center;
 }
@@ -179,8 +178,10 @@
 }
 
 .topbar-brand-panel {
-  border-radius: 45px;
-  padding: 8px 18px;
+  justify-self: start;
+  border-radius: 9999px;
+  padding: 8px 20px;
+  min-height: 62px;
   align-self: center;
   min-width: 0;
   display: flex;
@@ -189,9 +190,14 @@
 }
 
 .topbar-panel {
-  border-radius: 45px;
-  padding: 8px 16px;
-  min-width: 0;
+  justify-self: center;
+  border-radius: 9999px;
+  padding: 8px 24px;
+  min-height: 62px;
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .topbar-brand-block {
@@ -201,28 +207,30 @@
 
 .brand-wordmark {
   width: auto;
-  max-width: 140px;
-  height: 28px;
+  max-width: 165px;
+  height: 36px;
   display: block;
   object-fit: contain;
 }
 
 .topbar-nav {
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   column-gap: 8px;
   row-gap: 6px;
   justify-content: center;
+  align-items: center;
 }
 
 .orb-nav-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 7px 3px 3px;
+  gap: 8px;
+  padding: 5px 12px 5px 5px;
   border-radius: 999px;
   border: 1px solid var(--surface-border-soft);
   background: var(--soft-bg);
+  white-space: nowrap;
   transition:
     transform 140ms ease,
     border-color 140ms ease,
@@ -237,9 +245,9 @@
 }
 
 .orb-nav-link.is-active {
-  border-color: rgba(255, 63, 63, 0.34);
+  border-color: rgba(255, 63, 63, 0.38);
   background: var(--strong-accent-bg);
-  box-shadow: 0 12px 30px rgba(217, 28, 28, 0.16);
+  box-shadow: 0 12px 30px rgba(217, 28, 28, 0.18);
 }
 
 .orb-nav-icon {
@@ -253,16 +261,18 @@
 }
 
 .orb-nav-title {
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   font-weight: 700;
   color: var(--text-primary);
-  line-height: 1.1;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 .orb-nav-subtitle {
-  font-size: 0.58rem;
+  font-size: 0.65rem;
   color: var(--text-secondary);
   line-height: 1.15;
+  white-space: nowrap;
 }
 
 .topbar-terminal {
@@ -280,9 +290,12 @@
   width: auto;
   min-width: fit-content;
   margin-top: 0;
-  padding: 8px 16px;
-  border-radius: 45px;
+  padding: 8px 20px;
+  min-height: 62px;
+  border-radius: 9999px;
   justify-self: end;
+  display: flex;
+  align-items: center;
 }
 
 .topbar-terminal > .mantine-Group-root {
@@ -351,7 +364,7 @@
   flex-direction: column;
   gap: 2px;
   padding-left: 2px;
-  padding-right: 6px;
+  padding-right: 12px;
 }
 
 .topbar-terminal-label,
@@ -360,14 +373,14 @@
 }
 
 .topbar-terminal-label {
-  font-size: 0.64rem;
+  font-size: 0.70rem;
   opacity: 0.72;
   line-height: 1.1;
 }
 
 .topbar-terminal-value {
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: 0.90rem;
+  font-weight: 700;
   line-height: 1.15;
   overflow: visible;
   text-overflow: clip;
@@ -1283,6 +1296,12 @@
   height: 28px;
 }
 
+@media (max-width: 1380px) {
+  .orb-nav-subtitle {
+    display: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .workspace-topbar {
     width: min(100%, calc(100% - 28px));
@@ -1299,7 +1318,7 @@
   }
 
   .topbar-panel {
-    border-radius: 45px;
+    border-radius: 9999px;
     padding: 14px 22px;
   }
 

@@ -4,19 +4,19 @@ LinDeploy is a web control plane for deploying and removing Linux cluster platfo
 
 The current release supports:
 
-- Kubernetes with kubeadm, containerd, and Calico;
-- K3s;
-- one independent single-node cluster per selected target;
-- one shared Kubernetes multi-node cluster with explicit control-plane, worker,
-  and bootstrap host selection;
+- Kubernetes with kubeadm, containerd, and Calico (single-node and multi-node);
+- K3s (single-node and multi-node clusters with server and agent roles);
+- one independent single-node cluster per selected target, or shared multi-node clusters;
 - multi-target execution with per-host results and partial-success reporting;
-- SSH connectivity checks before execution;
+- SSH connectivity checks before execution (Password, SSH Private Key, and SSH Public Key);
 - Kubernetes reset and full uninstall workflows;
-- K3s cleanup and uninstall;
-- conflict protection between Kubernetes and K3s;
-- live execution progress, history, cancellation, and diagnostics.
+- K3s cleanup and uninstall (single-node and multi-node);
+- dual conflict protection: cross-platform (K8s vs K3s) and same-platform conflict detection ("Keep existing" vs "Cleanup and reinstall");
+- live execution progress, history, diagnostics, and direct execution cancellation (immediate process stop and host release);
+- user authentication and authorization (JWT and session-based auth, registration, login, and protected routes);
+- full bilingual internationalization (English `EN` and French `FR`) with an instant language switcher;
 - optional LAN pull-through caching for OCI images, K3s artifacts, Calico,
-  and package repositories.
+  and package repositories;
 - connected OpenShift SNO provisioning on KVM/libvirt through the hosted
   Assisted Installer;
 - disconnected OpenShift SNO provisioning through a permanent local Quay
@@ -33,13 +33,13 @@ validation on non-production infrastructure.
 ## Architecture
 
 ```text
-Browser
+Browser (EN / FR)
    |
    v
-React + Vite frontend
+React + Vite frontend (JWT Auth, Mantine UI, i18n)
    |
    v
-Django REST API ---- PostgreSQL or SQLite
+Django REST API (JWT & Session Auth, SQLite / PostgreSQL)
    |
    v
 Celery worker ---- Redis
@@ -47,14 +47,14 @@ Celery worker ---- Redis
    v
 Ansible controller (Linux or Windows + WSL)
    |
-   +---- SSH ---- Target 1 -> independent single-node cluster
-   +---- SSH ---- Target 2 -> independent single-node cluster
-   +---- SSH ---- Target N -> independent single-node cluster
+   +---- SSH ---- Target 1 -> Single-Node or Multi-Node (Control Plane / Server)
+   +---- SSH ---- Target 2 -> Single-Node or Multi-Node (Worker / Agent)
+   +---- SSH ---- Target N -> Single-Node or Multi-Node
 ```
 
-For Kubernetes multi-node deployments, the same controller generates role-based
-inventory groups and creates one shared cluster. K3s currently retains the
-single-node-per-target behavior.
+For Kubernetes and K3s multi-node deployments, the controller generates role-based
+inventory groups and creates one shared cluster. In single-node mode, each target
+receives its own independent cluster.
 
 ## Repository Layout
 
@@ -88,8 +88,9 @@ The internal Django application is still named `auto_K8S` for migration compatib
 
 ## Supported Controller Modes
 
-- Windows with WSL: Django and the frontend run on Windows; Ansible runs in WSL.
-- Native Linux: Django, Celery, Redis, and Ansible run directly on Linux.
+- **1-Click Docker Containerized (Recommended)**: The entire stack (React UI, Django API, Celery worker with native Linux Ansible runner, Celery Beat, Redis, and LAN mirror) runs isolated in containers on any OS (Windows, Linux, macOS) with dynamic LAN IP detection. No local Python, Node.js, or WSL required!
+- **Local Native Linux**: Django, Celery, Redis, and Ansible run directly on Linux.
+- **Local Windows with WSL**: Django and frontend run on Windows; Ansible runs inside WSL.
 
 ## Supported Targets
 
@@ -106,7 +107,43 @@ The target must provide:
 - outbound access to the package and container registries used by the selected installer;
 - at least 2 vCPU and 2 GB RAM; 4 vCPU and 4 GB RAM are recommended for a more reliable Kubernetes lab.
 
-## Quick Start
+## Quick Start (1-Click Docker - Recommended)
+
+The fastest and most reliable way to run LinDeploy on any machine with Docker installed:
+
+### On Windows (PowerShell):
+```powershell
+.\start.ps1
+```
+
+### On Linux or macOS (Bash):
+```bash
+./start.sh
+```
+
+### Or using Docker Compose directly:
+```bash
+docker compose up -d --build
+```
+
+The startup script will automatically:
+1. Auto-detect your machine's active IPv4 address on the current network.
+2. Generate/update local TLS certificates for that IP.
+3. Seed existing database records into `./data/db.sqlite3`.
+4. Build and start all services (`frontend`, `backend`, `celery-worker`, `celery-beat`, `redis`, `mirror`).
+
+Once started:
+- **Web Dashboard**: `http://localhost:5173` (or `http://<your-lan-ip>:5173`)
+- **Backend API**: `http://localhost:8000/api/`
+- **Mirror Gateway**: `https://<your-lan-ip>:8443/cache/`
+
+To stop the containers:
+- Windows: `.\stop.ps1`
+- Linux / macOS: `./stop.sh`
+
+---
+
+## Alternative: Local Development Setup (Without Docker)
 
 Detailed prerequisites and platform-specific commands are in [Installation Guide](docs/INSTALLATION.md).
 
@@ -159,18 +196,21 @@ Open `http://localhost:5173`.
 
 ## First Deployment
 
-1. Create an SSH credential.
-2. Register one or more target hosts and associate the credential.
-3. Open **Installers**, then select Kubernetes or K3s.
-4. Select the targets.
-5. Choose **Single Node per target** or **Multi Node**. For Kubernetes
-   multi-node, assign control-plane and worker roles and select one bootstrap
-   control plane.
-6. Run **Verify SSH**.
-7. Start the playbook.
-8. Follow progress from the deployment monitor.
-9. Review the result for every target.
-10. Use **Reset Cluster**, **Full Uninstall**, or K3s cleanup only when required.
+1. Create an account via **Sign Up** or log in with your credentials.
+2. Select your preferred language (`EN` or `FR`) in the top navigation bar.
+3. Open **Credentials** and create an SSH credential (Password, Private Key, or Public Key).
+4. Register one or more target hosts in **Hosts** and link the credential.
+5. Open **Installers**, then select Kubernetes or K3s.
+6. Select the targets.
+7. Choose **Single Node per target** or **Multi Node**:
+   - For Kubernetes multi-node: assign control-plane and worker roles and select one bootstrap control plane.
+   - For K3s multi-node: assign server (control-plane) and agent (worker) roles.
+8. Run **Verify SSH**.
+9. Start the playbook with **Run Playbook**.
+10. Follow progress from the deployment monitor (with live heartbeat, task breakdown, and log stream).
+11. If cancellation is needed, click **Cancel** to directly stop the Ansible execution immediately and release the targets.
+12. Review the structured results and diagnostics for each target.
+13. Use **Reset Cluster**, **Full Uninstall**, or K3s cleanup only when required.
 
 OpenShift uses a dedicated four-step form. For disconnected SNO, prepare the
 exact release in the local mirror before starting installation. See
@@ -222,9 +262,11 @@ cd backend/backend/Playbooks
 ansible-playbook --syntax-check playbooks/k8s_single_node.yml
 ansible-playbook --syntax-check playbooks/k8s_multi_node.yml
 ansible-playbook --syntax-check playbooks/k3s_single_node.yml
+ansible-playbook --syntax-check playbooks/k3s_multi_node.yml
 ansible-playbook --syntax-check playbooks/k8s_cleanup.yml
 ansible-playbook --syntax-check playbooks/k8s_full_uninstall.yml
 ansible-playbook --syntax-check playbooks/k3s_cleanup.yml
+ansible-playbook --syntax-check playbooks/k3s_multi_node_cleanup.yml
 ansible-playbook --syntax-check playbooks/openshift_mirror_prepare.yml
 ansible-playbook --syntax-check playbooks/openshift_sno_disconnected.yml
 ansible-playbook --syntax-check playbooks/openshift_sno_cleanup.yml
@@ -242,12 +284,11 @@ ansible-playbook --syntax-check playbooks/openshift_sno_cleanup.yml
 
 ## Roadmap
 
-- application authentication and role-based access control;
-- encryption of stored credentials;
-- secret redaction and external secret-store integration;
-- one shared multi-node K3s cluster;
-- dedicated multi-node reset and node-removal workflows;
-- HA topology and private registry support;
+- fine-grained role-based access control (RBAC permissions);
+- encryption of stored credentials at rest;
+- secret redaction and external secret-store integration (e.g. HashiCorp Vault);
+- dedicated multi-node reset and individual node-removal workflows;
+- HA topology with external load balancer and private registry support;
 - separate OpenShift mirror and KVM provisioning hosts;
 - additional OpenShift architectures and optional Operator catalogs;
 - workshop-level provisioning and teardown for multiple SNO clusters.

@@ -65,7 +65,7 @@ type Credential = {
   username: string;
 };
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 const CUSTOM_OS_TYPE_VALUE = "__custom__";
 const OS_TYPE_OPTIONS = [
   { value: "ubuntu24.04", label: "Ubuntu 24.04" },
@@ -543,7 +543,7 @@ export default function HostsList() {
             )}
 
             <TextInput
-              label="Name"
+              label={t("common.name", "Name")}
               description="Inventory label used inside the app and generated Ansible inventory."
               placeholder="node-01"
               value={formData.name}
@@ -552,7 +552,7 @@ export default function HostsList() {
             />
 
             <TextInput
-              label="Hostname"
+              label={t("hosts.hostname", "Hostname")}
               description="Optional DNS name or FQDN of the machine."
               placeholder="node-01.example.local"
               value={formData.hostname}
@@ -560,7 +560,7 @@ export default function HostsList() {
             />
 
             <TextInput
-              label="IP Address"
+              label={t("hosts.ipAddress", "IP Address")}
               description="Reachable management IP used by SSH and Ansible."
               placeholder="192.168.100.135"
               value={formData.ip_address}
@@ -569,7 +569,7 @@ export default function HostsList() {
             />
 
             <NumberInput
-              label="SSH Port"
+              label={t("hosts.sshPort", "SSH Port")}
               description="Default is 22 unless the target exposes SSH on a custom port."
               placeholder="22"
               value={formData.ssh_port}
@@ -580,7 +580,7 @@ export default function HostsList() {
             />
 
             <Select
-              label="OS Type"
+              label={t("hosts.osType", "OS Type")}
               description="Used to identify the target distribution during execution."
               placeholder="Select target operating system"
               data={[
@@ -612,7 +612,7 @@ export default function HostsList() {
 
             {(formData.os_type === "" || !isPredefinedOsType(formData.os_type)) && (
               <TextInput
-                label="Custom OS Type"
+                label={t("hosts.customOsType", "Custom OS Type")}
                 description="Only use this when the distribution is not listed above. The backend will normalize the value automatically."
                 placeholder="alma9, oraclelinux9, ubuntu25.04"
                 value={customOsType}
@@ -626,9 +626,9 @@ export default function HostsList() {
             )}
 
             <Select
-              label="Credential"
+              label={t("hosts.credential", "Credential")}
               description="Choose the saved SSH credential that Ansible will use for this host."
-              placeholder={loadingCredentials ? "Loading saved credentials..." : "Select saved SSH credential"}
+              placeholder={loadingCredentials ? t("credentials.loadingCredentials", "Loading saved credentials...") : t("hosts.selectCredential", "Select saved SSH credential")}
               data={credentials.map((credential) => ({
                 value: String(credential.id),
                 label: `${credential.name} (${credential.username})`,
@@ -640,7 +640,7 @@ export default function HostsList() {
             />
 
             <Checkbox
-              label="Enabled for inventory and execution"
+              label={t("hosts.enabledLabel", "Enabled for inventory and execution")}
               checked={formData.enabled}
               onChange={(event) => handleChange("enabled", event.currentTarget.checked)}
             />

@@ -17,6 +17,7 @@ import {
   IconPlayerStop,
   IconRefresh,
 } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 import { type DeploymentTopology } from "../../installers/DeploymentTopologySelector";
 import { type Host } from "../types";
 
@@ -63,29 +64,31 @@ export default function TargetExecutionStep({
   onCancelInstallation,
   onBack,
 }: TargetExecutionStepProps) {
+  const { t } = useTranslation();
+
   return (
     <Card className="console-panel" padding="lg">
       <Stack gap="md">
         <Group justify="space-between" align="flex-start">
           <div>
-            <Title order={3}>Start Installation</Title>
+            <Title order={3}>{t("execution.startInstallation", "Start Installation")}</Title>
             <Text size="sm" c="dimmed" mt={4}>
-              Confirm the selected targets, verify SSH access, then start the installer on all eligible hosts.
+              {t("execution.startInstallationDesc", "Confirm the selected targets, verify SSH access, then start the installer on all eligible hosts.")}
             </Text>
           </div>
           <Badge color={topologyReady ? "teal" : "gray"} variant="light">
             {topologyReady
-              ? "ready to verify"
+              ? t("execution.readyToVerify", "ready to verify")
               : topology === "multi_node"
-                ? "roles required"
-                : "target required"}
+                ? t("execution.rolesRequired", "roles required")
+                : t("execution.targetRequired", "target required")}
           </Badge>
         </Group>
 
         <div className="action-command-grid">
           <div className="action-command-panel">
             <Stack gap="md">
-              <Title order={4}>Current Targets</Title>
+              <Title order={4}>{t("execution.currentTargets", "Current Targets")}</Title>
 
               {selectedHostIds.length > 0 ? (
                 <>
@@ -94,30 +97,30 @@ export default function TargetExecutionStep({
                     spacing="sm"
                   >
                     <Card className="host-panel" padding="sm">
-                      <Text size="sm" c="dimmed">Selected Hosts</Text>
+                      <Text size="sm" c="dimmed">{t("execution.selectedHosts", "Selected Hosts")}</Text>
                       <Text fw={700}>{selectedHostIds.length}</Text>
                     </Card>
                     <Card className="host-panel" padding="sm">
-                      <Text size="sm" c="dimmed">Topology</Text>
+                      <Text size="sm" c="dimmed">{t("wizard.stepTopology", "Topology")}</Text>
                       <Text fw={700}>
                         {topology === "multi_node"
-                          ? "One shared multi-node cluster"
-                          : "Independent single-node clusters"}
+                          ? t("execution.oneSharedCluster", "One shared multi-node cluster")
+                          : t("execution.independentClusters", "Independent single-node clusters")}
                       </Text>
                     </Card>
                     {topology === "multi_node" && (
                       <>
                         <Card className="host-panel" padding="sm">
-                          <Text size="sm" c="dimmed">Control Plane</Text>
+                          <Text size="sm" c="dimmed">{t("execution.controlPlaneNodes", "Control Plane")}</Text>
                           <Text fw={700}>{controlPlaneHostIds.length}</Text>
                         </Card>
                         <Card className="host-panel" padding="sm">
-                          <Text size="sm" c="dimmed">Workers</Text>
+                          <Text size="sm" c="dimmed">{t("execution.workerNodes", "Workers")}</Text>
                           <Text fw={700}>{workerHostIds.length}</Text>
                         </Card>
                         <Card className="host-panel" padding="sm">
-                          <Text size="sm" c="dimmed">Bootstrap Host</Text>
-                          <Text fw={700}>{bootstrapHost?.name || "Not selected"}</Text>
+                          <Text size="sm" c="dimmed">{t("execution.bootstrapHost", "Bootstrap Host")}</Text>
+                          <Text fw={700}>{bootstrapHost?.name || t("execution.notSelected", "Not selected")}</Text>
                         </Card>
                       </>
                     )}
@@ -133,7 +136,7 @@ export default function TargetExecutionStep({
                 </>
               ) : (
                 <Text c="dimmed">
-                  Select at least one host to unlock SSH verification and playbook execution.
+                  {t("execution.selectAtLeastOneHost", "Select at least one host to unlock SSH verification and playbook execution.")}
                 </Text>
               )}
             </Stack>
@@ -141,16 +144,16 @@ export default function TargetExecutionStep({
 
           <div className="action-command-panel">
             <Stack gap="md">
-              <Title order={4}>Operator Checklist</Title>
+              <Title order={4}>{t("checklist.title", "Operator Checklist")}</Title>
               <div className="action-checklist">
                 <div className="action-check-item">
                   <ThemeIcon color="red" variant="light" radius="xl" size={26}>
                     <IconLink size={14} />
                   </ThemeIcon>
                   <div>
-                    <Text fw={700}>Run Verify SSH first</Text>
+                    <Text fw={700}>{t("checklist.verifySshTitle", "Run Verify SSH first")}</Text>
                     <Text size="sm" c="dimmed">
-                      Confirm connectivity before any playbook execution starts.
+                      {t("checklist.verifySshDesc", "Confirm connectivity before any playbook execution starts.")}
                     </Text>
                   </div>
                 </div>
@@ -159,9 +162,9 @@ export default function TargetExecutionStep({
                     <IconPlayerPlay size={14} />
                   </ThemeIcon>
                   <div>
-                    <Text fw={700}>Run Playbook after access validation</Text>
+                    <Text fw={700}>{t("checklist.runPlaybookTitle", "Run Playbook after access validation")}</Text>
                     <Text size="sm" c="dimmed">
-                      The execution monitor below captures the live Ansible state, timings, and final result.
+                      {t("checklist.runPlaybookDesc", "The execution monitor below captures the live Ansible state, timings, and final result.")}
                     </Text>
                   </div>
                 </div>
@@ -170,9 +173,9 @@ export default function TargetExecutionStep({
                     <IconRefresh size={14} />
                   </ThemeIcon>
                   <div>
-                    <Text fw={700}>Use Cleanup Options when needed</Text>
+                    <Text fw={700}>{t("checklist.cleanupTitle", "Use Cleanup Options when needed")}</Text>
                     <Text size="sm" c="dimmed">
-                      Reset cluster state for a fast reinstall or fully uninstall the platform from the target host.
+                      {t("checklist.cleanupDesc", "Reset cluster state for a fast reinstall or fully uninstall the platform from the target host.")}
                     </Text>
                   </div>
                 </div>
@@ -189,7 +192,7 @@ export default function TargetExecutionStep({
               disabled={loading}
               leftSection={<IconArrowLeft size={16} />}
             >
-              Back to targets
+              {t("targets.backToTargets", "Back to targets")}
             </Button>
           )}
           <Button
@@ -199,7 +202,7 @@ export default function TargetExecutionStep({
             disabled={selectedHostIds.length === 0 || loading}
             leftSection={<IconLink size={16} />}
           >
-            Verify SSH
+            {t("execution.verifySsh", "Verify SSH")}
           </Button>
 
           <Button
@@ -212,7 +215,7 @@ export default function TargetExecutionStep({
             }
             leftSection={<IconPlayerPlay size={16} />}
           >
-            Run Playbook
+            {t("execution.runPlaybook", "Run Playbook")}
           </Button>
 
           {hasCleanupOption && (
@@ -222,7 +225,7 @@ export default function TargetExecutionStep({
               onClick={() => void onCleanupLaunch()}
               disabled={selectedHostIds.length === 0 || checkingConnectivity || loading}
             >
-              Cleanup Options
+              {t("execution.cleanupCluster", "Cleanup Options")}
             </Button>
           )}
 
@@ -232,7 +235,7 @@ export default function TargetExecutionStep({
               onClick={() => void onCancelInstallation()}
               leftSection={<IconPlayerStop size={16} />}
             >
-              {cancelLabel || "Cancel Installation"}
+              {cancelLabel || t("execution.cancelInstallation", "Cancel Installation")}
             </Button>
           )}
         </Group>

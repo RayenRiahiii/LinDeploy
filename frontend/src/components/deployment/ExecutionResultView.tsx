@@ -13,6 +13,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconAlertCircle } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 import {
   formatDurationDetailed,
   getStatusColor,
@@ -28,11 +29,13 @@ export default function ExecutionResultView({
   result,
   resultTargetSummary,
 }: ExecutionResultViewProps) {
+  const { t } = useTranslation();
+
   return (
     <Card className="console-panel" padding="lg">
       <Stack gap="sm">
         <Group justify="space-between" align="center">
-          <Title order={3}>Execution Result</Title>
+          <Title order={3}>{t("results.executionResult", "Execution Result")}</Title>
           <Badge
             color={getStatusColor(result.status)}
             variant="filled"
@@ -43,38 +46,38 @@ export default function ExecutionResultView({
         </Group>
 
         <Text c="dimmed" size="sm">
-          This section summarizes the last execution. Use the success or failure report window for host-by-host diagnostics and next actions.
+          {t("results.resultSectionDesc", "This section summarizes the last execution. Use the success or failure report window for host-by-host diagnostics and next actions.")}
         </Text>
 
         <Group gap="xl">
           <Text>
-            Execution reference:{" "}
+            {t("results.executionReference", "Execution reference:")}{" "}
             {result.installation_id > 0
               ? `#${result.installation_id}`
-              : "Not created (pre-execution failure)"}
+              : t("results.notCreatedPreExec", "Not created (pre-execution failure)")}
           </Text>
-          <Text>Message: {result.message}</Text>
-          <Text>Return code: {result.return_code ?? "-"}</Text>
-          <Text>Execution Time: {formatDurationDetailed(result.duration_seconds)}</Text>
+          <Text>{t("results.message", "Message:")} {result.message}</Text>
+          <Text>{t("results.returnCode", "Return code:")} {result.return_code ?? "-"}</Text>
+          <Text>{t("results.executionTime", "Execution Time:")} {formatDurationDetailed(result.duration_seconds)}</Text>
         </Group>
 
         {result.targets && result.targets.length > 0 && (
           <>
             <SimpleGrid cols={{ base: 1, md: 4 }} spacing="sm">
               <Card className="host-panel" padding="sm">
-                <Text size="sm" c="dimmed">Selected Targets</Text>
+                <Text size="sm" c="dimmed">{t("results.selectedTargets", "Selected Targets")}</Text>
                 <Text fw={700}>{result.targets.length}</Text>
               </Card>
               <Card className="host-panel" padding="sm">
-                <Text size="sm" c="dimmed">Succeeded</Text>
+                <Text size="sm" c="dimmed">{t("results.succeeded", "Succeeded")}</Text>
                 <Text fw={700}>{resultTargetSummary.success || 0}</Text>
               </Card>
               <Card className="host-panel" padding="sm">
-                <Text size="sm" c="dimmed">Failed</Text>
+                <Text size="sm" c="dimmed">{t("results.failed", "Failed")}</Text>
                 <Text fw={700}>{resultTargetSummary.failed || 0}</Text>
               </Card>
               <Card className="host-panel" padding="sm">
-                <Text size="sm" c="dimmed">Other States</Text>
+                <Text size="sm" c="dimmed">{t("results.otherStates", "Other States")}</Text>
                 <Text fw={700}>
                   {(resultTargetSummary.pending || 0) +
                     (resultTargetSummary.running || 0) +
@@ -86,10 +89,10 @@ export default function ExecutionResultView({
             <Table withTableBorder striped>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Target</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Return Code</Table.Th>
-                  <Table.Th>Detail</Table.Th>
+                  <Table.Th>{t("results.target", "Target")}</Table.Th>
+                  <Table.Th>{t("common.status", "Status")}</Table.Th>
+                  <Table.Th>{t("results.returnCode", "Return Code")}</Table.Th>
+                  <Table.Th>{t("results.detail", "Detail")}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -113,25 +116,25 @@ export default function ExecutionResultView({
         {result.timings && (
           <SimpleGrid cols={{ base: 1, md: 4 }} spacing="sm">
             <Card className="host-panel" padding="sm">
-              <Text size="sm" c="dimmed">Inventory</Text>
+              <Text size="sm" c="dimmed">{t("results.inventoryTiming", "Inventory")}</Text>
               <Text fw={700}>
                 {formatDurationDetailed(result.timings.inventory_build_seconds)}
               </Text>
             </Card>
             <Card className="host-panel" padding="sm">
-              <Text size="sm" c="dimmed">Repo Discovery</Text>
+              <Text size="sm" c="dimmed">{t("results.repoDiscoveryTiming", "Repo Discovery")}</Text>
               <Text fw={700}>
                 {formatDurationDetailed(result.timings.repo_discovery_seconds)}
               </Text>
             </Card>
             <Card className="host-panel" padding="sm">
-              <Text size="sm" c="dimmed">SSH Check</Text>
+              <Text size="sm" c="dimmed">{t("results.sshCheckTiming", "SSH Check")}</Text>
               <Text fw={700}>
                 {formatDurationDetailed(result.timings.ssh_check_seconds)}
               </Text>
             </Card>
             <Card className="host-panel" padding="sm">
-              <Text size="sm" c="dimmed">Playbook</Text>
+              <Text size="sm" c="dimmed">{t("results.playbookTiming", "Playbook")}</Text>
               <Text fw={700}>
                 {formatDurationDetailed(result.timings.playbook_execution_seconds)}
               </Text>
@@ -142,7 +145,7 @@ export default function ExecutionResultView({
         {result.bottleneck_hints && result.bottleneck_hints.length > 0 && (
           <>
             <Divider />
-            <Title order={5}>Likely Bottlenecks</Title>
+            <Title order={5}>{t("results.likelyBottlenecks", "Likely Bottlenecks")}</Title>
             <Stack gap="xs">
               {result.bottleneck_hints.map((hint) => (
                 <Alert key={hint} color="red" variant="light" icon={<IconAlertCircle size={16} />}>
@@ -156,12 +159,12 @@ export default function ExecutionResultView({
         {result.task_profile && result.task_profile.length > 0 && (
           <>
             <Divider />
-            <Title order={5}>Slowest Tasks</Title>
+            <Title order={5}>{t("results.slowestTasks", "Slowest Tasks")}</Title>
             <Table>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Task</Table.Th>
-                  <Table.Th>Duration</Table.Th>
+                  <Table.Th>{t("results.task", "Task")}</Table.Th>
+                  <Table.Th>{t("results.duration", "Duration")}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -179,7 +182,7 @@ export default function ExecutionResultView({
         {result.command && (
           <>
             <Divider />
-            <Title order={5}>Command</Title>
+            <Title order={5}>{t("results.command", "Command")}</Title>
             <Code block>{result.command}</Code>
           </>
         )}
@@ -187,7 +190,7 @@ export default function ExecutionResultView({
         {result.rawOutput && (
           <>
             <Divider />
-            <Title order={5}>Raw Output</Title>
+            <Title order={5}>{t("results.rawOutput", "Raw Output")}</Title>
             <ScrollArea.Autosize mah={220}>
               <Code block>{result.rawOutput}</Code>
             </ScrollArea.Autosize>
@@ -197,7 +200,7 @@ export default function ExecutionResultView({
         {result.stdout && (
           <>
             <Divider />
-            <Title order={5}>Stdout</Title>
+            <Title order={5}>{t("results.stdout", "Stdout")}</Title>
             <ScrollArea.Autosize mah={320}>
               <Code block>{result.stdout}</Code>
             </ScrollArea.Autosize>
@@ -207,7 +210,7 @@ export default function ExecutionResultView({
         {result.stderr && (
           <>
             <Divider />
-            <Title order={5}>Stderr</Title>
+            <Title order={5}>{t("results.stderr", "Stderr")}</Title>
             <ScrollArea.Autosize mah={220}>
               <Code block>{result.stderr}</Code>
             </ScrollArea.Autosize>

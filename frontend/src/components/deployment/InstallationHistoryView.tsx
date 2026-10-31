@@ -11,6 +11,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 import InstallerLabel from "../installers/InstallerLabel";
 import { getInstallerOption } from "../../features/installers/catalog";
 import {
@@ -49,19 +50,21 @@ export default function InstallationHistoryView({
   onDeleteHistoryInstallation,
   onInstallationCleanupLaunch,
 }: InstallationHistoryViewProps) {
+  const { t } = useTranslation();
+
   return (
     <Card className="console-panel" padding="lg">
       <Stack gap="md">
         <Group justify="space-between" align="center">
           <div>
-            <Title order={3}>Installation History</Title>
+            <Title order={3}>{t("history.title", "Installation History")}</Title>
             <Text size="sm" c="dimmed" mt={4}>
-              Stored runs are kept outside the live monitor and can be deleted permanently from here.
+              {t("history.description", "Stored runs are kept outside the live monitor and can be deleted permanently from here.")}
             </Text>
           </div>
           <Group gap="sm">
             <Badge color="red" variant="light">
-              saved {historyInstallations.length}
+              {t("history.savedRuns", { count: historyInstallations.length, defaultValue: `saved ${historyInstallations.length}` })}
             </Badge>
             <Button
               color="red"
@@ -70,27 +73,27 @@ export default function InstallationHistoryView({
               loading={clearingHistory}
               disabled={historyInstallations.length === 0}
             >
-              Delete All History
+              {t("history.deleteAll", "Delete All History")}
             </Button>
           </Group>
         </Group>
 
         {historyInstallations.length === 0 ? (
           <Alert color="gray" variant="light">
-            No saved installation history remains.
+            {t("history.noHistory", "No saved installation history remains.")}
           </Alert>
         ) : (
           <ScrollArea.Autosize mah={mode === "history" ? 640 : "65vh"}>
             <Table className="installation-history-table" striped withTableBorder>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Run</Table.Th>
-                  <Table.Th>Installer</Table.Th>
-                  <Table.Th>Operation</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Targets</Table.Th>
-                  <Table.Th>Duration</Table.Th>
-                  <Table.Th>Actions</Table.Th>
+                  <Table.Th>{t("history.run", "Run")}</Table.Th>
+                  <Table.Th>{t("history.installer", "Installer")}</Table.Th>
+                  <Table.Th>{t("history.operation", "Operation")}</Table.Th>
+                  <Table.Th>{t("history.status", "Status")}</Table.Th>
+                  <Table.Th>{t("history.targets", "Targets")}</Table.Th>
+                  <Table.Th>{t("history.duration", "Duration")}</Table.Th>
+                  <Table.Th>{t("history.actions", "Actions")}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -127,10 +130,10 @@ export default function InstallationHistoryView({
                       <Table.Td>
                         <Text fw={700} size="sm">
                           {installation.deployment_type === "cleanup"
-                            ? "Cleanup"
+                            ? t("results.cleanup", "Cleanup")
                             : installation.topology === "multi_node"
-                              ? "Multi-node installation"
-                              : "Single-node installation"}
+                              ? t("topology.multiNode", "Multi-node installation")
+                              : t("topology.singleNode", "Single-node installation")}
                         </Text>
                         <Text size="xs" c="dimmed">
                           {formatPhaseLabel(installation.phase)}
@@ -144,13 +147,13 @@ export default function InstallationHistoryView({
                       <Table.Td>
                         <Group gap="xs">
                           <Badge color="gray" variant="light">
-                            total {installation.targets.length}
+                            {t("history.totalTargets", { count: installation.targets.length, defaultValue: `total ${installation.targets.length}` })}
                           </Badge>
                           <Badge color="teal" variant="light">
-                            ok {installation.targets.filter((target) => target.status === "success").length}
+                            {t("history.okTargets", { count: installation.targets.filter((target) => target.status === "success").length, defaultValue: `ok ${installation.targets.filter((target) => target.status === "success").length}` })}
                           </Badge>
                           <Badge color="red" variant="light">
-                            failed {installation.targets.filter((target) => target.status === "failed").length}
+                            {t("history.failedTargets", { count: installation.targets.filter((target) => target.status === "failed").length, defaultValue: `failed ${installation.targets.filter((target) => target.status === "failed").length}` })}
                           </Badge>
                         </Group>
                       </Table.Td>
@@ -169,8 +172,8 @@ export default function InstallationHistoryView({
                                 onClick={() => void onInstallationCleanupLaunch(installation)}
                               >
                                 {requiresDifferentSystemCleanup
-                                  ? `Cleanup ${cleanupSystem ? getInstallerOption(cleanupSystem).label : "Target"}`
-                                  : "Cleanup"}
+                                  ? t("history.cleanupTarget", { target: cleanupSystem ? getInstallerOption(cleanupSystem).label : "Target", defaultValue: `Cleanup ${cleanupSystem ? getInstallerOption(cleanupSystem).label : "Target"}` })
+                                  : t("results.cleanup", "Cleanup")}
                               </Button>
                             )}
                           <Button
@@ -181,7 +184,7 @@ export default function InstallationHistoryView({
                             loading={deletingHistoryInstallationId === installation.id}
                             onClick={() => void onDeleteHistoryInstallation(installation.id)}
                           >
-                            Delete
+                            {t("common.delete", "Delete")}
                           </Button>
                         </Group>
                       </Table.Td>

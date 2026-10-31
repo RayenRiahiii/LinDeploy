@@ -1,8 +1,46 @@
 # Installation de LinDeploy
 
-Ce guide installe l'environnement de developpement actuel. Les commandes doivent etre adaptees avant une mise en production.
+Ce guide decrit l'installation et le deploiement de LinDeploy, soit en mode **conteneurise 1-Click avec Docker (fortement recommande)**, soit en **environnement de developpement local**.
 
-## 1. Prerequis du controleur
+---
+
+## 0. Deploiement Conteneurise 1-Click avec Docker (Recommande)
+
+C'est la methode recommandee pour faire tourner LinDeploy sur n'importe quel ordinateur ou serveur (**Windows, Linux, macOS**) sans avoir a installer Python, Node.js, Redis ou WSL sur la machine hote.
+
+Toute la pile applicative (Frontend React Nginx, Backend Django, Celery Worker avec Ansible natif Linux, Celery Beat, Redis et Passerelle Miroir) fonctionne de maniere isolee et optimisee dans des conteneurs.
+
+### Prerequis
+- Docker Desktop (Windows / macOS) ou Docker Engine avec Docker Compose v2 (Linux).
+
+### Lancement
+
+#### Sous Windows (PowerShell) :
+\\powershell
+.\start.ps1
+\
+#### Sous Linux ou macOS (Bash) :
+\\ash
+./start.sh
+\
+#### Ou directement avec Docker Compose :
+\\ash
+docker compose up -d --build
+\
+### Ce que le script effectue automatiquement :
+1. **Detection dynamique de l'IP reseau** : Detecte l'adresse IPv4 LAN active de votre machine hote.
+2. **Generation des certificats TLS** : Cree/met a jour automatiquement les certificats TLS pour la passerelle miroir locale.
+3. **Persistance des donnees** : Conserve et initialise la base de donnees SQLite dans \./data/db.sqlite3\.
+4. **Lancement des services** : Demarre les 10 conteneurs de services avec healthchecks.
+
+### Acces aux services :
+- **Dashboard Web** : \http://localhost:5173\ (ou \http://<IP-LAN>:5173\)
+- **API Backend** : \http://localhost:8000/api/- **Passerelle Miroir** : \https://<IP-LAN>:8443/cache/
+### Arret des conteneurs :
+- Sous Windows : \.\stop.ps1- Sous Linux / macOS : \./stop.sh- Ou : \docker compose down
+---
+
+## 1. Prerequis du controleur (Installation locale sans Docker)
 
 - Git;
 - Python 3.12 ou plus recent;

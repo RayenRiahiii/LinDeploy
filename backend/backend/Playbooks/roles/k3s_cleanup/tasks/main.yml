@@ -211,6 +211,7 @@
 - name: Remove project-managed K3s files
   shell: |
     rm -f {{ k3s_cleanup_project_file_paths | join(' ') }} /usr/bin/kubectl 2>/dev/null || true
+    rm -f {{ k3s_cleanup_project_file_paths | join(' ') }} 2>/dev/null || true
   changed_when: true
 
 - name: Remove root kubeconfig file managed by K3s role

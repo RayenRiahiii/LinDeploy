@@ -26,7 +26,9 @@ Playbooks/
 |   |-- k8s_cleanup.yml
 |   |-- k8s_full_uninstall.yml
 |   |-- k3s_single_node.yml
+|   |-- k3s_multi_node.yml
 |   |-- k3s_cleanup.yml
+|   |-- k3s_multi_node_cleanup.yml
 |   |-- openshift_sno.yml
 |   |-- openshift_mirror_prepare.yml
 |   |-- openshift_sno_disconnected.yml
@@ -45,7 +47,9 @@ Playbooks/
 - `k8s_cleanup.yml`: reset cluster state while retaining packages for reinstall.
 - `k8s_full_uninstall.yml`: remove Kubernetes cluster state and packages.
 - `k3s_single_node.yml`: complete K3s single-node installation.
-- `k3s_cleanup.yml`: remove K3s and its managed state.
+- `k3s_multi_node.yml`: complete K3s multi-node installation with server and agent roles.
+- `k3s_cleanup.yml`: remove K3s single-node and its managed state.
+- `k3s_multi_node_cleanup.yml`: remove K3s multi-node cluster and its managed state across targets.
 - `openshift_sno.yml`: connected SNO installation through Assisted Installer.
 - `openshift_mirror_prepare.yml`: install or reuse Quay and synchronize an exact
   OpenShift release with checksum-verified tools and `oc-mirror` v2.

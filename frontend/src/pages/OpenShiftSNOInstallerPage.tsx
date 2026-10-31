@@ -3,6 +3,7 @@ import { notifications } from "@mantine/notifications";
 import { IconArrowLeft, IconArrowRight, IconChecklist, IconHistory, IconId, IconKey, IconPlayerPlay, IconRefresh, IconServer2, IconTrash } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import PageHeader from "../components/common/PageHeader";
 import { getInstallerLogo } from "../features/installers/catalog";
 import DeploymentWizard, { type DeploymentWizardStep, type DeploymentWizardStepDefinition } from "../components/installers/DeploymentWizard";
@@ -15,13 +16,7 @@ import { buildOpenShiftPayload, canLaunchOpenShift, defaultOpenShiftValues, vali
 import type { OpenShiftHost, OpenShiftSNOFormValues, OpenShiftSecretBundlePayload, OpenShiftTemplate } from "../components/openshift/types";
 import { parseJsonResponse } from "../lib/api";
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
-const openshiftSteps: readonly DeploymentWizardStepDefinition[] = [
-  { label: "Cluster identity", description: "Name and release", icon: IconId },
-  { label: "KVM host and VM", description: "Compute and storage", icon: IconServer2 },
-  { label: "Network and access", description: "Addressing and credentials", icon: IconKey },
-  { label: "Review and launch", description: "Validate and approve", icon: IconChecklist },
-];
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 const stepFields: Array<Array<keyof OpenShiftSNOFormValues>> = [
   ["clusterName", "baseDomain", "openshiftVersion"],
   ["provisioningHostId", "vmName", "nodeName", "libvirtNetwork", "storagePool", "vcpu", "memoryGib", "diskGib", "installationDisk"],
@@ -33,8 +28,16 @@ type LaunchResponse = { installation_id: number; message?: string };
 type SecretResponse = { secret_reference: string; expires_at: string; message?: string };
 
 export default function OpenShiftSNOInstallerPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [values, setValues] = useState<OpenShiftSNOFormValues>(() => ({ ...defaultOpenShiftValues }));
+
+  const openshiftSteps: readonly DeploymentWizardStepDefinition[] = useMemo(() => [
+    { label: t("openshift.stepClusterIdentity", "Cluster identity"), description: t("openshift.stepClusterIdentityDesc", "Name and release"), icon: IconId },
+    { label: t("openshift.stepKvmHost", "KVM host and VM"), description: t("openshift.stepKvmHostDesc", "Compute and storage"), icon: IconServer2 },
+    { label: t("openshift.stepNetworkAccess", "Network and access"), description: t("openshift.stepNetworkAccessDesc", "Addressing and credentials"), icon: IconKey },
+    { label: t("openshift.stepReviewLaunch", "Review and launch"), description: t("openshift.stepReviewLaunchDesc", "Validate and approve"), icon: IconChecklist },
+  ], [t]);
   const sensitiveRef = useRef(values);
   const [activeStep, setActiveStep] = useState<DeploymentWizardStep>(0);
   const [hosts, setHosts] = useState<OpenShiftHost[]>([]);
@@ -207,17 +210,17 @@ export default function OpenShiftSNOInstallerPage() {
             style={{ width: 22, height: 22 }}
           />
         }
-        badge="OpenShift SNO Installer"
+        badge={t("openshift.badge", "OpenShift SNO Installer")}
         badgeColor="red"
         title={
           <InstallerLabel
-            label="Deploy Single Node OpenShift"
+            label={t("openshift.heading", "Deploy Single Node OpenShift")}
             withLogo
             installerId="openshift_sno"
             className="page-installer-heading"
           />
         }
-        subtitle="Create one OpenShift cluster as a KVM/libvirt virtual machine. LinDeploy validates the host, prepares the discovery ISO, installs RHCOS, and verifies the resulting cluster."
+        subtitle={t("openshift.subtitle", "Create one OpenShift cluster as a KVM/libvirt virtual machine. LinDeploy validates the host, prepares the discovery ISO, installs RHCOS, and verifies the resulting cluster.")}
         actions={
           <Group gap="sm">
             <Button
@@ -226,17 +229,17 @@ export default function OpenShiftSNOInstallerPage() {
               onClick={() => setReloadToken((value) => value + 1)}
               disabled={loading}
             >
-              Refresh
+              {t("common.refresh", "Refresh")}
             </Button>
             <Button
               variant="default"
               leftSection={<IconHistory size={16} />}
               onClick={() => navigate("/history")}
             >
-              History
+              {t("nav.history", "History")}
             </Button>
             <Button color="red" variant="light" onClick={() => setResetOpen(true)}>
-              Reset form
+              {t("openshift.resetForm", "Reset form")}
             </Button>
           </Group>
         }
@@ -249,22 +252,22 @@ export default function OpenShiftSNOInstallerPage() {
         executionStarted={submitting}
         disabled={submitting}
         steps={openshiftSteps}
-        title="OpenShift deployment"
-        description="Complete the four stages in order. Your configuration is preserved while you move between stages."
+        title={t("sections.openshift.badge", "OpenShift deployment")}
+        description={t("wizard.guidedDesc", "Complete the four stages in order. Your configuration is preserved while you move between stages.")}
         completedSteps={openshiftSteps.map((_, index) => index < activeStep)}
         onStepChange={setActiveStep}
       />
 
       {loadError && <Alert color="red" title="Controller options unavailable">{loadError}</Alert>}
       {!loading && !validTemplate && <Alert color="orange" title="Launch unavailable">The selected OpenShift workflow is not registered. Apply backend migrations and reload this page.</Alert>}
-      {loading ? <Card className="console-panel" padding="xl"><Group justify="center"><Loader size="sm" /><Text>Loading hosts and automation templates...</Text></Group></Card> : (
+      {loading ? <Card className="console-panel" padding="xl"><Group justify="center"><Loader size="sm" /><Text>{t("common.loading", "Loading hosts and automation templates...")}</Text></Group></Card> : (
         <Card className="console-panel openshift-workflow" padding="lg">
           <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
             <Box>
               <Title order={3}>{openshiftSteps[activeStep].label}</Title>
               <Text size="sm" c="dimmed" mt={4}>{openshiftSteps[activeStep].description}</Text>
             </Box>
-            <Badge color="red" variant="light">Step {activeStep + 1} of 4</Badge>
+            <Badge color="red" variant="light">{t("openshift.stepOf", { current: activeStep + 1, total: 4, defaultValue: `Step ${activeStep + 1} of 4` })}</Badge>
           </Group>
           <Box mt="lg">
             {activeStep === 0 && <ClusterIdentityStep values={values} errors={showStepErrors ? errors : {}} update={update} />}
@@ -274,20 +277,20 @@ export default function OpenShiftSNOInstallerPage() {
           </Box>
           {showStepErrors && blockingFields.length > 0 && <Alert mt="lg" color="red" title="Complete this step">Correct the {blockingFields.length} highlighted field{blockingFields.length === 1 ? "" : "s"} before continuing.</Alert>}
           <Group className="wizard-stage-actions" justify="space-between" mt="xl">
-            <Button variant="default" leftSection={<IconArrowLeft size={16} />} disabled={activeStep === 0 || submitting} onClick={() => { setShowStepErrors(false); setActiveStep((step) => Math.max(0, step - 1) as DeploymentWizardStep); }}>Back</Button>
-            {activeStep < 3 ? <Button rightSection={<IconArrowRight size={16} />} onClick={nextStep}>Continue</Button> : (
+            <Button variant="default" leftSection={<IconArrowLeft size={16} />} disabled={activeStep === 0 || submitting} onClick={() => { setShowStepErrors(false); setActiveStep((step) => Math.max(0, step - 1) as DeploymentWizardStep); }}>{t("common.back", "Back")}</Button>
+            {activeStep < 3 ? <Button rightSection={<IconArrowRight size={16} />} onClick={nextStep}>{t("common.continue", "Continue")}</Button> : (
               <Group>
-                <Button color="orange" variant="outline" leftSection={<IconTrash size={16} />} disabled={!cleanupTemplate || !selectedHostAvailable} onClick={() => setCleanupOpen(true)}>Cleanup SNO</Button>
-                <Button color="red" leftSection={<IconPlayerPlay size={16} />} disabled={!canLaunch} loading={submitting} onClick={() => void launchInstallation()}>Start SNO installation</Button>
+                <Button color="orange" variant="outline" leftSection={<IconTrash size={16} />} disabled={!cleanupTemplate || !selectedHostAvailable} onClick={() => setCleanupOpen(true)}>{t("openshift.cleanupSno", "Cleanup SNO")}</Button>
+                <Button color="red" leftSection={<IconPlayerPlay size={16} />} disabled={!canLaunch} loading={submitting} onClick={() => void launchInstallation()}>{t("openshift.startSno", "Start SNO installation")}</Button>
               </Group>
             )}
           </Group>
         </Card>
       )}
-      <Modal opened={resetOpen} onClose={() => setResetOpen(false)} title="Reset OpenShift configuration?" centered><Stack><Text size="sm">This clears every field, including sensitive values held in memory. No controller resource is changed.</Text><Group justify="flex-end"><Button variant="default" onClick={() => setResetOpen(false)}>Cancel</Button><Button color="red" onClick={resetForm}>Clear configuration</Button></Group></Stack></Modal>
+      <Modal opened={resetOpen} onClose={() => setResetOpen(false)} title="Reset OpenShift configuration?" centered><Stack><Text size="sm">This clears every field, including sensitive values held in memory. No controller resource is changed.</Text><Group justify="flex-end"><Button variant="default" onClick={() => setResetOpen(false)}>{t("common.cancel", "Cancel")}</Button><Button color="red" onClick={resetForm}>{t("openshift.clearConfig", "Clear configuration")}</Button></Group></Stack></Modal>
       <Modal opened={cleanupOpen} onClose={() => setCleanupOpen(false)} title="Remove the managed SNO environment?" size="md" centered>
         <Stack gap="md">
-          <Alert color="orange" title="Destructive cleanup">
+          <Alert color="orange" title={t("openshift.destructiveCleanup", "Destructive cleanup")}>
             LinDeploy will remove the managed VM <strong>{values.vmName}</strong> and its disks on the selected provisioning host. The local Quay mirror registry and mirrored releases are always preserved.
           </Alert>
           <Text size="sm" c="dimmed">Choose whether to preserve the generated Agent ISO image for faster subsequent installations:</Text>
@@ -295,32 +298,32 @@ export default function OpenShiftSNOInstallerPage() {
           <Card padding="sm" withBorder className="host-panel">
             <Stack gap="xs">
               <Group justify="space-between">
-                <Text fw={600} size="sm">Reset Cluster (Keep ISO)</Text>
+                <Text fw={600} size="sm">{t("openshift.resetKeepIso", "Reset Cluster (Keep ISO)")}</Text>
                 <Badge color="yellow" variant="light">Recommended</Badge>
               </Group>
               <Text size="xs" c="dimmed">
                 Removes the VM and disk, but keeps the generated ISO image and mirror cache so future reinstallations boot in seconds without waiting to generate assets.
               </Text>
               <Button color="orange" variant="light" size="xs" loading={submitting} onClick={() => void launchCleanup(true)}>
-                Reset & Keep ISO
+                {t("openshift.resetKeepIso", "Reset & Keep ISO")}
               </Button>
             </Stack>
           </Card>
 
           <Card padding="sm" withBorder className="host-panel">
             <Stack gap="xs">
-              <Text fw={600} size="sm">Full Uninstall (Purge All)</Text>
+              <Text fw={600} size="sm">{t("openshift.fullUninstall", "Full Uninstall (Purge All)")}</Text>
               <Text size="xs" c="dimmed">
                 Removes the VM, its disk, the runtime ISO from the storage pool, and deletes all cluster-specific installation assets.
               </Text>
               <Button color="red" variant="light" size="xs" loading={submitting} onClick={() => void launchCleanup(false)}>
-                Full Uninstall
+                {t("openshift.fullUninstall", "Full Uninstall")}
               </Button>
             </Stack>
           </Card>
 
           <Group justify="flex-end">
-            <Button variant="default" size="xs" onClick={() => setCleanupOpen(false)}>Cancel</Button>
+            <Button variant="default" size="xs" onClick={() => setCleanupOpen(false)}>{t("common.cancel", "Cancel")}</Button>
           </Group>
         </Stack>
       </Modal>

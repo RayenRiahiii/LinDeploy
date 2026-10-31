@@ -74,8 +74,8 @@ k3s_enforce_minimum_requirements: true
 k3s_min_server_vcpus: 2
 k3s_min_server_memory_mb: 2048
 k3s_remediate_incomplete_install: true
-k3s_startup_retries: 24
-k3s_startup_delay: 5
+k3s_startup_retries: 40
+k3s_startup_delay: 3
 
 k3s_stale_install_cleanup_paths:
   - /etc/rancher/k3s
@@ -93,11 +93,11 @@ k3s_stale_install_remove_paths:
   - /etc/systemd/system/k3s.service
   - /etc/systemd/system/k3s.service.env
 
-k3s_wait_for_kubeconfig_timeout: 180
-k3s_wait_for_apiserver_timeout: 180
+k3s_wait_for_kubeconfig_timeout: 120
+k3s_wait_for_apiserver_timeout: 120
 k3s_healthcheck_timeout: 300s
-k3s_healthcheck_retries: 30
-k3s_healthcheck_delay: 10
+k3s_healthcheck_retries: 40
+k3s_healthcheck_delay: 6
 
 k3s_manage_firewalld_rules: true
 k3s_required_listen_ports:

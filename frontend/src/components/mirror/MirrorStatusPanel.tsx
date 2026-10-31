@@ -16,6 +16,7 @@ import {
   IconDatabase,
   IconRefresh,
 } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 import { formatApiError, parseApiPayload, parseJsonResponse } from "../../lib/api";
 
 type MirrorComponentState = {
@@ -38,7 +39,7 @@ type MirrorStatus = {
   };
 };
 
-const BASE_URL = import.meta.env.VITE_DJANGO_BASE_URL;
+const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 const ACTIVE_STATES = new Set(["queued", "checking", "running"]);
 
 function statusColor(status: string) {
@@ -48,8 +49,8 @@ function statusColor(status: string) {
   return "gray";
 }
 
-function formatDate(value: string) {
-  if (!value) return "Not checked yet";
+function formatDate(value: string, fallback: string) {
+  if (!value) return fallback;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
@@ -61,13 +62,14 @@ function ComponentStatus({
   name: string;
   state: MirrorComponentState;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="mirror-component-status">
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <div>
           <Text fw={700}>{name}</Text>
           <Text size="sm" c="dimmed">
-            Active: {state.active_version || "Not prewarmed"}
+            {t("mirror.active", { version: state.active_version || t("mirror.notPrewarmed", "Not prewarmed"), defaultValue: `Active: ${state.active_version || "Not prewarmed"}` })}
           </Text>
         </div>
         <Badge color={statusColor(state.status)} variant="light">
@@ -75,13 +77,13 @@ function ComponentStatus({
         </Badge>
       </Group>
       <Text size="sm" mt="sm">
-        Available: <strong>{state.available_version || "Pending check"}</strong>
+        {t("mirror.available", { version: state.available_version || "Pending check", defaultValue: `Available: ${state.available_version || "Pending check"}` })}
       </Text>
       <Text size="xs" c="dimmed" mt={4}>
-        Last check: {formatDate(state.last_checked_at)}
+        {t("mirror.lastCheck", { date: formatDate(state.last_checked_at, t("mirror.notCheckedYet", "Not checked yet")), defaultValue: `Last check: ${formatDate(state.last_checked_at, "Not checked yet")}` })}
       </Text>
       <Text size="xs" c="dimmed">
-        Last ready: {formatDate(state.last_prewarm_at)}
+        {t("mirror.lastReady", { date: formatDate(state.last_prewarm_at, t("mirror.notCheckedYet", "Not checked yet")), defaultValue: `Last ready: ${formatDate(state.last_prewarm_at, "Not checked yet")}` })}
       </Text>
       {state.error && (
         <Text size="xs" c="red" mt="xs">
@@ -93,6 +95,7 @@ function ComponentStatus({
 }
 
 export default function MirrorStatusPanel() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<MirrorStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<"check" | "force" | "">("");
@@ -162,14 +165,14 @@ export default function MirrorStatusPanel() {
             <IconDatabase size={20} />
           </div>
           <div>
-            <Title order={3}>Local Mirror</Title>
+            <Title order={3}>{t("mirror.title", "Local Mirror")}</Title>
             <Text c="dimmed" size="sm" mt={4}>
-              Verified Kubernetes and K3s content cached on the LAN for faster deployments.
+              {t("mirror.description", "Verified Kubernetes and K3s content cached on the LAN for faster deployments.")}
             </Text>
           </div>
         </Group>
         <Badge color={status?.enabled ? "teal" : "gray"} variant="light">
-          {status?.enabled ? "Enabled" : "Disabled"}
+          {status?.enabled ? t("common.enabled", "Enabled") : t("common.disabled", "Disabled")}
         </Badge>
       </Group>
 
@@ -187,7 +190,7 @@ export default function MirrorStatusPanel() {
           </SimpleGrid>
           <Group justify="space-between" align="center" gap="sm">
             <Text size="xs" c="dimmed">
-              Automatic stable-release check every {status.interval_hours} hours.
+              {t("mirror.autoCheck", { hours: status.interval_hours, defaultValue: `Automatic stable-release check every ${status.interval_hours} hours.` })}
             </Text>
             <Group gap="sm">
               <Button
@@ -197,7 +200,7 @@ export default function MirrorStatusPanel() {
                 disabled={prewarmActive || action === "force"}
                 onClick={() => void requestPrewarm(false)}
               >
-                Check for updates
+                {t("mirror.checkForUpdates", "Check for updates")}
               </Button>
               <Button
                 leftSection={prewarmActive ? <IconCloudDownload size={16} /> : <IconBolt size={16} />}
@@ -205,7 +208,7 @@ export default function MirrorStatusPanel() {
                 disabled={action === "check"}
                 onClick={() => void requestPrewarm(true)}
               >
-                {prewarmActive ? "Prewarming" : "Prewarm now"}
+                {prewarmActive ? t("mirror.prewarming", "Prewarming") : t("mirror.prewarmNow", "Prewarm now")}
               </Button>
             </Group>
           </Group>

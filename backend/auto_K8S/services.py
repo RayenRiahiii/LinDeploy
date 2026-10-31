@@ -878,23 +878,57 @@ def apply_playbook_results(targets, stdout_text, stderr_text, return_code):
     failed_count = 0
 
     for target in targets:
-        recap = recap_by_host.get(target.host.name)
+        recap = (
+            recap_by_host.get(target.host.name)
+            or recap_by_host.get(target.host.hostname)
+            or recap_by_host.get(target.host.ip_address)
+            or next(
+                (v for k, v in recap_by_host.items() if k.lower() == target.host.name.lower()),
+                None,
+            )
+        )
 
         if recap is not None:
             host_failed = recap["failed"] > 0 or recap["unreachable"] > 0
-            target_status = (
-                InstallationTarget.Status.FAILED
-                if host_failed
-                else InstallationTarget.Status.SUCCESS
-            )
-            output = recap["line"]
+            if (
+                target.installation.topology == Installation.Topology.MULTI_NODE
+                and return_code != 0
+                and not host_failed
+            ):
+                target_status = InstallationTarget.Status.FAILED
+                output = f"Multi-node execution aborted because another host encountered a blocking failure. ({recap['line']})"
+            else:
+                target_status = (
+                    InstallationTarget.Status.FAILED
+                    if host_failed
+                    else InstallationTarget.Status.SUCCESS
+                )
+                output = recap["line"]
         else:
             target_status = InstallationTarget.Status.FAILED
+            diagnostic = ""
+            if return_code != 0:
+                combined_lines = [
+                    line.strip()
+                    for line in f"{stderr_text or ''}\n{stdout_text or ''}".splitlines()
+                    if line.strip()
+                ]
+                for line in combined_lines:
+                    if any(
+                        marker in line.lower()
+                        for marker in ("[error]", "error!", "syntax error", "fatal:")
+                    ):
+                        diagnostic = line
+                        break
             output = (
                 "Ansible returned without a PLAY RECAP. The execution result "
                 "cannot be verified and is treated as failed."
                 if return_code == 0
-                else "Host status could not be resolved from Ansible PLAY RECAP."
+                else (
+                    f"Host status could not be resolved from Ansible PLAY RECAP ({diagnostic})."
+                    if diagnostic
+                    else "Host status could not be resolved from Ansible PLAY RECAP."
+                )
             )
 
         if target_status == InstallationTarget.Status.SUCCESS:
@@ -1649,13 +1683,6 @@ def request_installation_cancellation(installation):
     current_pid = installation.runner_pid
     was_pending = installation.status == Installation.Status.PENDING
 
-    is_reset = False
-    if installation.template and "reset" in (installation.template.name or "").lower():
-        is_reset = True
-    template_dep_type = getattr(installation.template, "deployment_type", None) if installation.template else None
-    is_cleanup = is_reset or template_dep_type == InstallationTemplate.DeploymentType.CLEANUP
-    action_label = "Cluster reset" if is_reset else "Cleanup" if is_cleanup else "Installation"
-
     update_installation(
         installation,
         status=Installation.Status.CANCELLED,
@@ -1664,9 +1691,9 @@ def request_installation_cancellation(installation):
         cancel_requested=True,
         finished_at=installation.finished_at or timezone.now(),
         summary_message=(
-            f"{action_label} cancelled before worker execution started."
+            "Installation cancelled before worker execution started."
             if was_pending and not current_pid
-            else f"{action_label} cancelled by user. The running process was stopped."
+            else "Installation cancelled by user. The running process was stopped."
         ),
     )
 
@@ -2259,7 +2286,7 @@ def execute_installation(installation_id, task=None):
             if failed_targets == 0 and result.returncode == 0
             else (
                 Installation.Status.PARTIAL_SUCCESS
-                if successful_targets > 0
+                if successful_targets > 0 and installation.topology != Installation.Topology.MULTI_NODE
                 else Installation.Status.FAILED
             )
         )

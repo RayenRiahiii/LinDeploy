@@ -1,0 +1,171 @@
+name: lindeploy
+
+include:
+  - infra/mirror/compose.yaml
+
+x-backend-environment: &backend-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-Do7O9LXcHQ2YA3c64TocY1ktmY879q1R4JFkY9rK-23pAzcfqrR3WsWJfKEexF4b9DGjGsX52Oay1x0kvO5VHQ}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+  DJANGO_TIME_ZONE: ${DJANGO_TIME_ZONE:-UTC}
+  USE_SQLITE: "True"
+  SQLITE_PATH: /app/data/db.sqlite3
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://${LINDEPLOY_HOST_IP:-127.0.0.1}:5173,http://localhost,http://127.0.0.1,http://${LINDEPLOY_HOST_IP:-127.0.0.1}}
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://${LINDEPLOY_HOST_IP:-127.0.0.1}:5173,http://localhost,http://127.0.0.1,http://${LINDEPLOY_HOST_IP:-127.0.0.1}}
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/0
+  CELERY_TASK_DEFAULT_QUEUE: lindeploy
+  ANSIBLE_RUNNER_BACKEND: linux
+  ANSIBLE_TIMEOUT: "15"
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+  ANSIBLE_SSH_ARGS: "-C -o ControlMaster=auto -o ControlPersist=1800s -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+  LINDEPLOY_MIRROR_ROOT: /infra/mirror
+  LINDEPLOY_MIRROR_ENABLED: ${LINDEPLOY_MIRROR_ENABLED:-True}
+  LINDEPLOY_MIRROR_CACHE_REQUIRED: "False"
+  LINDEPLOY_KUBERNETES_PROFILE_ID: ${LINDEPLOY_KUBERNETES_PROFILE_ID:-kubernetes-v1.36.4-amd64-all-supported}
+  LINDEPLOY_K3S_PROFILE_ID: ${LINDEPLOY_K3S_PROFILE_ID:-k3s-v1.36.4+k3s1-amd64-all-supported}
+  LINDEPLOY_MIRROR_ALLOW_INSECURE_HTTP: "False"
+  LINDEPLOY_REGISTRY_MIRRORS_JSON: '{"registry.k8s.io":"https://${LINDEPLOY_HOST_IP:-127.0.0.1}:5001","quay.io":"https://${LINDEPLOY_HOST_IP:-127.0.0.1}:5002","docker.io":"https://${LINDEPLOY_HOST_IP:-127.0.0.1}:5003"}'
+  LINDEPLOY_MIRROR_CA_CERTIFICATE_FILE: /infra/mirror/runtime/certs/ca.crt
+  LINDEPLOY_SYSTEM_PACKAGE_CACHE_ENABLED: "False"
+  LINDEPLOY_PACKAGE_MIRROR_BASE_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache
+  LINDEPLOY_K3S_INSTALL_SCRIPT_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/get.k3s.io/
+  LINDEPLOY_K3S_CHANNEL_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/update.k3s.io/v1-release/channels
+  LINDEPLOY_K3S_ARTIFACT_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/github.com/k3s-io/k3s/releases/download
+  LINDEPLOY_CALICO_MANIFEST_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/raw.githubusercontent.com/projectcalico/calico/v3.32.0/manifests/calico.yaml
+  LINDEPLOY_CONTAINERD_RPM_BASEURL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/download.docker.com/linux/centos/9/x86_64/stable/
+  LINDEPLOY_CONTAINERD_RPM_GPGKEY: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/download.docker.com/linux/centos/gpg
+  LINDEPLOY_CONTAINERD_APT_REPO_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/download.docker.com/linux/ubuntu
+  LINDEPLOY_CONTAINERD_APT_KEY_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/download.docker.com/linux/ubuntu/gpg
+  LINDEPLOY_KUBERNETES_RPM_BASEURL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/
+  LINDEPLOY_KUBERNETES_RPM_GPGKEY: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/repomd.xml.key
+  LINDEPLOY_KUBERNETES_APT_REPO_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/deb/
+  LINDEPLOY_KUBERNETES_APT_KEY_URL: https://${LINDEPLOY_HOST_IP:-127.0.0.1}:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/deb/Release.key
+  LINDEPLOY_MIRROR_PREWARM_INTERVAL_HOURS: "24"
+  LINDEPLOY_MIRROR_PREWARM_TIMEOUT_SECONDS: "10800"
+  OPENSHIFT_MIRROR_REGISTRY: ${OPENSHIFT_MIRROR_REGISTRY:-registry.lab.test:8443}
+  OPENSHIFT_MIRROR_VERSION: ${OPENSHIFT_MIRROR_VERSION:-4.20.3}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: lindeploy-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lindeploy-backend
+    restart: unless-stopped
+    command: ["web"]
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./data:/app/data
+      - ./backend/backend/Playbooks:/app/backend/Playbooks
+      - ./infra/mirror:/infra/mirror
+      - backend-runtime:/app/runtime
+      - backend-logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+      - mirror
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/hosts/', timeout=3)"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lindeploy-celery-worker
+    restart: unless-stopped
+    command: ["worker"]
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./data:/app/data
+      - ./backend/backend/Playbooks:/app/backend/Playbooks
+      - ./infra/mirror:/infra/mirror
+      - backend-runtime:/app/runtime
+      - backend-logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - default
+      - mirror
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lindeploy-celery-beat
+    restart: unless-stopped
+    command: ["beat"]
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./data:/app/data
+      - ./infra/mirror:/infra/mirror
+      - backend-runtime:/app/runtime
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - default
+      - mirror
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lindeploy-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  redis-data:
+  backend-runtime:
+  backend-logs:
+
+networks:
+  default:
+    name: lindeploy_network
+

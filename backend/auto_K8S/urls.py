@@ -1,7 +1,15 @@
 from django.urls import path
 from . import views
+from . import auth_views
 
 urlpatterns = [
+    # Authentication endpoints
+    path("auth/google/", auth_views.auth_google),
+    path("auth/login/", auth_views.auth_login),
+    path("auth/register/", auth_views.auth_register),
+    path("auth/me/", auth_views.auth_me),
+
+    # Application routes
     path("dashboard/", views.dashboard_summary),
     path("mirror/", views.mirror_status),
     path("mirror/prewarm/", views.prewarm_mirror),

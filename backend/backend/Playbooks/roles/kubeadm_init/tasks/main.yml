@@ -336,6 +336,11 @@
     path: "{{ kubeadm_kubectl_binary_path }}"
   register: kubeadm_kubectl_binary_stat
 
+- name: Verify packaged kubectl binary exists
+  fail:
+    msg: "Kubectl binary is missing at {{ kubeadm_kubectl_binary_path }}. Package installation may have been incomplete."
+  when: not (kubeadm_kubectl_binary_stat.stat.exists | default(false))
+
 - name: Ensure kubectl compatibility symlink exists
   file:
     src: "{{ kubeadm_kubectl_binary_path }}"
@@ -345,3 +350,16 @@
   when:
     - kubeadm_manage_kubectl_compat_symlink | bool
     - kubeadm_kubectl_binary_stat.stat.exists
+
+# ==================================================
+# 8. Verify Kubernetes API server readiness
+# ==================================================
+- name: Wait for Kubernetes API server readiness
+  command: >-
+    kubectl --kubeconfig={{ kubeadm_admin_conf_path }} get --raw=/readyz
+    {{ kubeadm_kubectl_binary_path }} --kubeconfig={{ kubeadm_admin_conf_path }} get --raw=/readyz
+  register: kubeadm_readyz_probe
+  changed_when: false
+  retries: 30
+  delay: 5
+  until: kubeadm_readyz_probe.rc == 0 and 'ok' in kubeadm_readyz_probe.stdout
