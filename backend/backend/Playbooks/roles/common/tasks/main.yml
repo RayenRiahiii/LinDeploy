@@ -12,6 +12,17 @@
   changed_when: false
   failed_when: false
 
+- name: Clean stale mirror references from RPM repositories
+  shell: |
+    if [ -d /etc/yum.repos.d ]; then
+      for f in /etc/yum.repos.d/*.repo; do
+        [ -f "$f" ] && sed -i '/:8443\/cache/ { /{{ lindeploy_host_ip | default("127.0.0.1") }}/!s|https\?://[0-9.]\+:8443/cache/||g }' "$f" 2>/dev/null || true
+      done
+    fi
+  when: ansible_facts["os_family"] == "RedHat"
+  changed_when: false
+  failed_when: false
+
 - name: Install LinDeploy mirror CA on Red Hat family
   copy:
     dest: "{{ common_mirror_ca_path_redhat }}"
