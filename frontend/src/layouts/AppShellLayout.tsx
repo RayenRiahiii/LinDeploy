@@ -239,7 +239,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
             </Box>
 
             <Box className="topbar-panel">
-              <Group gap={6} className="topbar-nav" wrap="nowrap">
+              <Group gap={4} className="topbar-nav" wrap="nowrap">
                 {navigationItems.map((item) => {
                   const active = isActive(location.pathname, item.route);
                   const Icon = item.icon;
@@ -252,13 +252,13 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                       className={`orb-nav-link${active ? " is-active" : ""}`}
                     >
                       <ThemeIcon
-                        size={36}
+                        size={32}
                         radius="xl"
                         variant={active ? "filled" : "light"}
                         color={active ? "red" : "gray"}
                         className="orb-nav-icon"
                       >
-                        <Icon size={18} />
+                        <Icon size={16} />
                       </ThemeIcon>
                       <span className="orb-nav-copy">
                         <span className="orb-nav-title">{item.label}</span>
@@ -271,15 +271,15 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
             </Box>
 
             <Box className="hero-terminal topbar-terminal">
-              <Group gap="sm" justify="space-between" wrap="nowrap">
+              <Group gap={6} justify="space-between" wrap="nowrap">
                 <div className="topbar-terminal-copy">
                   <Text className="hero-terminal-line topbar-terminal-label">$ {t("topbar.workspace", "workspace")}</Text>
                   <Text className="hero-terminal-line topbar-terminal-value">{meta.terminalSection}</Text>
                 </div>
-                <Group gap={8} wrap="nowrap">
+                <Group gap={6} wrap="nowrap">
                   <LanguageSelector />
                   <ActionIcon
-                    size={34}
+                    size={30}
                     radius="xl"
                     variant="light"
                     color={colorScheme === "dark" ? "yellow" : "dark"}
@@ -287,7 +287,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                     aria-label={colorScheme === "dark" ? t("topbar.switchToLight", "Switch to light mode") : t("topbar.switchToDark", "Switch to dark mode")}
                     className="theme-toggle-button"
                   >
-                    {colorScheme === "dark" ? <IconSun size={18} /> : <IconMoonStars size={18} />}
+                    {colorScheme === "dark" ? <IconSun size={15} /> : <IconMoonStars size={15} />}
                   </ActionIcon>
                   {user && (
                     <Menu shadow="md" width={220} position="bottom-end">
@@ -297,9 +297,9 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            gap: 7,
-                            height: 34,
-                            padding: "0 10px 0 4px",
+                            gap: 5,
+                            height: 30,
+                            padding: "0 8px 0 3px",
                             borderRadius: 999,
                             background: colorScheme === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
                             border: colorScheme === "dark" ? "1px solid rgba(255, 255, 255, 0.12)" : "1px solid rgba(0, 0, 0, 0.1)",
@@ -310,8 +310,8 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                         >
                           <Box
                             style={{
-                              width: 24,
-                              height: 24,
+                              width: 22,
+                              height: 22,
                               borderRadius: "50%",
                               display: "flex",
                               alignItems: "center",
@@ -325,21 +325,21 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                               flexShrink: 0,
                             }}
                           >
-                            <IconUser size={13} stroke={2} />
+                            <IconUser size={12} stroke={2} />
                           </Box>
                           <Text
                             size="xs"
                             fw={600}
                             truncate
                             style={{
-                              maxWidth: 90,
+                              maxWidth: 75,
                               color: "var(--text-primary)",
                               letterSpacing: "0.2px",
                             }}
                           >
                             {user.first_name || user.username}
                           </Text>
-                          <IconChevronDown size={11} stroke={2} style={{ opacity: 0.5, marginLeft: -2 }} />
+                          <IconChevronDown size={10} stroke={2} style={{ opacity: 0.5, marginLeft: -2 }} />
                         </UnstyledButton>
                       </Menu.Target>
                       <Menu.Dropdown>

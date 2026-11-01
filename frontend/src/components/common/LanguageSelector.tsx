@@ -28,24 +28,24 @@ export default function LanguageSelector() {
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 6,
-            height: 34,
-            padding: "0 10px",
+            gap: 5,
+            height: 30,
+            padding: "0 8px",
             borderRadius: 999,
             background: isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
             border: isDark ? "1px solid rgba(255, 255, 255, 0.12)" : "1px solid rgba(0, 0, 0, 0.1)",
             cursor: "pointer",
             transition: "all 0.15s ease",
-            fontSize: 13.5,
+            fontSize: 12,
             fontWeight: 700,
             color: "var(--text-primary, inherit)",
           }}
         >
-          <IconWorld size={17} style={{ opacity: 0.8 }} />
-          <Text size="xs" fw={700} style={{ letterSpacing: "0.5px" }}>
+          <IconWorld size={14} style={{ opacity: 0.8 }} />
+          <Text size="xs" fw={700} style={{ letterSpacing: "0.5px", fontSize: 11 }}>
             {currentObj.tag}
           </Text>
-          <IconChevronDown size={13} style={{ opacity: 0.6 }} />
+          <IconChevronDown size={11} style={{ opacity: 0.6 }} />
         </UnstyledButton>
       </Menu.Target>
 
