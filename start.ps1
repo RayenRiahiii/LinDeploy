@@ -20,6 +20,62 @@ Write-Host "==========================================================" -Foregro
 Write-Host "             LinDeploy Container Launcher                 " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
+# 0. Docker Daemon Verification & Auto-Start
+Write-Host "[0/5] Checking Docker daemon status..." -ForegroundColor Yellow
+$DockerCli = Get-Command "docker" -ErrorAction SilentlyContinue
+if (-not $DockerCli) {
+    Write-Host "`n[ERROR] Docker CLI was not found on your system." -ForegroundColor Red
+    Write-Host "Please install Docker Desktop (https://www.docker.com/products/docker-desktop/) and ensure 'docker' is in your PATH." -ForegroundColor Yellow
+    exit 1
+}
+
+$IsDockerRunning = $false
+try {
+    $null = & docker info --format '{{.ServerVersion}}' 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $IsDockerRunning = $true
+    }
+} catch {
+    $IsDockerRunning = $false
+}
+
+if (-not $IsDockerRunning) {
+    Write-Host "      Docker daemon is not responding. Attempting to start Docker Desktop..." -ForegroundColor Cyan
+    $DesktopCandidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe"),
+        "C:\Program Files\Docker\Docker\Docker Desktop.exe",
+        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe")
+    )
+    $DesktopExe = $DesktopCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+    if ($DesktopExe) {
+        Start-Process -FilePath $DesktopExe
+        Write-Host "      Waiting for Docker daemon to become ready (this may take up to 45 seconds)..." -ForegroundColor Yellow
+        $TimeoutSeconds = 60
+        $Elapsed = 0
+        while ($Elapsed -lt $TimeoutSeconds) {
+            Start-Sleep -Seconds 3
+            $Elapsed += 3
+            try {
+                $null = & docker info --format '{{.ServerVersion}}' 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $IsDockerRunning = $true
+                    Write-Host "`n      Docker daemon is now ready!" -ForegroundColor Green
+                    break
+                }
+            } catch {}
+            Write-Host -NoNewline "."
+        }
+    }
+}
+
+if (-not $IsDockerRunning) {
+    Write-Host "`n[ERROR] Unable to connect to Docker daemon." -ForegroundColor Red
+    Write-Host "Please ensure Docker Desktop is open and shows 'Engine running', then re-run .\start.ps1" -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "      Docker daemon is active and healthy." -ForegroundColor Green
+
 # 1. IP Detection
 if ($HostIp) {
     $DetectedIp = $HostIp
@@ -115,8 +171,16 @@ $EnvLines | Set-Content -Path $EnvDockerPath -Encoding utf8
 Write-Host "[5/5] Starting Docker Compose services..." -ForegroundColor Yellow
 $BuildFlag = if ($NoBuild) { "" } else { "--build" }
 
-$ComposeCmd = "docker compose --env-file .env.docker up -d $BuildFlag"
-Invoke-Expression $ComposeCmd
+$ComposeArgs = @("compose", "--env-file", $EnvDockerPath, "up", "-d")
+if (-not $NoBuild) {
+    $ComposeArgs += "--build"
+}
+& docker @ComposeArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "`n[ERROR] Docker Compose failed to start services (Exit code: $LASTEXITCODE)." -ForegroundColor Red
+    Write-Host "Please check the error output above for details." -ForegroundColor Yellow
+    exit $LASTEXITCODE
+}
 
 Write-Host "`n==========================================================" -ForegroundColor Green
 Write-Host "           LinDeploy is Running Successfully!             " -ForegroundColor Green

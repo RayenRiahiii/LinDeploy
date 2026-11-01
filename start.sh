@@ -28,6 +28,26 @@ echo "=========================================================="
 echo "             LinDeploy Container Launcher                 "
 echo "=========================================================="
 
+# 0. Docker Daemon Verification
+echo "[0/5] Checking Docker daemon status..."
+if ! command -v docker >/dev/null 2>&1; then
+    echo "[ERROR] Docker CLI not found. Please install Docker and ensure it is in your PATH." >&2
+    exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "      Docker daemon is not responding. Attempting to start service..."
+    if command -v systemctl >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+        systemctl start docker || true
+    fi
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "[ERROR] Unable to connect to Docker daemon. Please ensure Docker is running." >&2
+    exit 1
+fi
+echo "      Docker daemon is active and healthy."
+
 # 1. IP Detection
 if [ -n "$HOST_IP" ]; then
     DETECTED_IP="$HOST_IP"
