@@ -6,7 +6,8 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from celery.result import AsyncResult
 
@@ -43,6 +44,13 @@ from .services import (
 from .mirror import mirror_status_payload, queue_mirror_prewarm, read_mirror_state
 from .runners import get_runner
 from .tasks import run_installation_task, run_mirror_prewarm_task
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def health_check(request):
+    """Liveness probe for container orchestrators without sensitive data exposure."""
+    return Response({"status": "ok", "service": "lindeploy-backend"}, status=200)
 
 
 @api_view(["POST"])
@@ -1008,6 +1016,34 @@ def launch_installation(request):
         item["host_id"]: item for item in normalized_host_overrides
     }
     with transaction.atomic():
+        # Lock target hosts in deterministic order to prevent concurrent race conditions
+        list(Host.objects.select_for_update().filter(id__in=host_ids).order_by("id"))
+
+        active_busy = InstallationTarget.objects.filter(
+            host_id__in=host_ids,
+            installation__status__in=(
+                Installation.Status.PENDING,
+                Installation.Status.RUNNING,
+            ),
+        ).select_related("host", "installation")
+        if active_busy.exists():
+            busy_hosts = [
+                {
+                    "host_id": target.host_id,
+                    "host_name": target.host.name,
+                    "installation_id": target.installation_id,
+                    "installation_status": target.installation.status,
+                }
+                for target in active_busy
+            ]
+            return Response(
+                {
+                    "message": "Some selected hosts are already used by an active execution.",
+                    "errors": {"busy_hosts": busy_hosts},
+                },
+                status=409,
+            )
+
         installation = Installation.objects.create(
             template=template,
             topology=topology,
@@ -1045,9 +1081,23 @@ def launch_installation(request):
                 cluster_name=overrides_by_host_id[host.id]["cluster_name"],
             )
 
-    celery_result = run_installation_task.delay(installation.id)
-    installation.celery_task_id = celery_result.id
-    installation.save(update_fields=["celery_task_id", "updated_at"])
+    try:
+        celery_result = run_installation_task.delay(installation.id)
+        installation.celery_task_id = celery_result.id
+        installation.save(update_fields=["celery_task_id", "updated_at"])
+    except Exception as exc:
+        installation.status = Installation.Status.FAILED
+        installation.phase = Installation.Phase.FAILED
+        installation.summary_message = f"Failed to dispatch execution task: {str(exc)}"
+        installation.save(update_fields=["status", "phase", "summary_message", "updated_at"])
+        installation.targets.update(status=InstallationTarget.Status.FAILED)
+        return Response(
+            {
+                "message": f"Failed to dispatch execution task: {str(exc)}",
+                "installation_id": installation.id,
+            },
+            status=503,
+        )
 
     return Response(
         {
@@ -1189,9 +1239,23 @@ def retry_openshift_installation(request, id):
                 cluster_name=target.cluster_name,
             )
 
-    celery_result = run_installation_task.delay(restarted.id)
-    restarted.celery_task_id = celery_result.id
-    restarted.save(update_fields=["celery_task_id", "updated_at"])
+    try:
+        celery_result = run_installation_task.delay(restarted.id)
+        restarted.celery_task_id = celery_result.id
+        restarted.save(update_fields=["celery_task_id", "updated_at"])
+    except Exception as exc:
+        restarted.status = Installation.Status.FAILED
+        restarted.phase = Installation.Phase.FAILED
+        restarted.summary_message = f"Failed to dispatch retry execution: {str(exc)}"
+        restarted.save(update_fields=["status", "phase", "summary_message", "updated_at"])
+        restarted.targets.update(status=InstallationTarget.Status.FAILED)
+        return Response(
+            {
+                "message": f"Failed to dispatch retry task: {str(exc)}",
+                "installation_id": restarted.id,
+            },
+            status=503,
+        )
 
     return Response(
         {

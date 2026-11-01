@@ -1,11 +1,21 @@
 import json
 import tempfile
 import threading
+from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import Mock, patch
 from pathlib import Path
+
+User = get_user_model()
+
+
+def make_authenticated_client(username="test_api_user"):
+    user, _ = User.objects.get_or_create(username=username, defaults={"email": f"{username}@example.com"})
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
 
 from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate, MirrorProfile
 from .runners.linux_runner import LinuxRunner
@@ -137,7 +147,7 @@ playbook: playbooks/k8s_single_node.yml
 
 class MirrorApiTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = make_authenticated_client("mirror_test_user")
 
     @override_settings(LINDEPLOY_MIRROR_ENABLED=False)
     def test_mirror_status_reports_disabled_state(self):
@@ -263,8 +273,8 @@ class TopologyInventoryTests(TestCase):
         self.assertIn("    selected_hosts:\n      hosts:\n", inventory)
         self.assertNotIn("        control_plane:", inventory)
         self.assertNotIn("lindeploy_desired_role", inventory)
-        self.assertIn('lindeploy_node_name: "production-control-01"', inventory)
-        self.assertIn('lindeploy_cluster_name: "kubernetes-production-control-01"', inventory)
+        self.assertIn("lindeploy_node_name: production-control-01", inventory)
+        self.assertIn("lindeploy_cluster_name: kubernetes-production-control-01", inventory)
 
     def test_multi_node_inventory_groups_hosts_and_marks_bootstrap(self):
         inventory_path = build_inventory_file(
@@ -282,7 +292,7 @@ class TopologyInventoryTests(TestCase):
         self.assertIn("lindeploy_is_bootstrap: true", inventory)
         self.assertIn("lindeploy_desired_role: control_plane", inventory)
         self.assertIn("lindeploy_desired_role: worker", inventory)
-        self.assertIn('lindeploy_node_name: "production-worker-01"', inventory)
+        self.assertIn("lindeploy_node_name: production-worker-01", inventory)
 
     def test_multi_node_inventory_rejects_missing_bootstrap(self):
         with self.assertRaisesMessage(ValueError, "reachable bootstrap host"):
@@ -502,6 +512,113 @@ class CredentialSerializerTests(TestCase):
 
         self.assertTrue(serializer.is_valid(), serializer.errors)
         self.assertEqual(serializer.validated_data["password"], "")
+
+    def test_secrets_are_omitted_from_serialized_output(self):
+        cred = Credential.objects.create(
+            name="cred-hidden",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="secuser",
+            password="super-secret-password",
+            become_password="super-become-password",
+        )
+        data = CredentialSerializer(cred).data
+        self.assertNotIn("password", data)
+        self.assertNotIn("become_password", data)
+        self.assertNotIn("private_key", data)
+        self.assertTrue(data.get("has_password"))
+        self.assertTrue(data.get("has_become_password"))
+        self.assertFalse(data.get("has_private_key"))
+
+    def test_update_preserves_existing_password_when_omitted(self):
+        cred = Credential.objects.create(
+            name="cred-preserve",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="secuser",
+            password="my-existing-password",
+        )
+        serializer = CredentialSerializer(
+            cred,
+            data={"name": "cred-preserve-renamed"},
+            partial=True,
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        updated = serializer.save()
+        self.assertEqual(updated.password, "my-existing-password")
+
+
+class ApiSecurityAndVaultTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_unauthenticated_api_endpoints_return_401(self):
+        self.assertEqual(self.client.get("/api/hosts/").status_code, 401)
+        self.assertEqual(self.client.get("/api/credentials/").status_code, 401)
+        self.assertEqual(self.client.get("/api/dashboard/").status_code, 401)
+        self.assertEqual(self.client.get("/api/templates/").status_code, 401)
+
+    def test_public_health_check_returns_200_unauthenticated(self):
+        response = self.client.get("/api/health/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json().get("status"), "ok")
+
+    def test_public_registration_never_grants_admin_privileges(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            {
+                "email": "attacker@example.com",
+                "username": "attacker",
+                "password": "Password123!",
+                "is_staff": True,
+                "is_superuser": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        user = User.objects.get(username="attacker")
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+
+    def test_vault_encrypt_decrypt_roundtrip(self):
+        from .vault import decrypt_secret, encrypt_secret, is_encrypted
+
+        raw_secret = "P@ssw0rd with spaces and 'quotes' & symbols!"
+        encrypted = encrypt_secret(raw_secret)
+        self.assertTrue(is_encrypted(encrypted))
+        self.assertNotEqual(encrypted, raw_secret)
+        self.assertEqual(decrypt_secret(encrypted), raw_secret)
+
+        # Legacy plaintext passthrough
+        self.assertEqual(decrypt_secret("unencrypted-legacy-secret"), "unencrypted-legacy-secret")
+
+    def test_encrypt_credentials_management_command_and_rollback(self):
+        from django.core.management import call_command
+        from .vault import is_encrypted
+
+        cred = Credential.objects.create(
+            name="cmd-cred",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="cmduser",
+            password="test-command-password",
+            become_password="test-command-become",
+        )
+
+        # Dry run does not persist
+        call_command("encrypt_credentials", dry_run=True)
+        cred.refresh_from_db()
+        self.assertFalse(is_encrypted(cred.password))
+
+        # Real encryption
+        call_command("encrypt_credentials")
+        cred.refresh_from_db()
+        self.assertTrue(is_encrypted(cred.password))
+        self.assertTrue(is_encrypted(cred.become_password))
+
+        # Rollback decryption
+        call_command("encrypt_credentials", decrypt=True)
+        cred.refresh_from_db()
+        self.assertFalse(is_encrypted(cred.password))
+        self.assertEqual(cred.password, "test-command-password")
+        self.assertEqual(cred.become_password, "test-command-become")
 
 
 class TemplateSerializerTests(TestCase):
@@ -911,7 +1028,7 @@ class HostSerializerTests(TestCase):
 
 class DashboardApiTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = make_authenticated_client("dashboard_user")
         credential = Credential.objects.create(
             name="cred-1",
             auth_type=Credential.AuthType.PASSWORD,
@@ -942,7 +1059,7 @@ class DashboardApiTests(TestCase):
 
 class TemplatesApiTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = make_authenticated_client("templates_user")
         InstallationTemplate.objects.create(
             name="k8s-template",
             system_type=InstallationTemplate.SystemType.KUBERNETES,
@@ -967,7 +1084,7 @@ class TemplatesApiTests(TestCase):
 
 class HostDetectionApiTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = make_authenticated_client("host_detect_user")
         self.credential = Credential.objects.create(
             name="cred-detect",
             auth_type=Credential.AuthType.PASSWORD,
@@ -1009,7 +1126,7 @@ class HostDetectionApiTests(TestCase):
 
 class LaunchInstallationAutoModeTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = make_authenticated_client("launch_auto_user")
         self.credential = Credential.objects.create(
             name="cred-launch",
             auth_type=Credential.AuthType.PASSWORD,
@@ -1617,7 +1734,7 @@ class RunnerConfigTests(TestCase):
 
 class InstallationCancellationApiTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = make_authenticated_client("cancel_user")
         self.credential = Credential.objects.create(
             name="cred-cancel",
             auth_type=Credential.AuthType.PASSWORD,
@@ -1659,7 +1776,7 @@ class InstallationCancellationApiTests(TestCase):
 
 class InstallationHistoryApiTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = make_authenticated_client("history_user")
         self.template = InstallationTemplate.objects.create(
             name="history-template",
             playbook_path="playbooks/test_history_installation.yml",
@@ -1748,3 +1865,50 @@ class InstallationHistoryApiTests(TestCase):
                 self.assertEqual(lines[0]["line"], "live line 2")
                 self.assertEqual(progress["meta"]["next_offset"], 5)
                 self.assertEqual(progress["meta"]["total_lines"], 5)
+
+    def test_sanitize_log_line_redacts_passwords_with_spaces_and_quotes(self):
+        from .services import sanitize_log_line
+        test_inputs = [
+            'ansible_password: "my secret pass phrase"',
+            "ansible_password: 'single quoted phrase'",
+            "ansible_password: unquoted secret with spaces",
+            'ansible_become_password="sudo pass word", ansible_user=root',
+            "ansible_ssh_pass: complex@pass#123",
+        ]
+        for line in test_inputs:
+            sanitized = sanitize_log_line(line)
+            self.assertNotIn("secret pass phrase", sanitized)
+            self.assertNotIn("single quoted phrase", sanitized)
+            self.assertNotIn("sudo pass word", sanitized)
+            self.assertNotIn("complex@pass#123", sanitized)
+            self.assertIn("<redacted>", sanitized)
+
+    def test_build_inventory_file_handles_complex_passwords_safely(self):
+        import yaml
+        from .services import build_inventory_file
+        cred = Credential.objects.create(
+            name="complex-cred",
+            auth_type=Credential.AuthType.PASSWORD,
+            username="testuser",
+            password='P@ss"word with \\backslashes\\ and \n newlines and {{ jinja }}',
+            become_password='sudo "secret" with spaces',
+        )
+        host = Host.objects.create(
+            name="test-complex-node",
+            ip_address="192.168.1.50",
+            ssh_port=22,
+            credential=cred,
+        )
+        inv_path = build_inventory_file([host])
+        self.assertTrue(inv_path.exists())
+        content = inv_path.read_text(encoding="utf-8")
+        parsed = yaml.safe_load(content)
+        host_dict = parsed["all"]["children"]["selected_hosts"]["hosts"]["test-complex-node"]
+        self.assertEqual(
+            host_dict["ansible_password"],
+            'P@ss"word with \\backslashes\\ and \n newlines and {{ jinja }}',
+        )
+        self.assertEqual(
+            host_dict["ansible_become_password"],
+            'sudo "secret" with spaces',
+        )

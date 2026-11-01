@@ -22,7 +22,7 @@ function validValues() {
 }
 
 test("default values match the supported SNO baseline", () => {
-  assert.equal(form.defaultOpenShiftValues.openshiftVersion, "stable");
+  assert.equal(form.defaultOpenShiftValues.openshiftVersion, "4.20.3");
   assert.equal(form.defaultOpenShiftValues.vcpu, 8);
   assert.equal(form.defaultOpenShiftValues.memoryGib, 16);
   assert.equal(form.defaultOpenShiftValues.diskGib, 120);

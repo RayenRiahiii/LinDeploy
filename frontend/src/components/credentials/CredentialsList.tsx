@@ -40,9 +40,12 @@ type Credential = {
   name: string;
   auth_type: "ssh_key" | "password";
   username: string;
-  private_key: string;
-  password: string;
-  become_password: string;
+  private_key?: string;
+  password?: string;
+  become_password?: string;
+  has_password?: boolean;
+  has_become_password?: boolean;
+  has_private_key?: boolean;
   created_at?: string;
   updated_at?: string;
 };
@@ -81,12 +84,11 @@ const credentialApiErrorOptions = {
   },
 };
 
-function maskSecret(value: string) {
-  if (!value) {
-    return "-";
+function maskSecret(value?: string, isConfigured?: boolean) {
+  if (isConfigured || (value && value.length > 0)) {
+    return "••••••••";
   }
-
-  return "*".repeat(Math.min(10, Math.max(4, value.length)));
+  return "-";
 }
 
 export default function CredentialsList() {
@@ -179,9 +181,9 @@ export default function CredentialsList() {
       name: credential.name,
       auth_type: credential.auth_type,
       username: credential.username,
-      private_key: credential.private_key || "",
-      password: credential.password || "",
-      become_password: credential.become_password || "",
+      private_key: "",
+      password: "",
+      become_password: "",
     });
     setEditorError("");
     setEditorOpened(true);
@@ -198,10 +200,31 @@ export default function CredentialsList() {
     setError("");
     setEditorError("");
 
-    const payload =
-      formData.auth_type === "password"
-        ? { ...formData, private_key: "" }
-        : { ...formData, password: "" };
+    let payload: Record<string, unknown>;
+    if (editingId === null) {
+      payload =
+        formData.auth_type === "password"
+          ? { ...formData, private_key: "" }
+          : { ...formData, password: "" };
+    } else {
+      payload = {
+        name: formData.name,
+        auth_type: formData.auth_type,
+        username: formData.username,
+      };
+      if (formData.auth_type === "password") {
+        if (formData.password) {
+          payload.password = formData.password;
+        }
+      } else {
+        if (formData.private_key) {
+          payload.private_key = formData.private_key;
+        }
+      }
+      if (formData.become_password) {
+        payload.become_password = formData.become_password;
+      }
+    }
 
     const url =
       editingId === null
@@ -445,15 +468,15 @@ export default function CredentialsList() {
                           </Table.Tr>
                           <Table.Tr>
                             <Table.Td c="dimmed">{t("credentials.password", "Password")}</Table.Td>
-                            <Table.Td>{maskSecret(credential.password)}</Table.Td>
+                            <Table.Td>{maskSecret(credential.password, credential.has_password)}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
                             <Table.Td c="dimmed">{t("credentials.sshPublicKey", "SSH Public Key")}</Table.Td>
-                            <Table.Td>{credential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
+                            <Table.Td>{credential.has_private_key || credential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
                           </Table.Tr>
                           <Table.Tr>
                             <Table.Td c="dimmed">{t("credentials.becomePassword", "Become Password")}</Table.Td>
-                            <Table.Td>{maskSecret(credential.become_password)}</Table.Td>
+                            <Table.Td>{maskSecret(credential.become_password, credential.has_become_password)}</Table.Td>
                           </Table.Tr>
                         </Table.Tbody>
                       </Table>
@@ -557,27 +580,39 @@ export default function CredentialsList() {
               <PasswordInput
                 label={t("credentials.password", "SSH Password")}
                 description={t("credentials.passwordDesc", "Password used for SSH login on the target host.")}
-                placeholder={t("credentials.passwordPlaceholder", "Enter the remote user's SSH password")}
+                placeholder={
+                  editingId !== null
+                    ? t("credentials.leaveBlankToKeep", "Leave blank to keep existing password")
+                    : t("credentials.passwordPlaceholder", "Enter the remote user's SSH password")
+                }
                 value={formData.password}
                 onChange={(event) => handleChange("password", event.currentTarget.value)}
-                required
+                required={editingId === null}
               />
             ) : (
               <Textarea
                 label={t("credentials.sshPublicKey", "SSH Public Key")}
                 description={t("credentials.sshPublicKeyDesc", "Paste the SSH public key installed on the host.")}
-                placeholder={t("credentials.sshPublicKeyPlaceholder", "ssh-ed25519 AAAAC3... or ssh-rsa AAAAB3...")}
+                placeholder={
+                  editingId !== null
+                    ? t("credentials.leaveBlankToKeepKey", "Leave blank to keep existing SSH key")
+                    : t("credentials.sshPublicKeyPlaceholder", "ssh-ed25519 AAAAC3... or ssh-rsa AAAAB3...")
+                }
                 value={formData.private_key}
                 onChange={(event) => handleChange("private_key", event.currentTarget.value)}
                 minRows={6}
-                required
+                required={editingId === null}
               />
             )}
 
             <PasswordInput
               label={t("credentials.becomePassword", "Become Password")}
               description={t("credentials.becomePasswordDesc", "Optional sudo or become password if privilege escalation requires it.")}
-              placeholder={t("credentials.becomePasswordPlaceholder", "Leave empty if sudo does not require a password")}
+              placeholder={
+                editingId !== null
+                  ? t("credentials.leaveBlankToKeep", "Leave blank to keep existing password")
+                  : t("credentials.becomePasswordPlaceholder", "Leave empty if sudo does not require a password")
+              }
               value={formData.become_password}
               onChange={(event) => handleChange("become_password", event.currentTarget.value)}
             />
@@ -629,15 +664,15 @@ export default function CredentialsList() {
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td c="dimmed">{t("credentials.sshPublicKey", "SSH Public Key")}</Table.Td>
-                  <Table.Td>{selectedCredential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
+                  <Table.Td>{selectedCredential.has_private_key || selectedCredential.private_key ? t("credentials.stored", "stored") : "-"}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td c="dimmed">{t("credentials.password", "Password")}</Table.Td>
-                  <Table.Td>{maskSecret(selectedCredential.password)}</Table.Td>
+                  <Table.Td>{maskSecret(selectedCredential.password, selectedCredential.has_password)}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td c="dimmed">{t("credentials.becomePassword", "Become Password")}</Table.Td>
-                  <Table.Td>{maskSecret(selectedCredential.become_password)}</Table.Td>
+                  <Table.Td>{maskSecret(selectedCredential.become_password, selectedCredential.has_become_password)}</Table.Td>
                 </Table.Tr>
               </Table.Tbody>
             </Table>

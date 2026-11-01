@@ -221,9 +221,8 @@ LinDeploy deploys onto remote Linux machines with package and service management
 6. **Cancel anytime**: If needed, click **Cancel** to immediately terminate Ansible execution (`SIGTERM`) and release target host locks.
 
 ### 4. Deploying OpenShift SNO (Single-Node OpenShift)
-LinDeploy provides two dedicated workflows for OpenShift Single Node on KVM/libvirt:
-- **Connected Mode**: provisions SNO via the hosted Red Hat Assisted Installer SaaS.
-- **Disconnected Mode (Air-Gapped)**:
+LinDeploy provides a managed disconnected Single Node OpenShift workflow on KVM/libvirt:
+- **Managed Disconnected Mode (Air-Gapped)**:
   1. Open **Installers** -> **OpenShift SNO** -> select **Disconnected**.
   2. Enter the target RHEL KVM host, registry FQDN (e.g., `registry.lab.test:8443`), Quay storage path, and Red Hat pull secret.
   3. Click **Prepare mirror content**: runs [`openshift_mirror_prepare.yml`](backend/backend/Playbooks/playbooks/openshift_mirror_prepare.yml) to deploy a local Quay registry, configure TLS, trust the CA, and synchronize release images via `oc-mirror v2`.

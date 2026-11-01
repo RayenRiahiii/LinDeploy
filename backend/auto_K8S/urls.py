@@ -3,7 +3,8 @@ from . import views
 from . import auth_views
 
 urlpatterns = [
-    # Authentication endpoints
+    # Authentication & Health endpoints
+    path("health/", views.health_check),
     path("auth/google/", auth_views.auth_google),
     path("auth/login/", auth_views.auth_login),
     path("auth/register/", auth_views.auth_register),

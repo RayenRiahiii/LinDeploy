@@ -200,6 +200,7 @@ OPENSHIFT_SECRET_ENCRYPTION_KEY = os.getenv("OPENSHIFT_SECRET_ENCRYPTION_KEY", "
 OPENSHIFT_SECRET_TTL_SECONDS = int(os.getenv("OPENSHIFT_SECRET_TTL_SECONDS", "1800"))
 OPENSHIFT_RED_HAT_OFFLINE_TOKEN = os.getenv("OPENSHIFT_RED_HAT_OFFLINE_TOKEN", "")
 OPENSHIFT_DEFAULT_VERSION = os.getenv("OPENSHIFT_DEFAULT_VERSION", "4.20")
+LINDEPLOY_CREDENTIAL_KEY = os.getenv("LINDEPLOY_CREDENTIAL_KEY", "")
 # The disconnected SNO workflow always uses the server-managed mirror. Keep
 # these values outside the request payload so users cannot redirect installs.
 OPENSHIFT_MIRROR_REGISTRY = os.getenv("OPENSHIFT_MIRROR_REGISTRY", "registry.lab.test:8443").strip()
@@ -298,3 +299,14 @@ CELERY_BEAT_SCHEDULE = {
 # Google OAuth
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+
+# Django REST Framework Security & Permissions
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "auto_K8S.jwt_auth.LinDeployJWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}

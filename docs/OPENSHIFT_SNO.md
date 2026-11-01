@@ -1,19 +1,18 @@
 # OpenShift SNO in LinDeploy
 
-LinDeploy provides two isolated Single Node OpenShift workflows. The existing
-connected workflow uses the hosted Red Hat Assisted Installer. The disconnected
-workflow uses a permanent private Quay registry, `oc-mirror` v2, the Agent-Based
-Installer, and a LinDeploy-managed KVM virtual machine. Kubernetes and K3s
-playbooks are not used or modified by either OpenShift workflow.
+LinDeploy provides a production-grade managed disconnected Single Node OpenShift
+(SNO) workflow. This disconnected workflow uses a permanent private Quay registry,
+`oc-mirror` v2, the Agent-Based Installer, and a LinDeploy-managed KVM virtual machine.
+Kubernetes and K3s playbooks are not used or modified by the OpenShift workflow.
 
 ## Registered workflows
 
-| Workflow | Playbook | Purpose |
-| --- | --- | --- |
-| Connected SNO | `playbooks/openshift_sno.yml` | Install through hosted Assisted Installer |
-| Prepare disconnected mirror | `playbooks/openshift_mirror_prepare.yml` | Install/reuse Quay and synchronize one exact OCP release |
-| Disconnected SNO | `playbooks/openshift_sno_disconnected.yml` | Generate an Agent ISO and install from the local mirror |
-| SNO cleanup | `playbooks/openshift_sno_cleanup.yml` | Remove only the managed VM, disk and cluster assets |
+| Workflow | Playbook | Status | Purpose |
+| --- | --- | --- | --- |
+| Prepare disconnected mirror | `playbooks/openshift_mirror_prepare.yml` | **Active** | Install/reuse Quay and synchronize one exact OCP release |
+| Disconnected SNO | `playbooks/openshift_sno_disconnected.yml` | **Active** | Generate an Agent ISO and install from the local mirror |
+| SNO cleanup | `playbooks/openshift_sno_cleanup.yml` | **Active** | Remove only the managed VM, disk and cluster assets |
+| Connected SNO (legacy) | `playbooks/openshift_sno.yml` | *Disabled* | Legacy hosted Assisted Installer (rejected by API validator) |
 
 ## Disconnected architecture
 

@@ -2,9 +2,12 @@ import json
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+
+User = get_user_model()
 
 from .models import Credential, Host, Installation, InstallationTarget, InstallationTemplate, OpenShiftSecretBundle
 from .openshift_secrets import OpenShiftSecretError, consume_secret_bundle, create_secret_bundle
@@ -25,7 +28,9 @@ VALID_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILinDeployTest"
 )
 class OpenShiftSecurityTests(TestCase):
     def setUp(self):
+        self.user = User.objects.create_user(username="os_sec_user", password="password")
         self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
 
     def test_secret_endpoint_encrypts_plaintext_and_returns_only_reference(self):
         response = self.client.post(
@@ -73,7 +78,9 @@ class OpenShiftSecurityTests(TestCase):
 )
 class OpenShiftLaunchTests(TestCase):
     def setUp(self):
+        self.user = User.objects.create_user(username="os_launch_user", password="password")
         self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
         credential = Credential.objects.create(
             name="openshift-kvm-credential",
             auth_type=Credential.AuthType.PASSWORD,

@@ -227,9 +227,40 @@ def classify_installation_target_issue(target: InstallationTarget):
 
 
 class CredentialSerializer(serializers.ModelSerializer):
+    has_password = serializers.SerializerMethodField()
+    has_become_password = serializers.SerializerMethodField()
+    has_private_key = serializers.SerializerMethodField()
+
     class Meta:
         model = Credential
-        fields = "__all__"
+        fields = [
+            "id",
+            "name",
+            "auth_type",
+            "username",
+            "password",
+            "private_key",
+            "become_password",
+            "has_password",
+            "has_become_password",
+            "has_private_key",
+            "created_at",
+            "updated_at",
+        ]
+        extra_kwargs = {
+            "password": {"write_only": True, "required": False, "allow_blank": True},
+            "private_key": {"write_only": True, "required": False, "allow_blank": True},
+            "become_password": {"write_only": True, "required": False, "allow_blank": True},
+        }
+
+    def get_has_password(self, obj) -> bool:
+        return bool(obj.password and str(obj.password).strip())
+
+    def get_has_become_password(self, obj) -> bool:
+        return bool(obj.become_password and str(obj.become_password).strip())
+
+    def get_has_private_key(self, obj) -> bool:
+        return bool(obj.private_key and str(obj.private_key).strip())
 
     def validate_username(self, value):
         value = value.strip()
@@ -239,24 +270,40 @@ class CredentialSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         auth_type = attrs.get("auth_type", getattr(self.instance, "auth_type", None))
-        private_key = attrs.get("private_key", getattr(self.instance, "private_key", ""))
-        password = attrs.get("password", getattr(self.instance, "password", ""))
 
-        if auth_type == Credential.AuthType.SSH_KEY and not private_key.strip():
-            raise serializers.ValidationError(
-                {"private_key": "This field is required when auth_type is 'ssh_key'."}
-            )
+        # Preserve existing secrets on edit if not provided or empty
+        if "password" in attrs and attrs["password"]:
+            password = attrs["password"]
+        elif self.instance and self.instance.password:
+            password = self.instance.password
+            attrs["password"] = password
+        else:
+            password = attrs.get("password", "")
 
-        if auth_type == Credential.AuthType.PASSWORD and not password.strip():
-            raise serializers.ValidationError(
-                {"password": "This field is required when auth_type is 'password'."}
-            )
+        if "private_key" in attrs and attrs["private_key"]:
+            private_key = attrs["private_key"]
+        elif self.instance and self.instance.private_key:
+            private_key = self.instance.private_key
+            attrs["private_key"] = private_key
+        else:
+            private_key = attrs.get("private_key", "")
 
-        if auth_type == Credential.AuthType.PASSWORD:
-            attrs["private_key"] = ""
+        if "become_password" not in attrs and self.instance and self.instance.become_password:
+            attrs["become_password"] = self.instance.become_password
 
         if auth_type == Credential.AuthType.SSH_KEY:
+            if not private_key.strip():
+                raise serializers.ValidationError(
+                    {"private_key": "This field is required when auth_type is 'ssh_key'."}
+                )
             attrs["password"] = ""
+
+        if auth_type == Credential.AuthType.PASSWORD:
+            if not password.strip():
+                raise serializers.ValidationError(
+                    {"password": "This field is required when auth_type is 'password'."}
+                )
+            attrs["private_key"] = ""
 
         return attrs
 

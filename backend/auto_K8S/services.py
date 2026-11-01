@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unicodedata
+import yaml
 from collections import deque
 from pathlib import Path
 
@@ -41,8 +42,10 @@ SECRET_PATTERNS = [
     (re.compile(r'("password":\s*")[^"]+(")'), r'\1<redacted-password>\2'),
     # OpenShift pull secret auths
     (re.compile(r'("auths":\s*\{)[^\}]+(\})'), r'\1"<redacted-pull-secret>"\2'),
-    # Ansible & SSH passwords in key-value format
-    (re.compile(r'(ansible_(?:password|become_password|ssh_pass)\s*[:=]\s*)[^\s,]+', re.IGNORECASE), r'\1"<redacted>"'),
+    # Ansible & SSH passwords in quoted format
+    (re.compile(r'(ansible_(?:password|become_password|become_pass|ssh_pass)\s*[:=]\s*)(["\'])(?:(?=(\\?))\3[\s\S])*?\2', re.IGNORECASE), r'\1"<redacted>"'),
+    # Ansible & SSH passwords in unquoted format (including values with spaces)
+    (re.compile(r'(ansible_(?:password|become_password|become_pass|ssh_pass)\s*[:=]\s*)(?!["\'])[^,\r\n]+', re.IGNORECASE), r'\1"<redacted>"'),
     # Private keys
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "<redacted-private-key>"),
     # Generic bearer tokens
@@ -180,14 +183,17 @@ def normalize_cluster_name(value, fallback="cluster"):
     return normalized_fallback.strip("-.")[:253] or "cluster"
 
 
-def revoke_celery_task(task_id):
+def revoke_celery_task(task_id, terminate=True):
     if not task_id:
         return
 
     try:
-        AsyncResult(task_id, app=celery_app).revoke(terminate=False)
+        celery_app.control.revoke(task_id, terminate=terminate, signal="SIGTERM")
     except Exception:
-        pass
+        try:
+            AsyncResult(task_id, app=celery_app).revoke(terminate=terminate)
+        except Exception:
+            pass
 
 
 def kill_process_tree(pid):
@@ -353,63 +359,47 @@ def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
     return normalized
 
 
-def _append_inventory_host(
-    inventory_lines,
+def _build_inventory_host_dict(
     host,
     host_override,
     runner,
     temp_dir,
-    indent,
     include_node_metadata=False,
 ):
-    inventory_lines.append(f"{indent}{host.name}:")
-    inventory_lines.append(f"{indent}  ansible_host: {host.ip_address}")
-    inventory_lines.append(f'{indent}  lindeploy_target_id: "{host.stable_id}"')
-    inventory_lines.append(
-        f"{indent}  ansible_port: {host_override.get('ssh_port', host.ssh_port)}"
-    )
+    host_dict = {
+        "ansible_host": host.ip_address,
+        "lindeploy_target_id": str(host.stable_id),
+        "ansible_port": int(host_override.get("ssh_port", host.ssh_port)),
+    }
 
     if include_node_metadata and host_override.get("node_name"):
-        inventory_lines.append(
-            f'{indent}  lindeploy_node_name: "{host_override["node_name"]}"'
-        )
+        host_dict["lindeploy_node_name"] = str(host_override["node_name"])
     if include_node_metadata and host_override.get("cluster_name"):
-        inventory_lines.append(
-            f'{indent}  lindeploy_cluster_name: "{host_override["cluster_name"]}"'
-        )
-        inventory_lines.append(
-            f"{indent}  lindeploy_cluster_name_explicit: "
-            f"{'true' if host_override.get('cluster_name_explicit') else 'false'}"
+        host_dict["lindeploy_cluster_name"] = str(host_override["cluster_name"])
+        host_dict["lindeploy_cluster_name_explicit"] = bool(
+            host_override.get("cluster_name_explicit")
         )
     if include_node_metadata and host_override.get("advertise_address"):
-        inventory_lines.append(
-            f'{indent}  lindeploy_advertise_address: "{host_override["advertise_address"]}"'
-        )
+        host_dict["lindeploy_advertise_address"] = str(host_override["advertise_address"])
 
     if not host.credential:
-        return
+        return host_dict
 
-    inventory_lines.append(
-        f"{indent}  ansible_user: \"{host_override.get('ansible_user', host.credential.username)}\""
-    )
+    host_dict["ansible_user"] = str(host_override.get("ansible_user", host.credential.username))
 
     if host.credential.auth_type == "password" and host.credential.password:
-        inventory_lines.append(
-            f'{indent}  ansible_password: "{host.credential.password}"'
-        )
+        host_dict["ansible_password"] = str(host.credential.password)
 
     if host.credential.auth_type == "ssh_key" and host.credential.private_key:
         key_path = temp_dir / f"{host.name}-{host.credential.id}.pem"
         key_path.write_text(host.credential.private_key, encoding="utf-8")
         os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
-        inventory_lines.append(
-            f'{indent}  ansible_ssh_private_key_file: "{runner.to_runner_path(key_path)}"'
-        )
+        host_dict["ansible_ssh_private_key_file"] = runner.to_runner_path(key_path)
 
     if host.credential.become_password:
-        inventory_lines.append(
-            f'{indent}  ansible_become_password: "{host.credential.become_password}"'
-        )
+        host_dict["ansible_become_password"] = str(host.credential.become_password)
+
+    return host_dict
 
 
 def build_inventory_file(
@@ -450,82 +440,85 @@ def build_inventory_file(
                 "Multi-node inventory requires a reachable bootstrap host in the control-plane group."
             )
 
-        inventory_lines = [
-            "all:",
-            "  children:",
-            "    selected_hosts:",
-            "      children:",
-            "        control_plane:",
-            "          hosts:",
-        ]
+        control_plane_dict = {}
         for host in control_plane_hosts:
-            _append_inventory_host(
-                inventory_lines,
+            h_data = _build_inventory_host_dict(
                 host,
                 overrides_by_host_id[host.id],
                 runner,
                 temp_dir,
-                "            ",
                 include_node_metadata=True,
             )
-            inventory_lines.append(
-                f"              lindeploy_is_bootstrap: "
-                f"{'true' if host.id == bootstrap_host_id else 'false'}"
-            )
-            inventory_lines.append("              lindeploy_desired_role: control_plane")
+            h_data["lindeploy_is_bootstrap"] = (host.id == bootstrap_host_id)
+            h_data["lindeploy_desired_role"] = "control_plane"
+            control_plane_dict[host.name] = h_data
 
-        inventory_lines.extend(
-            [
-                "        workers:",
-                "          hosts:",
-            ]
-        )
+        workers_dict = {}
         for host in worker_hosts:
-            _append_inventory_host(
-                inventory_lines,
+            h_data = _build_inventory_host_dict(
                 host,
                 overrides_by_host_id[host.id],
                 runner,
                 temp_dir,
-                "            ",
                 include_node_metadata=True,
             )
-            inventory_lines.append("              lindeploy_is_bootstrap: false")
-            inventory_lines.append("              lindeploy_desired_role: worker")
+            h_data["lindeploy_is_bootstrap"] = False
+            h_data["lindeploy_desired_role"] = "worker"
+            workers_dict[host.name] = h_data
 
-        inventory_lines.extend(
-            [
-                "        bootstrap:",
-                "          hosts:",
-                f"            {bootstrap_host.name}: {{}}",
-            ]
-        )
+        inventory_data = {
+            "all": {
+                "children": {
+                    "selected_hosts": {
+                        "children": {
+                            "control_plane": {
+                                "hosts": control_plane_dict,
+                            },
+                            "workers": {
+                                "hosts": workers_dict,
+                            },
+                            "bootstrap": {
+                                "hosts": {
+                                    bootstrap_host.name: {},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
         inventory_path = temp_dir / "inventory.yml"
-        inventory_path.write_text("\n".join(inventory_lines) + "\n", encoding="utf-8")
+        inventory_path.write_text(
+            yaml.safe_dump(inventory_data, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
         return inventory_path
 
-    inventory_lines = [
-        "all:",
-        "  children:",
-        "    selected_hosts:",
-        "      hosts:",
-    ]
-
+    hosts_dict = {}
     for host in hosts:
         host_override = overrides_by_host_id.get(host.id, {})
-        _append_inventory_host(
-            inventory_lines,
+        hosts_dict[host.name] = _build_inventory_host_dict(
             host,
             host_override,
             runner,
             temp_dir,
-            "        ",
             include_node_metadata=True,
         )
 
+    inventory_data = {
+        "all": {
+            "children": {
+                "selected_hosts": {
+                    "hosts": hosts_dict,
+                },
+            },
+        },
+    }
     inventory_path = temp_dir / "inventory.yml"
-    inventory_path.write_text("\n".join(inventory_lines) + "\n", encoding="utf-8")
-
+    inventory_path.write_text(
+        yaml.safe_dump(inventory_data, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
     return inventory_path
 
 
@@ -1681,39 +1674,42 @@ def finalize_cancelled_installation(
 
 def request_installation_cancellation(installation):
     current_pid = installation.runner_pid
-    was_pending = installation.status == Installation.Status.PENDING
-
-    update_installation(
-        installation,
-        status=Installation.Status.CANCELLED,
-        phase=Installation.Phase.CANCELLED,
-        progress=100,
-        cancel_requested=True,
-        finished_at=installation.finished_at or timezone.now(),
-        summary_message=(
-            "Installation cancelled before worker execution started."
-            if was_pending and not current_pid
-            else "Installation cancelled by user. The running process was stopped."
-        ),
+    has_not_started = not current_pid and (
+        installation.status == Installation.Status.PENDING
+        or installation.phase in (Installation.Phase.QUEUED, Installation.Phase.SSH_CHECK)
     )
 
-    revoke_celery_task(installation.celery_task_id)
-    kill_process_tree(current_pid)
+    if has_not_started:
+        update_installation(
+            installation,
+            status=Installation.Status.CANCELLED,
+            phase=Installation.Phase.CANCELLED,
+            progress=100,
+            cancel_requested=True,
+            finished_at=installation.finished_at or timezone.now(),
+            summary_message="Installation cancelled before worker execution started.",
+        )
+        revoke_celery_task(installation.celery_task_id, terminate=False)
+        for target in installation.targets.select_related("host").all():
+            if target.status in (
+                InstallationTarget.Status.PENDING,
+                InstallationTarget.Status.RUNNING,
+            ):
+                update_target(
+                    target,
+                    status=InstallationTarget.Status.CANCELLED,
+                    output="Installation cancelled before worker execution started.",
+                )
+        return installation
 
-    if current_pid:
-        update_installation(installation, runner_pid=None)
-
-    for target in installation.targets.select_related("host").all():
-        if target.status in (
-            InstallationTarget.Status.PENDING,
-            InstallationTarget.Status.RUNNING,
-        ):
-            update_target(
-                target,
-                status=InstallationTarget.Status.CANCELLED,
-                output=installation.summary_message,
-            )
-
+    # For running executions, flag cancel_requested so worker cleanly interrupts Ansible
+    # and revokes with SIGTERM. The worker calls finalize_cancelled_installation to safely release hosts.
+    update_installation(
+        installation,
+        cancel_requested=True,
+        summary_message="Installation cancellation requested. Stopping running process...",
+    )
+    revoke_celery_task(installation.celery_task_id, terminate=True)
     return installation
 
 

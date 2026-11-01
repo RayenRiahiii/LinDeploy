@@ -157,7 +157,7 @@ export function validateOpenShiftForm(values: OpenShiftSNOFormValues): OpenShift
     if (!pullSecret || typeof pullSecret !== "object" || !pullSecret.auths || typeof pullSecret.auths !== "object") errors.pullSecret = "Pull secret JSON must contain an auths object.";
   } catch { errors.pullSecret = "Enter a valid Red Hat pull secret JSON document."; }
   if (!sshKey.test(values.sshPublicKey.trim())) errors.sshPublicKey = "Enter a supported SSH public key; never enter a private key.";
-  if (!/^[a-z0-9.-]+(?::\d{1,5})?$/i.test(values.mirrorRegistry)) errors.mirrorRegistry = "The managed mirror registry identity is invalid.";
+  if (values.disconnected && !/^[a-z0-9.-]+(?::\d{1,5})?$/i.test(values.mirrorRegistry)) errors.mirrorRegistry = "The managed mirror registry identity is invalid.";
   if (values.installConfirmation !== `ERASE ${values.installationDisk}`) errors.installConfirmation = `Enter exactly ERASE ${values.installationDisk}.`;
   return errors;
 }

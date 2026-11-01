@@ -132,12 +132,12 @@ export default function DeploymentMonitor({
   const outputViewportRef = useRef<HTMLDivElement>(null);
 
   // Live per-task timer
-  const [taskStartTime, setTaskStartTime] = useState<number>(Date.now());
+  const [taskStartTime, setTaskStartTime] = useState<number>(() => Date.now());
   const [taskElapsedSeconds, setTaskElapsedSeconds] = useState<number>(0);
   const prevTaskRef = useRef<string | undefined>(live.currentTask);
 
   // Heartbeat tracking
-  const [lastActivityTime, setLastActivityTime] = useState<number>(Date.now());
+  const [lastActivityTime, setLastActivityTime] = useState<number>(() => Date.now());
   const [secondsSinceActivity, setSecondsSinceActivity] = useState<number>(0);
   const prevOutputCountRef = useRef<number>(outputLines.length);
   const prevCompletedTasksRef = useRef<number>(live.completedTasks);

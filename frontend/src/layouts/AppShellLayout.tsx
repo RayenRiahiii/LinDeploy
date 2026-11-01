@@ -151,7 +151,7 @@ const sectionMetaDefs = [
   },
 ];
 
-function getSectionMeta(pathname: string, t: (key: string, options?: any) => any): SectionMeta {
+function getSectionMeta(pathname: string, t: (key: string, options?: Record<string, unknown>) => unknown): SectionMeta {
   const match = sectionMetaDefs.find((item) => item.match(pathname));
   if (match) {
     return {

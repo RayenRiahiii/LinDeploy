@@ -530,7 +530,7 @@ function getExecutionPresentation(
   installerLabel?: string,
   isResetExecution?: boolean
 ) {
-  const tr = (key: string, def: string, opt?: Record<string, any>) =>
+  const tr = (key: string, def: string, opt?: Record<string, unknown>) =>
     String(i18n.t(key, { defaultValue: def, ...opt }));
 
   const actionLabel = isResetExecution

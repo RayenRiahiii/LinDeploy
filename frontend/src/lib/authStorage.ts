@@ -66,7 +66,8 @@ export function installGlobalFetchAuthInterceptor(onUnauthorized?: () => void) {
 
   const originalFetch = window.fetch;
   window.fetch = async (...args) => {
-    let [input, init] = args;
+    const input = args[0];
+    let init = args[1];
     const token = getStoredAuthToken();
 
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;

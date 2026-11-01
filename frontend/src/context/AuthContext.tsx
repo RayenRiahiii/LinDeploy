@@ -29,12 +29,18 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const API_BASE = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
 
-async function parseResponse(response: Response): Promise<{ ok: boolean; data: any; error?: string }> {
+interface AuthResponsePayload {
+  token: string;
+  user: AuthUser;
+}
+
+async function parseResponse(response: Response): Promise<{ ok: boolean; data: AuthResponsePayload | null; error?: string }> {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
     try {
       const json = await response.json();
-      return { ok: response.ok, data: json, error: json.detail || json.message };
+      const errorMsg = json && typeof json === "object" ? (json as Record<string, unknown>).detail || (json as Record<string, unknown>).message : undefined;
+      return { ok: response.ok, data: json as AuthResponsePayload, error: typeof errorMsg === "string" ? errorMsg : undefined };
     } catch {
       // Fall through to text
     }
