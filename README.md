@@ -21,26 +21,54 @@ The current release supports:
 
 ---
 
+## Host Prerequisites
+
+Before starting LinDeploy, ensure your host machine (Windows, Linux, or macOS) has:
+
+- **Docker**:
+  - **Windows / macOS**: [Docker Desktop](https://www.docker.com/products/docker-desktop/) (v24.0+ recommended) with the Linux containers engine.
+  - **Linux**: Docker Engine (v24.0+) with the `docker-compose-plugin` (v2.20+).
+- **Git**: Installed and available in your `PATH` (used for repository cloning and native TLS helper scripts).
+- **Network Ports**: Ensure the following host ports are available:
+  - `5173` (Frontend Web UI)
+  - `8000` (Backend REST API)
+  - `8443` (Local Smart Pull-Through Mirror Gateway)
+  - `6379` (Internal Redis broker - accessible locally)
+
+> [!NOTE]
+> On Windows, `.\start.ps1` automatically detects whether Docker Desktop is currently running and will attempt to launch it for you if it is stopped.
+
+---
+
 ## 1-Click Quick Start (Recommended)
 
 LinDeploy runs in a fully containerized, zero-configuration environment on **any operating system** (Windows, Linux, macOS).
 
 > **Zero Configuration Required**:
-> - You do **NOT** need to create or edit any `.env` file.
-> - You do **NOT** need Python, Node.js, npm, or WSL installed on your machine.
+> - You do **NOT** need to create or edit any `.env` file manually.
+> - You do **NOT** need Python, Node.js, npm, or WSL installed on your host machine.
 > - Host LAN IP detection, mirror TLS certificates, SQLite data volume, and container networking are all automated.
 
-### On Windows (PowerShell):
+### 1. Clone the repository:
+```bash
+git clone https://github.com/RayenRiahiii/LinDeploy.git
+cd LinDeploy
+```
+
+### 2. Start the stack:
+
+#### On Windows (PowerShell):
 ```powershell
 .\start.ps1
 ```
 
-### On Linux or macOS (Bash):
+#### On Linux or macOS (Bash):
 ```bash
+chmod +x start.sh stop.sh
 ./start.sh
 ```
 
-### Or using Docker Compose directly:
+#### Or using Docker Compose directly:
 ```bash
 docker compose up -d --build
 ```
@@ -52,9 +80,19 @@ docker compose up -d --build
 4. **Service Bootstrapping**: Builds and starts all 10 containers with automatic database migrations and healthchecks.
 
 ### Service Endpoints:
-- **Web Dashboard**: [http://localhost:5173](http://localhost:5173) (or `http://<YOUR-LAN-IP>:5173` from any device on your network)
+- **Web Dashboard**: [http://localhost:5173](http://localhost:5173) (or `http://<YOUR-LAN-IP>:5173` from any device on your LAN)
 - **REST API Backend**: [http://localhost:8000/api/](http://localhost:8000/api/)
 - **Mirror Gateway**: `https://<YOUR-LAN-IP>:8443/cache/`
+
+### Advanced Startup Parameters:
+The startup scripts accept parameters if you need custom binding or alternate ports:
+```powershell
+# Custom LAN IP and alternate web ports on Windows:
+.\start.ps1 -HostIp 192.168.1.100 -FrontendPort 3000 -BackendPort 8080
+
+# Fast restart without rebuilding container images:
+.\start.ps1 -NoBuild
+```
 
 ### Stopping the Services:
 - Windows: `.\stop.ps1`
@@ -147,32 +185,57 @@ LinDeploy/
 
 LinDeploy deploys onto remote Linux machines with package and service management for:
 
-- **Red Hat family**: CentOS Stream 9, Rocky Linux 9, AlmaLinux 9, and compatible RHEL 9 systems;
-- **Debian family**: Ubuntu 22.04, Ubuntu 24.04, and compatible Debian systems.
+- **Red Hat family**: RHEL 8 / 9, CentOS Stream 9, Rocky Linux 9, AlmaLinux 9, and compatible enterprise Linux systems;
+- **Debian family**: Ubuntu 22.04 LTS, Ubuntu 24.04 LTS, Linux Mint 21 / 22, and Debian 12.
 
-### Remote Target Requirements:
-- Network reachability over SSH;
-- Python 3 installed;
-- A user account with `sudo` privileges;
-- At least 2 vCPU and 2 GB RAM (4 vCPU and 4 GB RAM recommended for multi-node Kubernetes).
+### Target Hardware & System Requirements:
+
+| Platform | Target OS | Minimum vCPU / RAM | Storage | Special Requirements |
+| :--- | :--- | :--- | :--- | :--- |
+| **K3s** | Debian / RHEL families | 1 vCPU / 1 GB RAM | $\ge$ 10 GB | Sudo access, Python 3, SSH |
+| **Kubernetes** | Debian / RHEL families | 2 vCPU / 2 GB RAM (4 vCPU / 4 GB recommended) | $\ge$ 20 GB | Sudo access, Python 3, SSH (swap is automatically disabled) |
+| **OpenShift SNO** | RHEL 8 / 9 (x86_64) | **Host**: $\ge$ 20 vCPU / 48 GB RAM<br>**VM**: 16 vCPU / 32 GB RAM | $\ge$ 400 GB for Quay mirror<br>$\ge$ 120 GB for SNO VM | Hardware virtualization (KVM/libvirt enabled), stable DNS FQDN, valid Red Hat pull secret |
 
 ---
 
-## Operator Journey: First Deployment
+## Operator Journey: Step-by-Step Guide
 
+### 1. Initial Setup & Authentication
 1. Open **[http://localhost:5173](http://localhost:5173)** in your browser.
 2. Create an account via **Sign Up** or log in.
-3. Switch language between **English** and **Français** anytime from the top bar.
-4. Go to **Credentials** and add an SSH credential (Password, Private Key, or Public Key).
-5. Go to **Hosts** and register target nodes with their IP and associated credential.
-6. Navigate to **Installers**, choose **Kubernetes** or **K3s**.
-7. Select target hosts and pick a topology:
-   - **Single Node**: independent cluster per machine.
-   - **Multi Node**: shared cluster with role assignment (Control Plane / Workers or Server / Agents).
-8. Click **Verify SSH** to validate connectivity and permissions.
-9. Click **Run Playbook** to start deployment.
-10. Monitor real-time execution logs, task progress, and heartbeat diagnostics.
-11. If needed, click **Cancel** to immediately terminate Ansible execution and release the target nodes.
+3. Switch language between **English** (`EN`) and **Français** (`FR`) anytime from the top navigation bar.
+
+### 2. Register Credentials & Target Hosts
+1. Go to **Credentials** -> **Add Credential**: choose **Password**, **SSH Private Key**, or **SSH Public Key**.
+2. Go to **Hosts** -> **Add Host**: enter the target machine's IP, hostname, and select its associated SSH credential.
+3. If the host list is empty, handy action shortcuts allow instant credential and host creation.
+
+### 3. Deploying Kubernetes or K3s
+1. Navigate to **Installers** -> choose **Kubernetes** or **K3s**.
+2. Select target hosts and pick a topology:
+   - **Single Node**: one independent, autonomous cluster per selected machine.
+   - **Multi Node**: a unified multi-node cluster with role assignment (Control Plane / Workers or Server / Agents).
+3. Click **Verify SSH** to run automated preflight connectivity and privilege checks.
+4. Click **Run Playbook** to start deployment.
+5. Follow real-time streaming logs, task progress bars, and node health status in the **Execution Center**.
+6. **Cancel anytime**: If needed, click **Cancel** to immediately terminate Ansible execution (`SIGTERM`) and release target host locks.
+
+### 4. Deploying OpenShift SNO (Single-Node OpenShift)
+LinDeploy provides two dedicated workflows for OpenShift Single Node on KVM/libvirt:
+- **Connected Mode**: provisions SNO via the hosted Red Hat Assisted Installer SaaS.
+- **Disconnected Mode (Air-Gapped)**:
+  1. Open **Installers** -> **OpenShift SNO** -> select **Disconnected**.
+  2. Enter the target RHEL KVM host, registry FQDN (e.g., `registry.lab.test:8443`), Quay storage path, and Red Hat pull secret.
+  3. Click **Prepare mirror content**: runs [`openshift_mirror_prepare.yml`](backend/backend/Playbooks/playbooks/openshift_mirror_prepare.yml) to deploy a local Quay registry, configure TLS, trust the CA, and synchronize release images via `oc-mirror v2`.
+  4. Once mirror preparation reports `ready`, confirm the installation disk (`ERASE /dev/...`) and click **Start SNO installation** to generate the Agent-Based ISO and boot the SNO VM.
+
+### 5. Conflict Resolution & Lifecycle Cleanup
+- **Conflict Protection**:
+  - *Cross-platform*: Prevents installing Kubernetes over an existing K3s cluster (and vice-versa) until explicitly cleaned.
+  - *Same-platform*: Offers **Keep existing** or **Cleanup and reinstall** when an existing cluster is detected.
+- **Reset Cluster**: Fast reinitialization of Kubernetes/K3s control plane while keeping container runtimes and dependencies intact.
+- **Full Uninstall**: Complete removal of packages, CNI interfaces, certificates, kubeconfig, and LinDeploy ownership manifests.
+- **SNO Cleanup**: Deletes only the managed SNO virtual machine, libvirt disk volume, and cluster assets while preserving the Quay mirror and cached images for future clusters.
 
 ---
 
@@ -237,6 +300,9 @@ ansible-playbook --syntax-check playbooks/k8s_single_node.yml
 ansible-playbook --syntax-check playbooks/k8s_multi_node.yml
 ansible-playbook --syntax-check playbooks/k3s_single_node.yml
 ansible-playbook --syntax-check playbooks/k3s_multi_node.yml
+ansible-playbook --syntax-check playbooks/openshift_mirror_prepare.yml
+ansible-playbook --syntax-check playbooks/openshift_sno.yml
+ansible-playbook --syntax-check playbooks/openshift_sno_disconnected.yml
 ```
 
 ---
