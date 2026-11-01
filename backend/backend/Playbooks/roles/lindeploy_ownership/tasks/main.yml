@@ -87,12 +87,19 @@
         lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
         or (lindeploy_ownership_existing.state | default('') == 'cleaned')
         or lindeploy_ownership_existing.cluster_id == (lindeploy_ownership_cluster_id | string)
-      - lindeploy_ownership_existing.machine_id == lindeploy_ownership_machine_id
-      - lindeploy_ownership_existing.system_uuid == lindeploy_ownership_system_uuid
+      - >-
+        lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
+        or (lindeploy_ownership_existing.state | default('') == 'cleaned')
+        or (lindeploy_ownership_existing.machine_id | default('') | trim | lower) == (lindeploy_ownership_machine_id | trim | lower)
+      - >-
+        lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
+        or (lindeploy_ownership_existing.state | default('') == 'cleaned')
+        or (lindeploy_ownership_existing.system_uuid | default('') | trim | lower) == (lindeploy_ownership_system_uuid | trim | lower)
       - lindeploy_ownership_existing.managed_resources is sequence
     fail_msg: >-
       Ownership mismatch on {{ inventory_hostname }}. The manifest belongs to another
       target, machine, cluster, or platform. LinDeploy will not modify this host.
+      If this host was cloned or re-created, remove /var/lib/lindeploy/ownership/ or run cluster cleanup first.
   when: lindeploy_ownership_manifest_stat.stat.exists
 
 - name: Run ownership preparation
