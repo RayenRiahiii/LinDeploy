@@ -239,7 +239,7 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
             </Box>
 
             <Box className="topbar-panel">
-              <Group gap={8} className="topbar-nav" wrap="nowrap">
+              <Group gap={6} className="topbar-nav" wrap="nowrap">
                 {navigationItems.map((item) => {
                   const active = isActive(location.pathname, item.route);
                   const Icon = item.icon;
@@ -252,13 +252,13 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
                       className={`orb-nav-link${active ? " is-active" : ""}`}
                     >
                       <ThemeIcon
-                        size={38}
+                        size={36}
                         radius="xl"
                         variant={active ? "filled" : "light"}
                         color={active ? "red" : "gray"}
                         className="orb-nav-icon"
                       >
-                        <Icon size={19} />
+                        <Icon size={18} />
                       </ThemeIcon>
                       <span className="orb-nav-copy">
                         <span className="orb-nav-title">{item.label}</span>
