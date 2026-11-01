@@ -161,6 +161,9 @@ const en = {
     searchPlaceholder: "Search by name, IP, hostname, role, or credential",
     loadingHosts: "Loading hosts...",
     noHostsFound: "No hosts found.",
+    noHostsAvailable: "No hosts available",
+    emptyDesc:
+      "Your inventory has no registered machines. Add your first target host to begin deploying clusters.",
     createSuccess: "Host created successfully",
     updateSuccess: "Host updated successfully",
     deleteSuccess: "Host deleted successfully",
@@ -196,6 +199,9 @@ const en = {
     sshKeyAuth: "SSH Key",
     loadingCredentials: "Loading credentials...",
     noCredentialsFound: "No credentials found.",
+    noCredentialsAvailable: "No credentials available",
+    emptyDesc:
+      "You have not stored any SSH keys or passwords yet. Add credentials to enable secure access to your hosts.",
     name: "Credential Name",
     username: "Username",
     password: "Password",
@@ -308,6 +314,13 @@ const en = {
     continueToTargets: "Continue to targets",
     backToTargets: "Back to targets",
     noEnabledHosts: "No enabled hosts available in the inventory.",
+    noHostsAvailable: "No target hosts available",
+    noEnabledHostsAvailable: "No enabled target hosts available",
+    noHostsDesc:
+      "Your inventory has no target machines. Add a target host to proceed with the cluster deployment.",
+    allDisabledDesc:
+      "All registered hosts are currently disabled. Enable at least one host or register a new target.",
+    addTargets: "Add target hosts",
     clusterNameDesc:
       "Optional shared name. Changing it on an existing cluster requires Reset Cluster first.",
     clusterNameDescSingle:

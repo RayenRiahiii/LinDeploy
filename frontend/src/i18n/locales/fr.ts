@@ -161,6 +161,9 @@ const fr = {
     searchPlaceholder: "Rechercher par nom, IP, nom d'hôte, rôle ou identifiant",
     loadingHosts: "Chargement des hôtes...",
     noHostsFound: "Aucun hôte trouvé.",
+    noHostsAvailable: "Aucun hôte disponible",
+    emptyDesc:
+      "Votre inventaire ne contient aucune machine. Ajoutez votre premier hôte cible pour commencer à déployer des clusters.",
     createSuccess: "Hôte créé avec succès",
     updateSuccess: "Hôte mis à jour avec succès",
     deleteSuccess: "Hôte supprimé avec succès",
@@ -196,6 +199,9 @@ const fr = {
     sshKeyAuth: "Clé SSH",
     loadingCredentials: "Chargement des identifiants...",
     noCredentialsFound: "Aucun identifiant trouvé.",
+    noCredentialsAvailable: "Aucun identifiant disponible",
+    emptyDesc:
+      "Vous n'avez pas encore enregistré de clés SSH ou mots de passe. Ajoutez des identifiants pour sécuriser l'accès à vos hôtes.",
     name: "Nom de l'identifiant",
     username: "Nom d'utilisateur",
     password: "Mot de passe",
@@ -308,6 +314,13 @@ const fr = {
     continueToTargets: "Continuer vers les cibles",
     backToTargets: "Retour aux cibles",
     noEnabledHosts: "Aucun hôte activé disponible dans l'inventaire.",
+    noHostsAvailable: "Aucun hôte cible disponible",
+    noEnabledHostsAvailable: "Aucun hôte cible activé disponible",
+    noHostsDesc:
+      "Votre inventaire ne contient aucune machine cible. Ajoutez un hôte cible pour poursuivre le déploiement du cluster.",
+    allDisabledDesc:
+      "Tous les hôtes enregistrés sont actuellement désactivés. Activez au moins un hôte ou enregistrez une nouvelle cible.",
+    addTargets: "Ajouter des hôtes cibles",
     clusterNameDesc:
       "Nom partagé facultatif. Le modifier sur un cluster existant nécessite d'abord une réinitialisation du cluster.",
     clusterNameDescSingle:

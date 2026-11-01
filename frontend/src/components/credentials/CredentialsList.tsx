@@ -16,6 +16,7 @@ import {
   Text,
   TextInput,
   Textarea,
+  ThemeIcon,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -371,6 +372,39 @@ export default function CredentialsList() {
 
             {loadingCredentials ? (
               <Text c="dimmed">{t("credentials.loadingCredentials", "Loading credentials...")}</Text>
+            ) : credentials.length === 0 ? (
+              <Card
+                withBorder
+                padding="xl"
+                radius="md"
+                style={{
+                  textAlign: "center",
+                  background: "var(--soft-bg, rgba(255,255,255,0.02))",
+                }}
+              >
+                <Stack align="center" gap="sm">
+                  <ThemeIcon size={52} radius="xl" color="red" variant="light">
+                    <IconKey size={28} />
+                  </ThemeIcon>
+                  <Text fw={600} size="lg">
+                    {t("credentials.noCredentialsAvailable", "No credentials available")}
+                  </Text>
+                  <Text size="sm" c="dimmed" style={{ maxWidth: 440 }}>
+                    {t(
+                      "credentials.emptyDesc",
+                      "You have not stored any SSH keys or passwords yet. Add credentials to enable secure access to your hosts."
+                    )}
+                  </Text>
+                  <Button
+                    leftSection={<IconPlus size={16} />}
+                    color="red"
+                    onClick={openCreateModal}
+                    mt="xs"
+                  >
+                    {t("credentials.addCredential", "Add Credential")}
+                  </Button>
+                </Stack>
+              </Card>
             ) : filteredCredentials.length === 0 ? (
               <Text c="dimmed">{t("credentials.noCredentialsFound", "No credentials found.")}</Text>
             ) : (

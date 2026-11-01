@@ -16,6 +16,7 @@ import {
   Table,
   Text,
   TextInput,
+  ThemeIcon,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -439,6 +440,39 @@ export default function HostsList() {
 
             {loadingHosts ? (
               <Text c="dimmed">{t("hosts.loadingHosts", "Loading hosts...")}</Text>
+            ) : hosts.length === 0 ? (
+              <Card
+                withBorder
+                padding="xl"
+                radius="md"
+                style={{
+                  textAlign: "center",
+                  background: "var(--soft-bg, rgba(255,255,255,0.02))",
+                }}
+              >
+                <Stack align="center" gap="sm">
+                  <ThemeIcon size={52} radius="xl" color="red" variant="light">
+                    <IconServer size={28} />
+                  </ThemeIcon>
+                  <Text fw={600} size="lg">
+                    {t("hosts.noHostsAvailable", "No hosts available")}
+                  </Text>
+                  <Text size="sm" c="dimmed" style={{ maxWidth: 440 }}>
+                    {t(
+                      "hosts.emptyDesc",
+                      "Your inventory has no registered machines. Add your first target host to begin deploying clusters."
+                    )}
+                  </Text>
+                  <Button
+                    leftSection={<IconPlus size={16} />}
+                    color="red"
+                    onClick={openCreateModal}
+                    mt="xs"
+                  >
+                    {t("hosts.addHost", "Add Host")}
+                  </Button>
+                </Stack>
+              </Card>
             ) : filteredHosts.length === 0 ? (
               <Text c="dimmed">{t("hosts.noHostsFound", "No hosts found.")}</Text>
             ) : (

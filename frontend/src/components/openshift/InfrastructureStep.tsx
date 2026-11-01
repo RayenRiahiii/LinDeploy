@@ -1,5 +1,6 @@
-import { Alert, Badge, Grid, NumberInput, Select, Stack, Switch, TextInput } from "@mantine/core";
-import { IconDatabase, IconServer2 } from "@tabler/icons-react";
+import { Alert, Badge, Button, Grid, NumberInput, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { IconDatabase, IconPlus, IconServer2 } from "@tabler/icons-react";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import OpenShiftFormSection from "./OpenShiftFormSection";
 import type { OpenShiftFieldErrors, OpenShiftHost, OpenShiftSNOFormValues } from "./types";
@@ -39,6 +40,40 @@ export default function InfrastructureStep({ values, errors, hosts, update }: Pr
           onChange={(value) => update("provisioningHostId", value ? Number(value) : null)}
           nothingFoundMessage={t("openshift.noKvmHost", "No enabled KVM host is registered")}
         />
+        {hostOptions.length === 0 && (
+          <Alert
+            color="orange"
+            title={
+              hosts.length === 0
+                ? t("targets.noHostsAvailable", "No target hosts available")
+                : t("targets.noEnabledHostsAvailable", "No enabled target hosts available")
+            }
+            icon={<IconServer2 size={18} />}
+          >
+            <Stack gap="xs" align="flex-start">
+              <Text size="sm">
+                {hosts.length === 0
+                  ? t(
+                      "targets.noHostsDesc",
+                      "Your inventory has no target machines. Add a target host to proceed with the deployment."
+                    )
+                  : t(
+                      "targets.allDisabledDesc",
+                      "All registered hosts are currently disabled. Enable at least one host or register a new target."
+                    )}
+              </Text>
+              <Button
+                component={Link}
+                to="/hosts"
+                size="xs"
+                color="red"
+                leftSection={<IconPlus size={14} />}
+              >
+                {t("targets.addTargets", "Add target hosts")}
+              </Button>
+            </Stack>
+          </Alert>
+        )}
         <Grid>
           <Grid.Col span={{ base: 12, md: 6 }}>
             <TextInput

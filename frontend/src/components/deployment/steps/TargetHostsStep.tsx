@@ -19,8 +19,10 @@ import {
   IconCrown,
   IconHammer,
   IconPlugConnected,
+  IconPlus,
   IconServer,
 } from "@tabler/icons-react";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { type DeploymentTopology } from "../../installers/DeploymentTopologySelector";
 import { type InstallerId } from "../../../features/installers/catalog";
@@ -130,9 +132,46 @@ export default function TargetHostsStep({
         )}
 
         {enabledHosts.length === 0 ? (
-          <Text c="dimmed">
-            {t("targets.noEnabledHosts", "No enabled hosts are available. Add or enable a host before launching an installation.")}
-          </Text>
+          <Card
+            withBorder
+            padding="xl"
+            radius="md"
+            style={{
+              textAlign: "center",
+              background: "var(--soft-bg, rgba(255,255,255,0.02))",
+            }}
+          >
+            <Stack align="center" gap="sm">
+              <ThemeIcon size={52} radius="xl" color="red" variant="light">
+                <IconServer size={28} />
+              </ThemeIcon>
+              <Text fw={600} size="lg">
+                {hosts.length === 0
+                  ? t("targets.noHostsAvailable", "No target hosts available")
+                  : t("targets.noEnabledHostsAvailable", "No enabled target hosts available")}
+              </Text>
+              <Text size="sm" c="dimmed" style={{ maxWidth: 440 }}>
+                {hosts.length === 0
+                  ? t(
+                      "targets.noHostsDesc",
+                      "Your inventory has no target machines. Add a target host to proceed with the cluster deployment."
+                    )
+                  : t(
+                      "targets.allDisabledDesc",
+                      "All registered hosts are currently disabled. Enable at least one host or register a new target."
+                    )}
+              </Text>
+              <Button
+                component={Link}
+                to="/hosts"
+                color="red"
+                leftSection={<IconPlus size={16} />}
+                mt="xs"
+              >
+                {t("targets.addTargets", "Add target hosts")}
+              </Button>
+            </Stack>
+          </Card>
         ) : (
           <div className="host-selection-grid">
             {enabledHosts.map((host) => {
