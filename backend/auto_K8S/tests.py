@@ -192,8 +192,8 @@ class MirrorApiTests(TestCase):
         self.assertEqual(response.data["job_id"], str(existing.job_id))
         delay.assert_not_called()
 
-    @patch("auto_K8S.mirror.MIRROR_STATE_PATH")
-    def test_mirror_state_recovers_final_mapping_from_legacy_output_array(self, state_path):
+    @patch("auto_K8S.mirror.get_mirror_state_path")
+    def test_mirror_state_recovers_final_mapping_from_legacy_output_array(self, get_state_path):
         from .mirror import read_mirror_state
 
         legacy_state = {
@@ -208,7 +208,8 @@ class MirrorApiTests(TestCase):
                 ],
             }
         }
-        state_path.read_text.return_value = json.dumps(legacy_state)
+        get_state_path.return_value.is_file.return_value = True
+        get_state_path.return_value.read_text.return_value = json.dumps(legacy_state)
 
         state = read_mirror_state()
 

@@ -516,6 +516,37 @@ class InstallationTargetSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class InstallationListSerializer(serializers.ModelSerializer):
+    template_name = serializers.CharField(source="template.name", read_only=True)
+    template_system_type = serializers.CharField(source="template.system_type", read_only=True)
+    deployment_type = serializers.CharField(source="template.deployment_type", read_only=True)
+    duration_seconds = serializers.FloatField(read_only=True)
+    targets = InstallationTargetSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Installation
+        fields = [
+            "id",
+            "template",
+            "template_name",
+            "template_system_type",
+            "deployment_type",
+            "topology",
+            "cluster_name",
+            "status",
+            "phase",
+            "progress",
+            "summary_message",
+            "return_code",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
+            "duration_seconds",
+            "targets",
+        ]
+
+
 class InstallationSerializer(serializers.ModelSerializer):
     template_name = serializers.CharField(source="template.name", read_only=True)
     template_system_type = serializers.CharField(source="template.system_type", read_only=True)

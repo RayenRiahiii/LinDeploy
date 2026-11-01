@@ -23,6 +23,7 @@ urlpatterns = [
     path("openshift/secrets/", views.create_openshift_secret_bundle),
     path("openshift/configuration/", views.openshift_configuration),
     path("installations/", views.installations_list),
+    path("installations/active/", views.active_installation),
     path("installations/clear-history/", views.clear_installation_history),
     path("installations/<int:id>/", views.installation_detail),
     path("installations/<int:id>/cancel/", views.cancel_installation),

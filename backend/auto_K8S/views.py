@@ -21,6 +21,7 @@ from .serializers import (
     CredentialSerializer,
     HostSerializer,
     InstallationLaunchSerializer,
+    InstallationListSerializer,
     InstallationSerializer,
     InstallationTemplateSerializer,
     OpenShiftRetrySerializer,
@@ -405,6 +406,17 @@ def installations_list(request):
     installations = (
         Installation.objects.select_related("template")
         .prefetch_related("targets__host")
+        .defer(
+            "stdout",
+            "stderr",
+            "inventory_content",
+            "command",
+            "task_profile",
+            "timings",
+            "bottleneck_hints",
+            "cluster_config",
+            "host_overrides",
+        )
         .order_by("-created_at")
     )
     if limit_param and limit_param.lower() not in ("all", "none", "0", "-1"):
@@ -415,8 +427,43 @@ def installations_list(request):
         except ValueError:
             pass
 
-    serializer = InstallationSerializer(installations, many=True)
+    serializer = InstallationListSerializer(installations, many=True)
     return Response(serializer.data)
+
+
+@api_view(["GET"])
+def active_installation(request):
+    active = (
+        Installation.objects.filter(
+            status__in=[Installation.Status.PENDING, Installation.Status.RUNNING]
+        )
+        .select_related("template")
+        .prefetch_related("targets__host")
+        .defer(
+            "stdout",
+            "stderr",
+            "inventory_content",
+            "command",
+            "task_profile",
+            "timings",
+            "bottleneck_hints",
+            "cluster_config",
+            "host_overrides",
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if not active:
+        return Response({"active": None, "installation": None}, status=200)
+
+    serializer = InstallationListSerializer(active)
+    return Response(
+        {
+            "active": active.id,
+            "installation": serializer.data,
+        },
+        status=200,
+    )
 
 
 @api_view(["POST"])
@@ -501,7 +548,7 @@ def dashboard_summary(request):
                 "running": installations.filter(status=Installation.Status.RUNNING).count(),
                 "pending": installations.filter(status=Installation.Status.PENDING).count(),
             },
-            "latest_installation": InstallationSerializer(latest_installation).data
+            "latest_installation": InstallationListSerializer(latest_installation).data
             if latest_installation
             else None,
         }

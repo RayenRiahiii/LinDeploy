@@ -47,7 +47,7 @@ import {
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import { notifications } from "@mantine/notifications";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import PageHeader from "../components/common/PageHeader";
 import DeploymentMonitor from "../components/deployment/DeploymentMonitor";
 import PlatformConflictModal from "../components/deployment/modals/PlatformConflictModal";
@@ -849,6 +849,9 @@ export default function RunDeployment({
 }: RunDeploymentProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
+  const stateInstallationId = (location.state as { targetInstallationId?: number } | null)?.targetInstallationId;
+  const effectiveTargetInstallationId = targetInstallationId ?? stateInstallationId;
   const [hosts, setHosts] = useState<Host[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [cleanupTemplatesBySystem, setCleanupTemplatesBySystem] = useState<
@@ -1440,8 +1443,8 @@ export default function RunDeployment({
         refreshOperationalData(),
       ]);
 
-      if (targetInstallationId) {
-        await resumeInstallationMonitoring(targetInstallationId);
+      if (effectiveTargetInstallationId) {
+        await resumeInstallationMonitoring(effectiveTargetInstallationId);
         return;
       }
 
@@ -1492,7 +1495,7 @@ export default function RunDeployment({
     void initializePage().catch((err) =>
       setError(err instanceof Error ? err.message : "Failed to initialize page.")
     );
-  }, [mode, targetInstallationId]);
+  }, [mode, effectiveTargetInstallationId]);
 
   useEffect(() => {
     if (mode !== "execution" || loading) {
@@ -1501,15 +1504,19 @@ export default function RunDeployment({
 
     const intervalId = window.setInterval(async () => {
       try {
-        const { installationsData } = await refreshOperationalData();
-        const active = installationsData.find((installation) => isInstallationActive(installation));
-        if (active && active.id !== activeInstallationId) {
-          await resumeInstallationMonitoring(active.id);
+        const response = await fetch(`${BASE_URL}/api/installations/active/`);
+        if (response.ok) {
+          const data = await parseJsonResponse<{ active: number | null; installation: InstallationDetailResponse | null }>(response);
+          if (data.active && data.active !== activeInstallationId) {
+            await resumeInstallationMonitoring(data.active);
+            return;
+          }
         }
+        await refreshOperationalData();
       } catch {
         // ignore background poll errors
       }
-    }, 2500);
+    }, 1500);
 
     return () => {
       window.clearInterval(intervalId);

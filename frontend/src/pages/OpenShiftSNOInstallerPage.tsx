@@ -17,6 +17,7 @@ import type { OpenShiftHost, OpenShiftSNOFormValues, OpenShiftSecretBundlePayloa
 import { parseJsonResponse } from "../lib/api";
 
 const BASE_URL = (import.meta.env.VITE_DJANGO_BASE_URL || "").replace(/\/+$/, "");
+const ACTIVE_INSTALLATION_STORAGE_KEY = "lindeploy.active_installation_id";
 const stepFields: Array<Array<keyof OpenShiftSNOFormValues>> = [
   ["clusterName", "baseDomain", "openshiftVersion"],
   ["provisioningHostId", "vmName", "nodeName", "libvirtNetwork", "storagePool", "vcpu", "memoryGib", "diskGib", "installationDisk"],
@@ -155,7 +156,8 @@ export default function OpenShiftSNOInstallerPage() {
       if (!response.ok) throw new Error(result.message || "The OpenShift SNO installation could not be queued.");
       setValues((current) => ({ ...current, pullSecret: "", sshPublicKey: "", additionalTrustBundle: "", mirrorCaBundle: "", mirrorPassword: "" }));
       notifications.show({ color: "green", title, message: result.message || `Execution #${result.installation_id} was created.` });
-      navigate("/executions");
+      window.localStorage.setItem(ACTIVE_INSTALLATION_STORAGE_KEY, String(result.installation_id));
+      navigate("/executions", { state: { targetInstallationId: result.installation_id } });
     } catch (error) {
       notifications.show({ color: "red", title: "Launch failed", message: error instanceof Error ? error.message : "The OpenShift workflow could not be queued." });
     } finally { setSubmitting(false); }
@@ -187,7 +189,8 @@ export default function OpenShiftSNOInstallerPage() {
         title: preserveIso ? "OpenShift reset queued (ISO preserved)" : "OpenShift full cleanup queued",
         message: result.message || `Execution #${result.installation_id} was created.`,
       });
-      navigate("/executions");
+      window.localStorage.setItem(ACTIVE_INSTALLATION_STORAGE_KEY, String(result.installation_id));
+      navigate("/executions", { state: { targetInstallationId: result.installation_id } });
     } catch (error) {
       notifications.show({
         color: "red",
