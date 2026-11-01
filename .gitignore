@@ -27,7 +27,10 @@ instructions.md
 # Logs
 *.log
 backend/runtime/
-infra/mirror/runtime/
+infra/mirror/runtime/*
+!infra/mirror/runtime/manifests/
+!infra/mirror/runtime/manifests/*.json
+!infra/mirror/runtime/prewarm-state.json
 infra/mirror/.env
 backend/celerybeat-schedule*
 

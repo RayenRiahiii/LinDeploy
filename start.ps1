@@ -122,6 +122,10 @@ if ((-not (Test-Path -LiteralPath $DestDb)) -and (Test-Path -LiteralPath $Source
     Write-Host "      Seeding existing SQLite database to data/db.sqlite3..." -ForegroundColor Cyan
     Copy-Item $SourceDb $DestDb
 }
+$ManifestsDir = Join-Path (Join-Path (Join-Path $ProjectRoot "infra") "mirror") "runtime\manifests"
+if (-not (Test-Path -LiteralPath $ManifestsDir)) {
+    New-Item -ItemType Directory -Path $ManifestsDir -Force | Out-Null
+}
 
 # 3. Mirror TLS Certificate Check / Regeneration
 Write-Host "[3/5] Verifying mirror TLS certificates for $DetectedIp..." -ForegroundColor Yellow

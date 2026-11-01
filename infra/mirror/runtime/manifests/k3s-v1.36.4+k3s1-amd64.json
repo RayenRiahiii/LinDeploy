@@ -1,0 +1,475 @@
+﻿{
+    "schema_version":  1,
+    "component":  "k3s",
+    "version":  "v1.36.4+k3s1",
+    "architecture":  "amd64",
+    "generated_at":  "2026-09-20T09:53:00.5971632Z",
+    "asset_count":  93,
+    "assets":  [
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/38122084d1f4626734acf1ac8082e30c93533eed52e0fc53f8e336ba04b5c63d-primary.xml.gz",
+                       "sha256":  "38122084d1f4626734acf1ac8082e30c93533eed52e0fc53f8e336ba04b5c63d",
+                       "size":  6943515
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/c729f617d6420ba1e8c7c4c99744a09640be2e37863e26cfb4a700a8cb064283-filelists.xml.gz",
+                       "sha256":  "c729f617d6420ba1e8c7c4c99744a09640be2e37863e26cfb4a700a8cb064283",
+                       "size":  2284879
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/494a0c0c99a2aaff64f76dbec5e56feb9efd4784f8c0ebede1331bd52b806cc8-other.xml.gz",
+                       "sha256":  "494a0c0c99a2aaff64f76dbec5e56feb9efd4784f8c0ebede1331bd52b806cc8",
+                       "size":  3553565
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/b9255513102a1b58492316ccee9ac3d2817f90fea489c77045127bb62c267f58-primary.sqlite.xz",
+                       "sha256":  "b9255513102a1b58492316ccee9ac3d2817f90fea489c77045127bb62c267f58",
+                       "size":  6824408
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/b9bc028fe22151bf0d307fc3640f0e51001eea8e0a8e708c06793ed7b13d2f8c-filelists.sqlite.xz",
+                       "sha256":  "b9bc028fe22151bf0d307fc3640f0e51001eea8e0a8e708c06793ed7b13d2f8c",
+                       "size":  2007972
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/7273d44de9f417cafdd85d3a041c9a52afaa296b2a225d969101a63779a8ce45-other.sqlite.xz",
+                       "sha256":  "7273d44de9f417cafdd85d3a041c9a52afaa296b2a225d969101a63779a8ce45",
+                       "size":  866024
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/0472ad67bce2309690b4dbd00c19c7b871448016c3e38b3ba217b9a2adf3252d-comps-BaseOS.x86_64.xml.zst",
+                       "sha256":  "0472ad67bce2309690b4dbd00c19c7b871448016c3e38b3ba217b9a2adf3252d",
+                       "size":  61926
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/cad540060bba10e8effe506cb61a7d78d36c0655d2e1804e79022fe10610f6fd-comps-BaseOS.x86_64.xml.zst.xz",
+                       "sha256":  "cad540060bba10e8effe506cb61a7d78d36c0655d2e1804e79022fe10610f6fd",
+                       "size":  61988
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/curl-7.76.1-43.el9.x86_64.rpm",
+                       "sha256":  "a17d00a4bc40bf90f060c607a6ec4d2459c640a84a706b01da3ce0855be9ef4a",
+                       "size":  299432
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/iproute-tc-6.17.0-3.el9.x86_64.rpm",
+                       "sha256":  "4ff3b4de5766d45674ac020161531078e926443a3945d71902b08633e457ea37",
+                       "size":  464598
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/firewalld-1.3.4-21.el9.noarch.rpm",
+                       "sha256":  "43fdeab218e2e369eabf2419ec0b424b924e2f598565d2a28a73609b317e2336",
+                       "size":  547866
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/selinux-policy-38.1.86-1.el9.noarch.rpm",
+                       "sha256":  "c0a20ad562b470af2d604359b9ffa9491479eb2294cc56e8fdb4c461ef8037ac",
+                       "size":  42058
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/tar-1.34-9.el9.x86_64.rpm",
+                       "sha256":  "e002d9f6fb73755586849d0477492df0cee039add393156b3caffeb396562702",
+                       "size":  906518
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/policycoreutils-3.6-9.el9.x86_64.rpm",
+                       "sha256":  "9a1141e930c4d2c16d22939568587675e515344f4272b0addf93b6b7bafefcd5",
+                       "size":  243645
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/libselinux-utils-3.6-4.el9.x86_64.rpm",
+                       "sha256":  "8c8dbef25e272d647d58496eaf292cf874b27b329a8e78d0422c45ddd3eadf1a",
+                       "size":  190046
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/f96584c8a457d5dad0228b153075f2f6cde7587330f2045a31b57756f4906bc4-primary.xml.gz",
+                       "sha256":  "f96584c8a457d5dad0228b153075f2f6cde7587330f2045a31b57756f4906bc4",
+                       "size":  4089040
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/7e1af881780458b91c15274e48e1b3cff557dca289267b330c11df16bb9e8ff4-filelists.xml.gz",
+                       "sha256":  "7e1af881780458b91c15274e48e1b3cff557dca289267b330c11df16bb9e8ff4",
+                       "size":  25711369
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/9240b1f2afd13652eda6277fc93d31f2e6e713a3ba09dfefa60d47d1710c792e-other.xml.gz",
+                       "sha256":  "9240b1f2afd13652eda6277fc93d31f2e6e713a3ba09dfefa60d47d1710c792e",
+                       "size":  3719972
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/92d8c07853d36c5e4feea77a1e4622a75f1aeaa69d8243d63243b9576f94b8cb-primary.sqlite.xz",
+                       "sha256":  "92d8c07853d36c5e4feea77a1e4622a75f1aeaa69d8243d63243b9576f94b8cb",
+                       "size":  7650948
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/aa9a78a5784c662cbc8ae379b9bc746c1c6a531f309c23d880991bcdb61bcaf0-filelists.sqlite.xz",
+                       "sha256":  "aa9a78a5784c662cbc8ae379b9bc746c1c6a531f309c23d880991bcdb61bcaf0",
+                       "size":  12719636
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/bb28d156324865503194ef48e5e4d4fc5f3fc8b928c430c3d02cfbbb61e0732d-other.sqlite.xz",
+                       "sha256":  "bb28d156324865503194ef48e5e4d4fc5f3fc8b928c430c3d02cfbbb61e0732d",
+                       "size":  3267316
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/88365344dba9d73d2e9b552e4d9b1d9edd24e0af344d46e345d77090c59616e3-comps-AppStream.x86_64.xml.zst",
+                       "sha256":  "88365344dba9d73d2e9b552e4d9b1d9edd24e0af344d46e345d77090c59616e3",
+                       "size":  98877
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/bd8ddf67b45322f17ed4e353302157107936869ec49b4120c8383cc809c538b5-comps-AppStream.x86_64.xml.zst.xz",
+                       "sha256":  "bd8ddf67b45322f17ed4e353302157107936869ec49b4120c8383cc809c538b5",
+                       "size":  98936
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/840543eb65af1af4e0a34eca605a046757d23f744fcf71ece37c6012505753d3-modules.yaml.xz",
+                       "sha256":  "840543eb65af1af4e0a34eca605a046757d23f744fcf71ece37c6012505753d3",
+                       "size":  17296
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/container-selinux-2.250.0-1.el9.noarch.rpm",
+                       "sha256":  "c6859e14ee5b250fdfcd5a8d7da0f033ef75de538ed1a9ae0c0c50072af8d016",
+                       "size":  61048
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/8b6cf15633aa772e539ae25cb6088c2a148f94a77a4530582e9a4c6fb4138680-primary.xml.gz",
+                       "sha256":  "8b6cf15633aa772e539ae25cb6088c2a148f94a77a4530582e9a4c6fb4138680",
+                       "size":  28937918
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/26d68cf00f825d9fb019d23930b249d6e66f64556c803a16765104fe4c4d841c-filelists.xml.gz",
+                       "sha256":  "26d68cf00f825d9fb019d23930b249d6e66f64556c803a16765104fe4c4d841c",
+                       "size":  2236590
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/1d8a2abd55b1240cd787a4ad5542ee684d17d13f5dded766a8d6f6c5aaf6f816-other.xml.gz",
+                       "sha256":  "1d8a2abd55b1240cd787a4ad5542ee684d17d13f5dded766a8d6f6c5aaf6f816",
+                       "size":  1995477
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/4248f86b5dbf5c31e394cc49155b3870b3d39687a7e98889275aaaed67e6feb1-primary.sqlite.xz",
+                       "sha256":  "4248f86b5dbf5c31e394cc49155b3870b3d39687a7e98889275aaaed67e6feb1",
+                       "size":  17038576
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/8fb9210cd2aa94818deb9b663904f4a032ef1425919a8944d9ee3ce3cf3e7644-filelists.sqlite.xz",
+                       "sha256":  "8fb9210cd2aa94818deb9b663904f4a032ef1425919a8944d9ee3ce3cf3e7644",
+                       "size":  1724900
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/864d0532963515360967aaf696a61317292183af73625515e2e6b8fb92b85e88-other.sqlite.xz",
+                       "sha256":  "864d0532963515360967aaf696a61317292183af73625515e2e6b8fb92b85e88",
+                       "size":  517780
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/370bd00fee648eb0ea5f1d817c5a113529ca57a3c0e073c37414ea0197752d6f-comps-BaseOS.x86_64.xml",
+                       "sha256":  "370bd00fee648eb0ea5f1d817c5a113529ca57a3c0e073c37414ea0197752d6f",
+                       "size":  289672
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/6242e7738bb556d74d32dfa19861e51c27bc19dd9da057e1a2054023671f4744-comps-BaseOS.x86_64.xml.xz",
+                       "sha256":  "6242e7738bb556d74d32dfa19861e51c27bc19dd9da057e1a2054023671f4744",
+                       "size":  55504
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/54b5f36107a1e0285aef9612186714b02663ca10bf1de2de846afecdd880a9a3-updateinfo.xml.gz",
+                       "sha256":  "54b5f36107a1e0285aef9612186714b02663ca10bf1de2de846afecdd880a9a3",
+                       "size":  629714
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/c/curl-7.76.1-40.el9_8.5.x86_64.rpm",
+                       "sha256":  "1472cf5a56e7a00563a13aa32ce1d1c381d044754cb156c1cc686d385b7fea20",
+                       "size":  300215
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/i/iproute-tc-6.17.0-2.el9.x86_64.rpm",
+                       "sha256":  "4e43df17fa5f7c803959fe371fb8b0b39567fb3c2e5a8eabee42f786642a90c1",
+                       "size":  452455
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/f/firewalld-1.3.4-20.el9_8.noarch.rpm",
+                       "sha256":  "8a4821b6ad2ecd0e622f543df46e4e2f42959c22e6172466e571a171acfe1286",
+                       "size":  463233
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/s/selinux-policy-38.1.75-2.el9_8.noarch.rpm",
+                       "sha256":  "af82298ffd83022c90d2e9b8189588e8452c3162646644dbd836e0fb4c49da7a",
+                       "size":  41251
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/t/tar-1.34-13.el9_8.x86_64.rpm",
+                       "sha256":  "61d7dfb8258648db7c23baae3b9cd578056d4762a2ab4b4e5c8f28316c4db1a7",
+                       "size":  899737
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/p/policycoreutils-3.6-5.el9.x86_64.rpm",
+                       "sha256":  "b7839494348fc03c0992ee17dda50a0b58dc74b134c3650cdc1cd0ede8b11595",
+                       "size":  210044
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/l/libselinux-utils-3.6-3.el9.x86_64.rpm",
+                       "sha256":  "0903fc2340c50a16178e8260dd6fe1f48578cf604088eb91f8aa591b441b1127",
+                       "size":  165071
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/06f871e3182247d567ec04e32489c61e8c016ca86a4b8676c6d817b1ab60e32e-primary.xml.gz",
+                       "sha256":  "06f871e3182247d567ec04e32489c61e8c016ca86a4b8676c6d817b1ab60e32e",
+                       "size":  2446844
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/544f2d0b56717f9a7fc1b23dc99bf0381889579456a5b42980ae4834ddbb2d3d-filelists.xml.gz",
+                       "sha256":  "544f2d0b56717f9a7fc1b23dc99bf0381889579456a5b42980ae4834ddbb2d3d",
+                       "size":  20615935
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/9b09fb9933c5df18ee5099fb3858a06965c7b21395b292ed4006def485c09ea9-other.xml.gz",
+                       "sha256":  "9b09fb9933c5df18ee5099fb3858a06965c7b21395b292ed4006def485c09ea9",
+                       "size":  1800320
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/f50b610981be1524f86441b7606df3943d5534de6968098a39ae62165a2538bf-primary.sqlite.xz",
+                       "sha256":  "f50b610981be1524f86441b7606df3943d5534de6968098a39ae62165a2538bf",
+                       "size":  4171452
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/a63c043f2a5d47bc6063c8c42a1a1ec51f049edec95a71589dc23f7b93370c6e-filelists.sqlite.xz",
+                       "sha256":  "a63c043f2a5d47bc6063c8c42a1a1ec51f049edec95a71589dc23f7b93370c6e",
+                       "size":  10967088
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/f7aafc83bf481cd8fd15ebc3b9be4d4ff0b4c950e14b87176b6bdcaab4b1e91e-other.sqlite.xz",
+                       "sha256":  "f7aafc83bf481cd8fd15ebc3b9be4d4ff0b4c950e14b87176b6bdcaab4b1e91e",
+                       "size":  1468624
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/fc6d30ae23db7b2d1ff02c7328497f26318ab4203417f2dd5320d013091c709b-comps-AppStream.x86_64.xml",
+                       "sha256":  "fc6d30ae23db7b2d1ff02c7328497f26318ab4203417f2dd5320d013091c709b",
+                       "size":  539964
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/1535fad45c86ec6f2616fcbf87b54d540d1ee60147c15c8bbe507e4c0a85a7f0-comps-AppStream.x86_64.xml.xz",
+                       "sha256":  "1535fad45c86ec6f2616fcbf87b54d540d1ee60147c15c8bbe507e4c0a85a7f0",
+                       "size":  89984
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/afb6885fab5887eaa7a32f63d222494012c9b13b900a41f418985f5c7aa9c8bc-modules.yaml.xz",
+                       "sha256":  "afb6885fab5887eaa7a32f63d222494012c9b13b900a41f418985f5c7aa9c8bc",
+                       "size":  14188
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/9b58e6eb511202455f2db3396d7e22e55c1f88ff0dfca8be8d649acf33ff80bf-updateinfo.xml.gz",
+                       "sha256":  "9b58e6eb511202455f2db3396d7e22e55c1f88ff0dfca8be8d649acf33ff80bf",
+                       "size":  1836918
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/Packages/c/container-selinux-2.245.0-1.el9.noarch.rpm",
+                       "sha256":  "59a415e878fbd61b317a6cda5ec7aac07fa215cd1b11356b974ac28e6dc27dc7",
+                       "size":  58781
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/ed321dc24230a140df99765e53c79a9b05289bb563fd058155c5454b62909a9a-primary.xml.gz",
+                       "sha256":  "ed321dc24230a140df99765e53c79a9b05289bb563fd058155c5454b62909a9a",
+                       "size":  36007226
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/35bc7f44fc2b5ad3c1dd627befb9dbf9967e3696a21babf1f4ace414b2371f2a-filelists.xml.gz",
+                       "sha256":  "35bc7f44fc2b5ad3c1dd627befb9dbf9967e3696a21babf1f4ace414b2371f2a",
+                       "size":  2447601
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/ae7368dfd54790a74dd8226fd484c3279b5cc5a0297a3d44653ef01f8d6fde55-other.xml.gz",
+                       "sha256":  "ae7368dfd54790a74dd8226fd484c3279b5cc5a0297a3d44653ef01f8d6fde55",
+                       "size":  1364901
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/3694add553203ff87543c8c9dd4ad9805b888e485761ed139f71b8b56950a59a-primary.sqlite.bz2",
+                       "sha256":  "3694add553203ff87543c8c9dd4ad9805b888e485761ed139f71b8b56950a59a",
+                       "size":  57965266
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/4116e122e21267d7a00d3c615990213f3e8fd0126aea51dee8c2a2d9a32e3749-filelists.sqlite.bz2",
+                       "sha256":  "4116e122e21267d7a00d3c615990213f3e8fd0126aea51dee8c2a2d9a32e3749",
+                       "size":  2352592
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/8fe8d3fa70b2c2cf8525b094f66be4938ce829fbb164c6276c053c185a432f96-other.sqlite.bz2",
+                       "sha256":  "8fe8d3fa70b2c2cf8525b094f66be4938ce829fbb164c6276c053c185a432f96",
+                       "size":  1307329
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/f74e57c4e5ee833a2363573d34d74df811eef9470325f22db45fd4596baf22ec-comps.xml",
+                       "sha256":  "f74e57c4e5ee833a2363573d34d74df811eef9470325f22db45fd4596baf22ec",
+                       "size":  287542
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/626d95f85dfa78c5e346fec4187257db39a8103372a8d6ba38512d5183759916-updateinfo.xml.gz",
+                       "sha256":  "626d95f85dfa78c5e346fec4187257db39a8103372a8d6ba38512d5183759916",
+                       "size":  487686
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/curl-7.76.1-40.el9_8.5.x86_64.rpm",
+                       "sha256":  "21a4cc188bd3b06ba7d6e8caea74ee9d99f24ef9a2d8b4ea305d8ba143750f3d",
+                       "size":  300104
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/iproute-tc-6.17.0-2.el9.x86_64.rpm",
+                       "sha256":  "628b8b5873db3669eac68db1cfe0df42ab50168603a6c98d7c5e947426923593",
+                       "size":  452347
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/firewalld-1.3.4-20.el9_8.noarch.rpm",
+                       "sha256":  "bf2791071c23772678217ea6b5e766b9a5cab09371a3b9c8c87ed8db361cf7a1",
+                       "size":  463636
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/selinux-policy-38.1.75-2.el9_8.noarch.rpm",
+                       "sha256":  "5cedf3ee6dea403e964c7fe31219d1051e62d788e624df35d7ff77549264a78c",
+                       "size":  41141
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/tar-1.34-13.el9_8.x86_64.rpm",
+                       "sha256":  "2563f7bae97b6d73ded2af71250797ff30a3fe8050c70ac4b3126dbe32c0ce9e",
+                       "size":  899449
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/policycoreutils-3.6-5.el9.x86_64.rpm",
+                       "sha256":  "0c21169494565e3dfd76e823ce5e08ae1602c83140df541b04f4f130371969f9",
+                       "size":  209885
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/libselinux-utils-3.6-3.el9.x86_64.rpm",
+                       "sha256":  "cdaac39c681c4a2d4aebf93464eda459834ada910cd2996de346b70049640b69",
+                       "size":  168193
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/0cd1f42781e34e0dbae9410750b5a2cd80d6ac4a0d7a4e8a1bc6d7ed2a747a90-primary.xml.gz",
+                       "sha256":  "0cd1f42781e34e0dbae9410750b5a2cd80d6ac4a0d7a4e8a1bc6d7ed2a747a90",
+                       "size":  2393810
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/6f175a35ce5ffbbef0327b1c6edb3eac9c5cdd40f091176108e38cf3b518a941-filelists.xml.gz",
+                       "sha256":  "6f175a35ce5ffbbef0327b1c6edb3eac9c5cdd40f091176108e38cf3b518a941",
+                       "size":  22710071
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/125ac298f4bebfd0c6adfaacf67a7828ff85b72c30384f84a97a60bc59f416a6-other.xml.gz",
+                       "sha256":  "125ac298f4bebfd0c6adfaacf67a7828ff85b72c30384f84a97a60bc59f416a6",
+                       "size":  1599750
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/a270d6d7e14a8c6ac4bf61ae7ec3b6d6b9dc8b040910e30e9cf23f56d46ee1a6-primary.sqlite.bz2",
+                       "sha256":  "a270d6d7e14a8c6ac4bf61ae7ec3b6d6b9dc8b040910e30e9cf23f56d46ee1a6",
+                       "size":  5504402
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/3adf949fa9951373a30cae1ab0c114824e4cb1e7fad696fcd983befecf40f237-filelists.sqlite.bz2",
+                       "sha256":  "3adf949fa9951373a30cae1ab0c114824e4cb1e7fad696fcd983befecf40f237",
+                       "size":  21204866
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/f64e4805902223c4418401a86239cf1f300cbf19d3a47a22704d25884e68a725-other.sqlite.bz2",
+                       "sha256":  "f64e4805902223c4418401a86239cf1f300cbf19d3a47a22704d25884e68a725",
+                       "size":  2352203
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/1dcfa2b7f134f8a2519fd607d68b182146e347f39835e1bec5f76acc3f7cbc8c-comps.xml",
+                       "sha256":  "1dcfa2b7f134f8a2519fd607d68b182146e347f39835e1bec5f76acc3f7cbc8c",
+                       "size":  543946
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/c5bd2407176d640870d91beccc7795ebda95769df42a2b160311f5a58070bc56-modules.yaml.gz",
+                       "sha256":  "c5bd2407176d640870d91beccc7795ebda95769df42a2b160311f5a58070bc56",
+                       "size":  22099
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/ec381c9908886b9d2144ba7c1e5a3bab597dbd43c33c37bc69107a44d47590ac-updateinfo.xml.gz",
+                       "sha256":  "ec381c9908886b9d2144ba7c1e5a3bab597dbd43c33c37bc69107a44d47590ac",
+                       "size":  1390305
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/Packages/container-selinux-2.247.0-1.el9_8.noarch.rpm",
+                       "sha256":  "d19062771404201f5d4531505a305e7898e8728c8fc512269a1ab0192999c50f",
+                       "size":  58872
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/get.k3s.io/",
+                       "sha256":  "e5cc3b3d9dfc1662c2d9be6da5abc9a4cd317d6abc3a5ffc02e3dd3248207fee",
+                       "size":  38693
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/github.com/k3s-io/k3s/releases/download/v1.36.4%2Bk3s1/sha256sum-amd64.txt",
+                       "sha256":  "db1dbdc92f0cb5ccd361348a113f4dff82b1f9194175e5993efc37224a04ba4d",
+                       "size":  359
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/github.com/k3s-io/k3s/releases/download/v1.36.4%2Bk3s1/k3s",
+                       "sha256":  "835873f37245fc615f547a2fe2af9402a347875f13fa64a1f136de644955ea3f",
+                       "size":  78991522
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/github.com/k3s-io/k3s/releases/download/v1.36.4%2Bk3s1/k3s-airgap-images-amd64.tar.zst",
+                       "sha256":  "9024613e2d468c51ba0e5ba21898604c41339354449fb3338cc6a7931189eb6a",
+                       "size":  193436957
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/public.key",
+                       "sha256":  "7d2415f7fc532c365c8874bfad966566daaa0d04a9a5ba14d1db6080a9c12629",
+                       "size":  2432
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/repodata/repomd.xml",
+                       "sha256":  "2288dc4887868fbc1c6cfc00b8a5534d8d06d337f7a7fb05481e1b139bd61ea1",
+                       "size":  2968
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/repodata/143a31d48b2966d8cce19cfcb1d847910b2f0aca6eb5a7983d60518552216d6c-filelists.xml.gz",
+                       "sha256":  "143a31d48b2966d8cce19cfcb1d847910b2f0aca6eb5a7983d60518552216d6c",
+                       "size":  426
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/repodata/54108d153a818012bda1d00e22dea7e5fe03e4414205b2f85e6560849fc03dc6-primary.xml.gz",
+                       "sha256":  "54108d153a818012bda1d00e22dea7e5fe03e4414205b2f85e6560849fc03dc6",
+                       "size":  1093
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/repodata/db59403cbac67b8b7d1555bb2ea29959c3fc38204a5b75bb3674d005f7ef8053-primary.sqlite.bz2",
+                       "sha256":  "db59403cbac67b8b7d1555bb2ea29959c3fc38204a5b75bb3674d005f7ef8053",
+                       "size":  2836
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/repodata/93c1b2fef8f0d6ef9b10e050b8eb1b8e14d1deb11f46262d8d48faab8a5b2198-other.sqlite.bz2",
+                       "sha256":  "93c1b2fef8f0d6ef9b10e050b8eb1b8e14d1deb11f46262d8d48faab8a5b2198",
+                       "size":  1028
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/repodata/57e8f0707d81dad77c96c9ab4e82b5334b03f70b8afef1ade231d25d8272adfe-other.xml.gz",
+                       "sha256":  "57e8f0707d81dad77c96c9ab4e82b5334b03f70b8afef1ade231d25d8272adfe",
+                       "size":  454
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/repodata/6b336672606af0d6b4d898fe7b0d62c2f1f9defded7c0e8149d76516d380ccad-filelists.sqlite.bz2",
+                       "sha256":  "6b336672606af0d6b4d898fe7b0d62c2f1f9defded7c0e8149d76516d380ccad",
+                       "size":  1169
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/k3s-selinux-1.3-1.el9.noarch.rpm",
+                       "sha256":  "f63b7c72db6ce72c1929f169cb41cb28e71570c866a471c3657b770a41be8af9",
+                       "size":  21274
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/k3s-selinux-1.4-1.el9.noarch.rpm",
+                       "sha256":  "2a407fd77f979cfab73ae3d63d5beb1962cb99d0a30548ede0302cdf564eb6fc",
+                       "size":  21246
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/k3s-selinux-1.5-1.el9.noarch.rpm",
+                       "sha256":  "00ba1bbd216de31334a7c5fcf2a99113797ff3e528d28ce5109c7bf5c72b068b",
+                       "size":  22123
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/rpm.rancher.io/k3s/stable/common/centos/9/noarch/k3s-selinux-1.6-1.el9.noarch.rpm",
+                       "sha256":  "23d0095a766b89317d2bdbe8773825987db7221e48743417930a994ca1096793",
+                       "size":  22123
+                   }
+               ]
+}

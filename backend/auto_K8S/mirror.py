@@ -281,7 +281,7 @@ def _run_python_prewarm(job, force=False):
         comp_state = state["components"].get(comp_name, _empty_component())
         manifest_path = manifests_dir / manifest_file
         if not manifest_path.is_file():
-            matches = list(manifests_dir.glob(f"{comp_name}-*-amd64.json"))
+            matches = sorted(list(manifests_dir.glob(f"{comp_name}-*-amd64.json")))
             if matches:
                 manifest_path = matches[-1]
 
@@ -297,15 +297,18 @@ def _run_python_prewarm(job, force=False):
             comp_state["profile"] = "verified-assets-v3"
             comp_state["status"] = "ready"
             comp_state["active_version"] = act_ver
-            comp_state["available_version"] = act_ver
+            comp_state["available_version"] = version
             comp_state["last_checked_at"] = now_iso
-            comp_state["last_prewarm_at"] = now_iso
+            comp_state["last_prewarm_at"] = comp_state.get("last_prewarm_at") or now_iso
             comp_state["manifest_path"] = str(manifest_path)
             comp_state["manifest_sha256"] = sha256_hash
             comp_state["error"] = ""
         else:
-            comp_state["status"] = "failed"
-            comp_state["error"] = f"Manifest {manifest_file} not found in {manifests_dir}"
+            comp_state["status"] = "idle"
+            comp_state["active_version"] = ""
+            comp_state["available_version"] = version
+            comp_state["last_checked_at"] = now_iso
+            comp_state["error"] = f"Manifest not yet cached for {version}. Click 'Prewarm now' to initialize assets."
         state["components"][comp_name] = comp_state
 
     write_mirror_state(state)

@@ -1,0 +1,1030 @@
+﻿{
+    "schema_version":  1,
+    "component":  "kubernetes",
+    "version":  "v1.36.5",
+    "architecture":  "amd64",
+    "generated_at":  "2026-09-27T10:45:06.1528669Z",
+    "asset_count":  204,
+    "assets":  [
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:d350c55cb17bb41eb03c6596f063463a94a68c7dccd909b5d920f40576905a1d",
+                       "sha256":  "d350c55cb17bb41eb03c6596f063463a94a68c7dccd909b5d920f40576905a1d",
+                       "size":  3898
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:a5789fc40e828c4e7467626e3f69ec5dea8e5da22fe660db8ae6d16f777b0bbf",
+                       "sha256":  "a5789fc40e828c4e7467626e3f69ec5dea8e5da22fe660db8ae6d16f777b0bbf",
+                       "size":  83900
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:990a9c434e5e0f11549a8d4a41a1991e621b04e30cd63269adbc97b1dc38fd7e",
+                       "sha256":  "990a9c434e5e0f11549a8d4a41a1991e621b04e30cd63269adbc97b1dc38fd7e",
+                       "size":  12481
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:39dc083afc39bd8dc43d456fe7ff7d39292e593bb2769972c11bb2e5f9119386",
+                       "sha256":  "39dc083afc39bd8dc43d456fe7ff7d39292e593bb2769972c11bb2e5f9119386",
+                       "size":  445709
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:bf7a4185f01524837d19abde915ffde84e64368b250f5b5e9f6f75aea62a11d4",
+                       "sha256":  "bf7a4185f01524837d19abde915ffde84e64368b250f5b5e9f6f75aea62a11d4",
+                       "size":  29005
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:2780920e5dbfbe103d03a583ed75345306e572ec5a48cb10361f046767d9f29a",
+                       "sha256":  "2780920e5dbfbe103d03a583ed75345306e572ec5a48cb10361f046767d9f29a",
+                       "size":  67
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "sha256":  "7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "size":  188
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "sha256":  "3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "size":  123
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:52630fc75a18675c530ed9eba5f55eca09b03e91bd5bc15307918bbc1a7e7296",
+                       "sha256":  "52630fc75a18675c530ed9eba5f55eca09b03e91bd5bc15307918bbc1a7e7296",
+                       "size":  162
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:dd64bf2dd177757451a98fcdc999a339c35dee5d9872d8f4dc69c8f3c4dd0112",
+                       "sha256":  "dd64bf2dd177757451a98fcdc999a339c35dee5d9872d8f4dc69c8f3c4dd0112",
+                       "size":  80
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:b839dfae01f66e15c6a8b63520557ed315bdfe036342fa7a0c537259f10d7a9a",
+                       "sha256":  "b839dfae01f66e15c6a8b63520557ed315bdfe036342fa7a0c537259f10d7a9a",
+                       "size":  351
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:dcaa5a89b0ccda4b283e16d0b4d0891cd93d5fe05c6798f7806781a6a2d84354",
+                       "sha256":  "dcaa5a89b0ccda4b283e16d0b4d0891cd93d5fe05c6798f7806781a6a2d84354",
+                       "size":  314
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:96ed2737ae312e0bc637b40783f7c2f23416cb72ca957aa01855f1614278e64b",
+                       "sha256":  "96ed2737ae312e0bc637b40783f7c2f23416cb72ca957aa01855f1614278e64b",
+                       "size":  143347
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:6e10fc9c4a45174478928acd7b5cc37c2130a5a7eb497acb595d704e8f1bf74c",
+                       "sha256":  "6e10fc9c4a45174478928acd7b5cc37c2130a5a7eb497acb595d704e8f1bf74c",
+                       "size":  907886
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:5c6370d651582090418d3c057f4e7506a4bec15da121a9bcb2b2324f131c95f3",
+                       "sha256":  "5c6370d651582090418d3c057f4e7506a4bec15da121a9bcb2b2324f131c95f3",
+                       "size":  26815357
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-apiserver/blobs/sha256:741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "sha256":  "741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "size":  1396155
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:cf2bbfca0a634248428aefadb5f532c8cfadbf67ff728eb1d206bfdf966c9f28",
+                       "sha256":  "cf2bbfca0a634248428aefadb5f532c8cfadbf67ff728eb1d206bfdf966c9f28",
+                       "size":  3745
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:a5789fc40e828c4e7467626e3f69ec5dea8e5da22fe660db8ae6d16f777b0bbf",
+                       "sha256":  "a5789fc40e828c4e7467626e3f69ec5dea8e5da22fe660db8ae6d16f777b0bbf",
+                       "size":  83900
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:990a9c434e5e0f11549a8d4a41a1991e621b04e30cd63269adbc97b1dc38fd7e",
+                       "sha256":  "990a9c434e5e0f11549a8d4a41a1991e621b04e30cd63269adbc97b1dc38fd7e",
+                       "size":  12481
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:39dc083afc39bd8dc43d456fe7ff7d39292e593bb2769972c11bb2e5f9119386",
+                       "sha256":  "39dc083afc39bd8dc43d456fe7ff7d39292e593bb2769972c11bb2e5f9119386",
+                       "size":  445709
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:bf7a4185f01524837d19abde915ffde84e64368b250f5b5e9f6f75aea62a11d4",
+                       "sha256":  "bf7a4185f01524837d19abde915ffde84e64368b250f5b5e9f6f75aea62a11d4",
+                       "size":  29005
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:2780920e5dbfbe103d03a583ed75345306e572ec5a48cb10361f046767d9f29a",
+                       "sha256":  "2780920e5dbfbe103d03a583ed75345306e572ec5a48cb10361f046767d9f29a",
+                       "size":  67
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "sha256":  "7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "size":  188
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "sha256":  "3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "size":  123
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:52630fc75a18675c530ed9eba5f55eca09b03e91bd5bc15307918bbc1a7e7296",
+                       "sha256":  "52630fc75a18675c530ed9eba5f55eca09b03e91bd5bc15307918bbc1a7e7296",
+                       "size":  162
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:dd64bf2dd177757451a98fcdc999a339c35dee5d9872d8f4dc69c8f3c4dd0112",
+                       "sha256":  "dd64bf2dd177757451a98fcdc999a339c35dee5d9872d8f4dc69c8f3c4dd0112",
+                       "size":  80
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:b839dfae01f66e15c6a8b63520557ed315bdfe036342fa7a0c537259f10d7a9a",
+                       "sha256":  "b839dfae01f66e15c6a8b63520557ed315bdfe036342fa7a0c537259f10d7a9a",
+                       "size":  351
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:dcaa5a89b0ccda4b283e16d0b4d0891cd93d5fe05c6798f7806781a6a2d84354",
+                       "sha256":  "dcaa5a89b0ccda4b283e16d0b4d0891cd93d5fe05c6798f7806781a6a2d84354",
+                       "size":  314
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:96ed2737ae312e0bc637b40783f7c2f23416cb72ca957aa01855f1614278e64b",
+                       "sha256":  "96ed2737ae312e0bc637b40783f7c2f23416cb72ca957aa01855f1614278e64b",
+                       "size":  143347
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:6e10fc9c4a45174478928acd7b5cc37c2130a5a7eb497acb595d704e8f1bf74c",
+                       "sha256":  "6e10fc9c4a45174478928acd7b5cc37c2130a5a7eb497acb595d704e8f1bf74c",
+                       "size":  907886
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:e0967ac20d68cf38c5f785e16230c9c1aa5528462791763915c8bd4d1e241f0d",
+                       "sha256":  "e0967ac20d68cf38c5f785e16230c9c1aa5528462791763915c8bd4d1e241f0d",
+                       "size":  23465203
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-controller-manager/blobs/sha256:741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "sha256":  "741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "size":  1396155
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:137b99d7bbba00a26374e3d8018ea318ff0d9de86d46bf16f2632364676826b3",
+                       "sha256":  "137b99d7bbba00a26374e3d8018ea318ff0d9de86d46bf16f2632364676826b3",
+                       "size":  3745
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:a5789fc40e828c4e7467626e3f69ec5dea8e5da22fe660db8ae6d16f777b0bbf",
+                       "sha256":  "a5789fc40e828c4e7467626e3f69ec5dea8e5da22fe660db8ae6d16f777b0bbf",
+                       "size":  83900
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:990a9c434e5e0f11549a8d4a41a1991e621b04e30cd63269adbc97b1dc38fd7e",
+                       "sha256":  "990a9c434e5e0f11549a8d4a41a1991e621b04e30cd63269adbc97b1dc38fd7e",
+                       "size":  12481
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:39dc083afc39bd8dc43d456fe7ff7d39292e593bb2769972c11bb2e5f9119386",
+                       "sha256":  "39dc083afc39bd8dc43d456fe7ff7d39292e593bb2769972c11bb2e5f9119386",
+                       "size":  445709
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:bf7a4185f01524837d19abde915ffde84e64368b250f5b5e9f6f75aea62a11d4",
+                       "sha256":  "bf7a4185f01524837d19abde915ffde84e64368b250f5b5e9f6f75aea62a11d4",
+                       "size":  29005
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:2780920e5dbfbe103d03a583ed75345306e572ec5a48cb10361f046767d9f29a",
+                       "sha256":  "2780920e5dbfbe103d03a583ed75345306e572ec5a48cb10361f046767d9f29a",
+                       "size":  67
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "sha256":  "7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "size":  188
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "sha256":  "3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "size":  123
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:52630fc75a18675c530ed9eba5f55eca09b03e91bd5bc15307918bbc1a7e7296",
+                       "sha256":  "52630fc75a18675c530ed9eba5f55eca09b03e91bd5bc15307918bbc1a7e7296",
+                       "size":  162
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:dd64bf2dd177757451a98fcdc999a339c35dee5d9872d8f4dc69c8f3c4dd0112",
+                       "sha256":  "dd64bf2dd177757451a98fcdc999a339c35dee5d9872d8f4dc69c8f3c4dd0112",
+                       "size":  80
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:b839dfae01f66e15c6a8b63520557ed315bdfe036342fa7a0c537259f10d7a9a",
+                       "sha256":  "b839dfae01f66e15c6a8b63520557ed315bdfe036342fa7a0c537259f10d7a9a",
+                       "size":  351
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:dcaa5a89b0ccda4b283e16d0b4d0891cd93d5fe05c6798f7806781a6a2d84354",
+                       "sha256":  "dcaa5a89b0ccda4b283e16d0b4d0891cd93d5fe05c6798f7806781a6a2d84354",
+                       "size":  314
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:96ed2737ae312e0bc637b40783f7c2f23416cb72ca957aa01855f1614278e64b",
+                       "sha256":  "96ed2737ae312e0bc637b40783f7c2f23416cb72ca957aa01855f1614278e64b",
+                       "size":  143347
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:6e10fc9c4a45174478928acd7b5cc37c2130a5a7eb497acb595d704e8f1bf74c",
+                       "sha256":  "6e10fc9c4a45174478928acd7b5cc37c2130a5a7eb497acb595d704e8f1bf74c",
+                       "size":  907886
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:b34f3a6ae6d9cd37f1751fa5554c2f15e8267bdc06d620feecf6080db8de0c51",
+                       "sha256":  "b34f3a6ae6d9cd37f1751fa5554c2f15e8267bdc06d620feecf6080db8de0c51",
+                       "size":  17485185
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-scheduler/blobs/sha256:741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "sha256":  "741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "size":  1396155
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-proxy/blobs/sha256:a83c93aedd6acfab8933b1e95ad2f47ba024acb3f247919688f075cc992e23e3",
+                       "sha256":  "a83c93aedd6acfab8933b1e95ad2f47ba024acb3f247919688f075cc992e23e3",
+                       "size":  1024
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-proxy/blobs/sha256:72d7b2282dab2dc4b40112243d5b99c34d2383f3c2c5dc6b5234d7f381fea7ca",
+                       "sha256":  "72d7b2282dab2dc4b40112243d5b99c34d2383f3c2c5dc6b5234d7f381fea7ca",
+                       "size":  12743828
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-proxy/blobs/sha256:48effc3d0394c6e88cc25197057e4d699a2e805ed5c7d856783f1b9dd02bc5ab",
+                       "sha256":  "48effc3d0394c6e88cc25197057e4d699a2e805ed5c7d856783f1b9dd02bc5ab",
+                       "size":  15932825
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/kube-proxy/blobs/sha256:741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "sha256":  "741aeb57bec69f6b2d4a4c1b736fe126d8ea1d2f9ebbf018723ca8882a709b42",
+                       "size":  1396155
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:38667dd9be96c17227adde456e33ad701bdbdc5c6db0272a1d33a929bd8e62d6",
+                       "sha256":  "38667dd9be96c17227adde456e33ad701bdbdc5c6db0272a1d33a929bd8e62d6",
+                       "size":  3070
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:03c9b64681eef07f903b45cfbe5c064db1f1c7f682863b895104ac2680a271a7",
+                       "sha256":  "03c9b64681eef07f903b45cfbe5c064db1f1c7f682863b895104ac2680a271a7",
+                       "size":  84728
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:2e4cf50eeb92ac3a7afe75e15d96a26dee99449f86b46c75b5d95f4418a5bca0",
+                       "sha256":  "2e4cf50eeb92ac3a7afe75e15d96a26dee99449f86b46c75b5d95f4418a5bca0",
+                       "size":  12579
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:56ce5a7a0a8cc3aded9e8cab00fd85f0a1c50376aa9f2318c4e66beb03eadf8f",
+                       "sha256":  "56ce5a7a0a8cc3aded9e8cab00fd85f0a1c50376aa9f2318c4e66beb03eadf8f",
+                       "size":  458603
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:e1089d61b200106053b1717881bf0c1c47551478f01569d9224d33cccf3e4692",
+                       "sha256":  "e1089d61b200106053b1717881bf0c1c47551478f01569d9224d33cccf3e4692",
+                       "size":  28389
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:0f8b424aa0b96c1c388a5fd4d90735604459256336853082afb61733438872b5",
+                       "sha256":  "0f8b424aa0b96c1c388a5fd4d90735604459256336853082afb61733438872b5",
+                       "size":  75
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:d557676654e572af3e3173c90e7874644207fda32cd87e9d3d66b5d7b98a7b21",
+                       "sha256":  "d557676654e572af3e3173c90e7874644207fda32cd87e9d3d66b5d7b98a7b21",
+                       "size":  193
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:d82bc7a76a838c9a4a6025192429c2fed58f73742ef1fb9c8bb7b995fc3b7213",
+                       "sha256":  "d82bc7a76a838c9a4a6025192429c2fed58f73742ef1fb9c8bb7b995fc3b7213",
+                       "size":  130
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:68e4cd60e60fed4486d5b4b40b079e57781e828d93d80a7411e8760dcccfbbf7",
+                       "sha256":  "68e4cd60e60fed4486d5b4b40b079e57781e828d93d80a7411e8760dcccfbbf7",
+                       "size":  168
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:0783a66ae7492bb16937c7723c534e431404aa3ebbdcaaed65d264a95a266b9e",
+                       "sha256":  "0783a66ae7492bb16937c7723c534e431404aa3ebbdcaaed65d264a95a266b9e",
+                       "size":  84
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:efae86a3fb38e05e6e2584bc2f48534a0d82f8d9e9a4163d04885d5c65423105",
+                       "sha256":  "efae86a3fb38e05e6e2584bc2f48534a0d82f8d9e9a4163d04885d5c65423105",
+                       "size":  358
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:6b72b81ed96620b324f40ade069bbd3fcee69d62182bb03681c3976b6909eec4",
+                       "sha256":  "6b72b81ed96620b324f40ade069bbd3fcee69d62182bb03681c3976b6909eec4",
+                       "size":  320
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:6cdd517ba90571b01009637268b5fddb4e3eea409bb6dae0bf40ed8ad9e33ef4",
+                       "sha256":  "6cdd517ba90571b01009637268b5fddb4e3eea409bb6dae0bf40ed8ad9e33ef4",
+                       "size":  130874
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/coredns/coredns/blobs/sha256:7bae8e7097d7983932f15870289838ba42ce97e13c38fda26cbdd9ba09d17e87",
+                       "sha256":  "7bae8e7097d7983932f15870289838ba42ce97e13c38fda26cbdd9ba09d17e87",
+                       "size":  22532938
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/pause/blobs/sha256:4a83b15d3ecfe0d916b2d0a7991bc2854a629b8097017c2ee1ff65b30ae4c07c",
+                       "sha256":  "4a83b15d3ecfe0d916b2d0a7991bc2854a629b8097017c2ee1ff65b30ae4c07c",
+                       "size":  892
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/pause/blobs/sha256:81ede36234b06d9a16771d804ef81ea888e29f8c425a5269e3d55d34a1b128a8",
+                       "sha256":  "81ede36234b06d9a16771d804ef81ea888e29f8c425a5269e3d55d34a1b128a8",
+                       "size":  316650
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:ee85eb1f0edd27fd11e3bed20f21a4001ad63107eb2f8d489429648a799c0e86",
+                       "sha256":  "ee85eb1f0edd27fd11e3bed20f21a4001ad63107eb2f8d489429648a799c0e86",
+                       "size":  2930
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:688513194d7a0f0d77e4a3692748d21c4ccd1af6a5ff9012f18f053ed9573c13",
+                       "sha256":  "688513194d7a0f0d77e4a3692748d21c4ccd1af6a5ff9012f18f053ed9573c13",
+                       "size":  104238
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:bfb59b82a9b65e47d485e53b3e815bca3b3e21a095bd0cb88ced9ac0b48062bf",
+                       "sha256":  "bfb59b82a9b65e47d485e53b3e815bca3b3e21a095bd0cb88ced9ac0b48062bf",
+                       "size":  13356
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:efa9d1d5d3a286c60a7261496166fdf31cec2284dafe7eef7cda89eba2f675d6",
+                       "sha256":  "efa9d1d5d3a286c60a7261496166fdf31cec2284dafe7eef7cda89eba2f675d6",
+                       "size":  541994
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:b6824ed73363f94b3b2b44084c51c31bc32af77a96861d49e16f91e3ab6bed71",
+                       "sha256":  "b6824ed73363f94b3b2b44084c51c31bc32af77a96861d49e16f91e3ab6bed71",
+                       "size":  67
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "sha256":  "7c12895b777bcaa8ccae0605b4de635b68fc32d60fa08f421dc3818bf55ee212",
+                       "size":  188
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "sha256":  "3214acf345c0cc6bbdb56b698a41ccdefc624a09d6beb0d38b5de0b2303ecaf4",
+                       "size":  123
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:5664b15f108bf9436ce3312090a767300800edbbfd4511aa1a6d64357024d5dd",
+                       "sha256":  "5664b15f108bf9436ce3312090a767300800edbbfd4511aa1a6d64357024d5dd",
+                       "size":  168
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:27be814a09ebd97fac6fb7b82d19f117185e90601009df3fbab6f442f85cd6b3",
+                       "sha256":  "27be814a09ebd97fac6fb7b82d19f117185e90601009df3fbab6f442f85cd6b3",
+                       "size":  93
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:4aa0ea1413d37a58615488592a0b827ea4b2e48fa5a77cf707d0e35f025e613f",
+                       "sha256":  "4aa0ea1413d37a58615488592a0b827ea4b2e48fa5a77cf707d0e35f025e613f",
+                       "size":  385
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:da7816fa955ea24533c388143c78804c28682eef99b4ee3723b548c70148bba6",
+                       "sha256":  "da7816fa955ea24533c388143c78804c28682eef99b4ee3723b548c70148bba6",
+                       "size":  321
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:9aee425378d2c16cd44177dc54a274b312897f5860a8e78fdfda555a0d79dd71",
+                       "sha256":  "9aee425378d2c16cd44177dc54a274b312897f5860a8e78fdfda555a0d79dd71",
+                       "size":  130495
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:a00667e02fadf9b1abd2bee47eb52ed370b74c0f373fc901d2154955521a26b0",
+                       "sha256":  "a00667e02fadf9b1abd2bee47eb52ed370b74c0f373fc901d2154955521a26b0",
+                       "size":  9529127
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:f097e84ccdedac935d1bf8ac375ab35cdb5bc7aae58ec7b692d539f5b5e21dcb",
+                       "sha256":  "f097e84ccdedac935d1bf8ac375ab35cdb5bc7aae58ec7b692d539f5b5e21dcb",
+                       "size":  6282284
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:c39cffd75ba2756c8ae7a24a92a5e4371e6f937c8068d4b43d126ee9193a4fad",
+                       "sha256":  "c39cffd75ba2756c8ae7a24a92a5e4371e6f937c8068d4b43d126ee9193a4fad",
+                       "size":  6274771
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:4c78bfe854226b178fdd1e9c39bc77c48d47e9ae1d45fcc18d7c09460cd27cea",
+                       "sha256":  "4c78bfe854226b178fdd1e9c39bc77c48d47e9ae1d45fcc18d7c09460cd27cea",
+                       "size":  111
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5001/v2/etcd/blobs/sha256:8c02b6f8ac46c3042e40b910c4c40cb2559dd7eac715318ab1bc150b685d2cbd",
+                       "sha256":  "8c02b6f8ac46c3042e40b910c4c40cb2559dd7eac715318ab1bc150b685d2cbd",
+                       "size":  131
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/cni/blobs/sha256:d456a937d6e7445d4785ca592e5fffc2aa390cb578d7778f17e5a016201cceb4",
+                       "sha256":  "d456a937d6e7445d4785ca592e5fffc2aa390cb578d7778f17e5a016201cceb4",
+                       "size":  4551
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/cni/blobs/sha256:4279a752ca931420899eebcd4012ec2cc8434281019799d6b41670105fad6546",
+                       "sha256":  "4279a752ca931420899eebcd4012ec2cc8434281019799d6b41670105fad6546",
+                       "size":  2961546
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/cni/blobs/sha256:6cc3578c776f06a5e299c860f83a254f7488c84bcc542b0bb2488094c24ada4a",
+                       "sha256":  "6cc3578c776f06a5e299c860f83a254f7488c84bcc542b0bb2488094c24ada4a",
+                       "size":  66502728
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/cni/blobs/sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+                       "sha256":  "4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+                       "size":  32
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/node/blobs/sha256:6bc9fa4dc2b10ca1d4b97a1cd570036651898cea8b3c3bcbb1d55cf813e43f65",
+                       "sha256":  "6bc9fa4dc2b10ca1d4b97a1cd570036651898cea8b3c3bcbb1d55cf813e43f65",
+                       "size":  3893
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/node/blobs/sha256:d0e8293b26f670b4098917eec7ec39dfca296e32417c74f369b2987036248ffe",
+                       "sha256":  "d0e8293b26f670b4098917eec7ec39dfca296e32417c74f369b2987036248ffe",
+                       "size":  120313838
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/kube-controllers/blobs/sha256:e67ce8d034ec572033278ceaee634ca98bc7c7d422b9f4b39a5a66e1aab98e11",
+                       "sha256":  "e67ce8d034ec572033278ceaee634ca98bc7c7d422b9f4b39a5a66e1aab98e11",
+                       "size":  4463
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/kube-controllers/blobs/sha256:4279a752ca931420899eebcd4012ec2cc8434281019799d6b41670105fad6546",
+                       "sha256":  "4279a752ca931420899eebcd4012ec2cc8434281019799d6b41670105fad6546",
+                       "size":  2961546
+                   },
+                   {
+                       "url":  "https://192.168.100.37:5002/v2/calico/kube-controllers/blobs/sha256:efe79c5fe90bf6e5933ecd63cb0aead81e513882b33c02df576243a46c464363",
+                       "sha256":  "efe79c5fe90bf6e5933ecd63cb0aead81e513882b33c02df576243a46c464363",
+                       "size":  58062867
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/387984554f00a02c1338d48a770edd9858c524f12a0469e523f77b43277e83f0-primary.xml.gz",
+                       "sha256":  "387984554f00a02c1338d48a770edd9858c524f12a0469e523f77b43277e83f0",
+                       "size":  6945307
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/cda997c38b5111348d6d8fdeacf1faecafa74ea5d021c7bb9bde449e30bcc900-filelists.xml.gz",
+                       "sha256":  "cda997c38b5111348d6d8fdeacf1faecafa74ea5d021c7bb9bde449e30bcc900",
+                       "size":  2285627
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/ba0a47a71be5d552f3f4abfb3b6b0700d9346664beaba7054ff3dbeb8a543855-other.xml.gz",
+                       "sha256":  "ba0a47a71be5d552f3f4abfb3b6b0700d9346664beaba7054ff3dbeb8a543855",
+                       "size":  2871080
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/69f252ba7bd88f26adc9719e79c092f8943ef7f4059e7331f9b12492119980b1-primary.sqlite.xz",
+                       "sha256":  "69f252ba7bd88f26adc9719e79c092f8943ef7f4059e7331f9b12492119980b1",
+                       "size":  6811532
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/ed6b3f7ac67cdbe4b86595aa296b14174abf96553c9fb74721a2e3eec24dd12f-filelists.sqlite.xz",
+                       "sha256":  "ed6b3f7ac67cdbe4b86595aa296b14174abf96553c9fb74721a2e3eec24dd12f",
+                       "size":  2008520
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/2a755c904fd6b0ff6f1dc96474ac1131b2ebd5dbd2833442495fd5282c144e9a-other.sqlite.xz",
+                       "sha256":  "2a755c904fd6b0ff6f1dc96474ac1131b2ebd5dbd2833442495fd5282c144e9a",
+                       "size":  845720
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/0472ad67bce2309690b4dbd00c19c7b871448016c3e38b3ba217b9a2adf3252d-comps-BaseOS.x86_64.xml.zst",
+                       "sha256":  "0472ad67bce2309690b4dbd00c19c7b871448016c3e38b3ba217b9a2adf3252d",
+                       "size":  61926
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/repodata/cad540060bba10e8effe506cb61a7d78d36c0655d2e1804e79022fe10610f6fd-comps-BaseOS.x86_64.xml.zst.xz",
+                       "sha256":  "cad540060bba10e8effe506cb61a7d78d36c0655d2e1804e79022fe10610f6fd",
+                       "size":  61988
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/curl-7.76.1-43.el9.x86_64.rpm",
+                       "sha256":  "a17d00a4bc40bf90f060c607a6ec4d2459c640a84a706b01da3ce0855be9ef4a",
+                       "size":  299432
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/iproute-tc-6.17.0-3.el9.x86_64.rpm",
+                       "sha256":  "4ff3b4de5766d45674ac020161531078e926443a3945d71902b08633e457ea37",
+                       "size":  464598
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/firewalld-1.3.4-21.el9.noarch.rpm",
+                       "sha256":  "43fdeab218e2e369eabf2419ec0b424b924e2f598565d2a28a73609b317e2336",
+                       "size":  547866
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/selinux-policy-38.1.86-1.el9.noarch.rpm",
+                       "sha256":  "c0a20ad562b470af2d604359b9ffa9491479eb2294cc56e8fdb4c461ef8037ac",
+                       "size":  42058
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/tar-1.34-9.el9.x86_64.rpm",
+                       "sha256":  "e002d9f6fb73755586849d0477492df0cee039add393156b3caffeb396562702",
+                       "size":  906518
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/policycoreutils-3.6-9.el9.x86_64.rpm",
+                       "sha256":  "9a1141e930c4d2c16d22939568587675e515344f4272b0addf93b6b7bafefcd5",
+                       "size":  243645
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/libselinux-utils-3.6-4.el9.x86_64.rpm",
+                       "sha256":  "8c8dbef25e272d647d58496eaf292cf874b27b329a8e78d0422c45ddd3eadf1a",
+                       "size":  190046
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/cfd86a3a0f26678c30f8b1619eebceb092c4cbd51f09beb97d62b7e9d56f5c8a-primary.xml.gz",
+                       "sha256":  "cfd86a3a0f26678c30f8b1619eebceb092c4cbd51f09beb97d62b7e9d56f5c8a",
+                       "size":  4095838
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/46b0d1b3a5e6d1e2fa5d96dc39b59de46e3a402aaa05f6290f9bd92cb8ea249d-filelists.xml.gz",
+                       "sha256":  "46b0d1b3a5e6d1e2fa5d96dc39b59de46e3a402aaa05f6290f9bd92cb8ea249d",
+                       "size":  25782341
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/fbf17df87b39261adae275433b6de4d7b9dd01a379d4cf8272801bf9928d7dfb-other.xml.gz",
+                       "sha256":  "fbf17df87b39261adae275433b6de4d7b9dd01a379d4cf8272801bf9928d7dfb",
+                       "size":  3295423
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/9fbf06c124b82d7658207b358acfb843cdf1cdf4816737436077f96c320720c6-primary.sqlite.xz",
+                       "sha256":  "9fbf06c124b82d7658207b358acfb843cdf1cdf4816737436077f96c320720c6",
+                       "size":  7656336
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/74811b4898ecbf016881003e1833ea53be7289a8f23cde62388382ca4216d236-filelists.sqlite.xz",
+                       "sha256":  "74811b4898ecbf016881003e1833ea53be7289a8f23cde62388382ca4216d236",
+                       "size":  12726744
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/8b1a61b20652995159ac0ff1ef75b310dd81102f4f0938d7035ba3ec6141d8d2-other.sqlite.xz",
+                       "sha256":  "8b1a61b20652995159ac0ff1ef75b310dd81102f4f0938d7035ba3ec6141d8d2",
+                       "size":  3250164
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/88365344dba9d73d2e9b552e4d9b1d9edd24e0af344d46e345d77090c59616e3-comps-AppStream.x86_64.xml.zst",
+                       "sha256":  "88365344dba9d73d2e9b552e4d9b1d9edd24e0af344d46e345d77090c59616e3",
+                       "size":  98877
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/bd8ddf67b45322f17ed4e353302157107936869ec49b4120c8383cc809c538b5-comps-AppStream.x86_64.xml.zst.xz",
+                       "sha256":  "bd8ddf67b45322f17ed4e353302157107936869ec49b4120c8383cc809c538b5",
+                       "size":  98936
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/repodata/83e45757cd94d7f937fb7d843ca1d4b95025a5baa2eaebafabd5d9faa058debb-modules.yaml.xz",
+                       "sha256":  "83e45757cd94d7f937fb7d843ca1d4b95025a5baa2eaebafabd5d9faa058debb",
+                       "size":  17300
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/container-selinux-2.250.0-1.el9.noarch.rpm",
+                       "sha256":  "c6859e14ee5b250fdfcd5a8d7da0f033ef75de538ed1a9ae0c0c50072af8d016",
+                       "size":  61048
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/27f6967235fe691ae80f7b1b9002f9e748c2a1455308886124f54b5467980a80-primary.xml.gz",
+                       "sha256":  "27f6967235fe691ae80f7b1b9002f9e748c2a1455308886124f54b5467980a80",
+                       "size":  32484249
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/c1cd188db9f61856bbbd04e28abdbe137c7010ba2293910cae0b52bed2953b1b-filelists.xml.gz",
+                       "sha256":  "c1cd188db9f61856bbbd04e28abdbe137c7010ba2293910cae0b52bed2953b1b",
+                       "size":  2371228
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/5fd67eb3c45815537a358e2a225c252409b334f11f97065e4e3683ae5bffe915-other.xml.gz",
+                       "sha256":  "5fd67eb3c45815537a358e2a225c252409b334f11f97065e4e3683ae5bffe915",
+                       "size":  2445116
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/e71aa8c29053bf21f7705f1d411f93a79e000da02414a090c7c5947481693f13-primary.sqlite.xz",
+                       "sha256":  "e71aa8c29053bf21f7705f1d411f93a79e000da02414a090c7c5947481693f13",
+                       "size":  19210992
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/56ddd60b2948b9a6be6b80b17edf885056c695485723e59700e5b16b3346ec66-filelists.sqlite.xz",
+                       "sha256":  "56ddd60b2948b9a6be6b80b17edf885056c695485723e59700e5b16b3346ec66",
+                       "size":  1835560
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/6942ef57123c2507239cecdbc94660d6505d5cc9a0a0432232a17e177dfc4a45-other.sqlite.xz",
+                       "sha256":  "6942ef57123c2507239cecdbc94660d6505d5cc9a0a0432232a17e177dfc4a45",
+                       "size":  536436
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/370bd00fee648eb0ea5f1d817c5a113529ca57a3c0e073c37414ea0197752d6f-comps-BaseOS.x86_64.xml",
+                       "sha256":  "370bd00fee648eb0ea5f1d817c5a113529ca57a3c0e073c37414ea0197752d6f",
+                       "size":  289672
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/6242e7738bb556d74d32dfa19861e51c27bc19dd9da057e1a2054023671f4744-comps-BaseOS.x86_64.xml.xz",
+                       "sha256":  "6242e7738bb556d74d32dfa19861e51c27bc19dd9da057e1a2054023671f4744",
+                       "size":  55504
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/4b31bb94f41e6004af45fa66644979478547205a1d3a7c550053d9cb54f77f1c-updateinfo.xml.gz",
+                       "sha256":  "4b31bb94f41e6004af45fa66644979478547205a1d3a7c550053d9cb54f77f1c",
+                       "size":  637951
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/c/curl-7.76.1-40.el9_8.7.x86_64.rpm",
+                       "sha256":  "65c59be42c1c7b64c04254fdd875548e524573be5d5cef16bd9bff95912f663a",
+                       "size":  299982
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/i/iproute-tc-6.17.0-2.el9.x86_64.rpm",
+                       "sha256":  "4e43df17fa5f7c803959fe371fb8b0b39567fb3c2e5a8eabee42f786642a90c1",
+                       "size":  452455
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/f/firewalld-1.3.4-20.el9_8.noarch.rpm",
+                       "sha256":  "8a4821b6ad2ecd0e622f543df46e4e2f42959c22e6172466e571a171acfe1286",
+                       "size":  463233
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/s/selinux-policy-38.1.75-2.el9_8.noarch.rpm",
+                       "sha256":  "af82298ffd83022c90d2e9b8189588e8452c3162646644dbd836e0fb4c49da7a",
+                       "size":  41251
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/t/tar-1.34-13.el9_8.x86_64.rpm",
+                       "sha256":  "61d7dfb8258648db7c23baae3b9cd578056d4762a2ab4b4e5c8f28316c4db1a7",
+                       "size":  899737
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/p/policycoreutils-3.6-5.el9.x86_64.rpm",
+                       "sha256":  "b7839494348fc03c0992ee17dda50a0b58dc74b134c3650cdc1cd0ede8b11595",
+                       "size":  210044
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/l/libselinux-utils-3.6-3.el9.x86_64.rpm",
+                       "sha256":  "0903fc2340c50a16178e8260dd6fe1f48578cf604088eb91f8aa591b441b1127",
+                       "size":  165071
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/a949ace833be93045f0d39c427e576f8b3e585a6d1a98b7fae216a88b06c71c2-primary.xml.gz",
+                       "sha256":  "a949ace833be93045f0d39c427e576f8b3e585a6d1a98b7fae216a88b06c71c2",
+                       "size":  2484558
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/ab670512c1558944001ff3f50872979fc1b4bf431e6bafc5d015ef4f9411173f-filelists.xml.gz",
+                       "sha256":  "ab670512c1558944001ff3f50872979fc1b4bf431e6bafc5d015ef4f9411173f",
+                       "size":  21885887
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/c5560158de2e06fc1e4f032eca1193a455134496ff5797a8152fa5fc7a12a119-other.xml.gz",
+                       "sha256":  "c5560158de2e06fc1e4f032eca1193a455134496ff5797a8152fa5fc7a12a119",
+                       "size":  2092819
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/3c2797b3df7e83986c5ac42c9bab09d56aab518affa807adc8669bd6790d477d-primary.sqlite.xz",
+                       "sha256":  "3c2797b3df7e83986c5ac42c9bab09d56aab518affa807adc8669bd6790d477d",
+                       "size":  4238260
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/64f8b392a621f5ba7e0b17855b96c66d1d96f6b2bd00ca7835541ed59b19e5bc-filelists.sqlite.xz",
+                       "sha256":  "64f8b392a621f5ba7e0b17855b96c66d1d96f6b2bd00ca7835541ed59b19e5bc",
+                       "size":  11485684
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/503a495337c18cc03079dfd1ccc789f03bfd1938307a67dba16d42da7957f021-other.sqlite.xz",
+                       "sha256":  "503a495337c18cc03079dfd1ccc789f03bfd1938307a67dba16d42da7957f021",
+                       "size":  1508352
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/fc6d30ae23db7b2d1ff02c7328497f26318ab4203417f2dd5320d013091c709b-comps-AppStream.x86_64.xml",
+                       "sha256":  "fc6d30ae23db7b2d1ff02c7328497f26318ab4203417f2dd5320d013091c709b",
+                       "size":  539964
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/1535fad45c86ec6f2616fcbf87b54d540d1ee60147c15c8bbe507e4c0a85a7f0-comps-AppStream.x86_64.xml.xz",
+                       "sha256":  "1535fad45c86ec6f2616fcbf87b54d540d1ee60147c15c8bbe507e4c0a85a7f0",
+                       "size":  89984
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/80a1dd98bf9e582bb9ab85bcb0b7c967ee20157f50d8b131f011e77632f65773-modules.yaml.xz",
+                       "sha256":  "80a1dd98bf9e582bb9ab85bcb0b7c967ee20157f50d8b131f011e77632f65773",
+                       "size":  14288
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/repodata/f8bd6bdf8469ce38214250857996b7677ae3884db6018b62a1bfe6cfc7312a85-updateinfo.xml.gz",
+                       "sha256":  "f8bd6bdf8469ce38214250857996b7677ae3884db6018b62a1bfe6cfc7312a85",
+                       "size":  1858069
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/Packages/c/container-selinux-2.245.0-1.el9.noarch.rpm",
+                       "sha256":  "59a415e878fbd61b317a6cda5ec7aac07fa215cd1b11356b974ac28e6dc27dc7",
+                       "size":  58781
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/efbe328b6173f71ee384b8a07792d447457bc8f3434439f2bb427b5735662a58-primary.xml.gz",
+                       "sha256":  "efbe328b6173f71ee384b8a07792d447457bc8f3434439f2bb427b5735662a58",
+                       "size":  39556467
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/12aebb02b6bfce017cf2a650729191cba757db4dc76fbe2326ab0bead5c1463a-filelists.xml.gz",
+                       "sha256":  "12aebb02b6bfce017cf2a650729191cba757db4dc76fbe2326ab0bead5c1463a",
+                       "size":  2583381
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/5765d634a91ce6e13f20e1bba6982a1fe4820cd3792173d0dbce320b6691ef5b-other.xml.gz",
+                       "sha256":  "5765d634a91ce6e13f20e1bba6982a1fe4820cd3792173d0dbce320b6691ef5b",
+                       "size":  1628413
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/234c8dbc27b11fb088ad27de1a755794f1ce64bd17703cd72ad41546e7a86370-primary.sqlite.bz2",
+                       "sha256":  "234c8dbc27b11fb088ad27de1a755794f1ce64bd17703cd72ad41546e7a86370",
+                       "size":  63473155
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/58aef3b68c3709f2e03dccb522be1a52b4270f6d1c50e13e53cf3183efe0f896-filelists.sqlite.bz2",
+                       "sha256":  "58aef3b68c3709f2e03dccb522be1a52b4270f6d1c50e13e53cf3183efe0f896",
+                       "size":  2509561
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/02a559371c71e9cd432997592f00bb14ec9c10caafb0ea89e4b40112b93703d0-other.sqlite.bz2",
+                       "sha256":  "02a559371c71e9cd432997592f00bb14ec9c10caafb0ea89e4b40112b93703d0",
+                       "size":  1564119
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/f74e57c4e5ee833a2363573d34d74df811eef9470325f22db45fd4596baf22ec-comps.xml",
+                       "sha256":  "f74e57c4e5ee833a2363573d34d74df811eef9470325f22db45fd4596baf22ec",
+                       "size":  287542
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/repodata/f52dda2ed4b847c54d1b5a46a8fa60dc7567ef3d4f2983d553b2ef016d97df18-updateinfo.xml.gz",
+                       "sha256":  "f52dda2ed4b847c54d1b5a46a8fa60dc7567ef3d4f2983d553b2ef016d97df18",
+                       "size":  497115
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/curl-7.76.1-40.el9_8.7.x86_64.rpm",
+                       "sha256":  "55ad4c467b04afe39fe373e20d7950fcef441b4cba4b22934729667f52190ee3",
+                       "size":  299883
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/iproute-tc-6.17.0-2.el9.x86_64.rpm",
+                       "sha256":  "628b8b5873db3669eac68db1cfe0df42ab50168603a6c98d7c5e947426923593",
+                       "size":  452347
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/firewalld-1.3.4-20.el9_8.noarch.rpm",
+                       "sha256":  "bf2791071c23772678217ea6b5e766b9a5cab09371a3b9c8c87ed8db361cf7a1",
+                       "size":  463636
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/selinux-policy-38.1.75-2.el9_8.noarch.rpm",
+                       "sha256":  "5cedf3ee6dea403e964c7fe31219d1051e62d788e624df35d7ff77549264a78c",
+                       "size":  41141
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/tar-1.34-13.el9_8.x86_64.rpm",
+                       "sha256":  "2563f7bae97b6d73ded2af71250797ff30a3fe8050c70ac4b3126dbe32c0ce9e",
+                       "size":  899449
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/policycoreutils-3.6-5.el9.x86_64.rpm",
+                       "sha256":  "0c21169494565e3dfd76e823ce5e08ae1602c83140df541b04f4f130371969f9",
+                       "size":  209885
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/Packages/libselinux-utils-3.6-3.el9.x86_64.rpm",
+                       "sha256":  "cdaac39c681c4a2d4aebf93464eda459834ada910cd2996de346b70049640b69",
+                       "size":  168193
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/7a5d304aaf1171fff923ec8c964a8a51880a8218e692524ad0d60e19eb88266b-primary.xml.gz",
+                       "sha256":  "7a5d304aaf1171fff923ec8c964a8a51880a8218e692524ad0d60e19eb88266b",
+                       "size":  2437962
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/5c7b8c41f2152e159c16b5d455d57050d7394b1aae58340a6b2e4e9fb9ce142e-filelists.xml.gz",
+                       "sha256":  "5c7b8c41f2152e159c16b5d455d57050d7394b1aae58340a6b2e4e9fb9ce142e",
+                       "size":  24197584
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/a6f5f2ea9ce436c9ed0ffbd17db70da84bf4f2c2c1af05d6ac95c89c5e6c9925-other.xml.gz",
+                       "sha256":  "a6f5f2ea9ce436c9ed0ffbd17db70da84bf4f2c2c1af05d6ac95c89c5e6c9925",
+                       "size":  1777323
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/f6b477880790ed7477abf12e91fcd855cfaad8340e0ec82a1ebdf215b52fd7db-primary.sqlite.bz2",
+                       "sha256":  "f6b477880790ed7477abf12e91fcd855cfaad8340e0ec82a1ebdf215b52fd7db",
+                       "size":  5637064
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/c44d702dfe3b2ec46ff6015fac67ba788b06723b76e04fc9af2ee0e98ef7a96e-filelists.sqlite.bz2",
+                       "sha256":  "c44d702dfe3b2ec46ff6015fac67ba788b06723b76e04fc9af2ee0e98ef7a96e",
+                       "size":  22666038
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/dcec578baa71f637c3040b5a0327182f8b2f1e1acee0feb3539b948775ee7119-other.sqlite.bz2",
+                       "sha256":  "dcec578baa71f637c3040b5a0327182f8b2f1e1acee0feb3539b948775ee7119",
+                       "size":  2524021
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/1dcfa2b7f134f8a2519fd607d68b182146e347f39835e1bec5f76acc3f7cbc8c-comps.xml",
+                       "sha256":  "1dcfa2b7f134f8a2519fd607d68b182146e347f39835e1bec5f76acc3f7cbc8c",
+                       "size":  543946
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/7c4e494ff251e353d35edcf718359eb894a6867d914c03c17ec9b5eb7bae96a8-modules.yaml.gz",
+                       "sha256":  "7c4e494ff251e353d35edcf718359eb894a6867d914c03c17ec9b5eb7bae96a8",
+                       "size":  22651
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/repodata/bd7a96d60e16e9c364d6c74fe23550d469dd6ef706720718393a801bbbfe66cf-updateinfo.xml.gz",
+                       "sha256":  "bd7a96d60e16e9c364d6c74fe23550d469dd6ef706720718393a801bbbfe66cf",
+                       "size":  1413723
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/repo.almalinux.org/almalinux/9/AppStream/x86_64/os/Packages/container-selinux-2.247.0-1.el9_8.noarch.rpm",
+                       "sha256":  "d19062771404201f5d4531505a305e7898e8728c8fc512269a1ab0192999c50f",
+                       "size":  58872
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/download.docker.com/linux/centos/gpg",
+                       "sha256":  "e6c650e0700b1bf4868b693b30761b926844befc8a0acb7ac0dd9b1faf1b7423",
+                       "size":  1627
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/download.docker.com/linux/centos/9/x86_64/stable/repodata/5be1d09e674eedf02cd0b7cc209a6e0f4eda2e50a6c0154ffc79542bc7309b15-primary.xml.zst",
+                       "sha256":  "5be1d09e674eedf02cd0b7cc209a6e0f4eda2e50a6c0154ffc79542bc7309b15",
+                       "size":  45622
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/download.docker.com/linux/centos/9/x86_64/stable/repodata/1f940b42b7093262be670af1f0d4109cdcf25887d01766f274726b42beb23012-filelists.xml.zst",
+                       "sha256":  "1f940b42b7093262be670af1f0d4109cdcf25887d01766f274726b42beb23012",
+                       "size":  42456
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/download.docker.com/linux/centos/9/x86_64/stable/repodata/00e92c344f26aad214ed952bb0e9f7e7904975cf273ef154e019ed977e29b246-other.xml.zst",
+                       "sha256":  "00e92c344f26aad214ed952bb0e9f7e7904975cf273ef154e019ed977e29b246",
+                       "size":  21768
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/download.docker.com/linux/centos/9/x86_64/stable/repodata/15785a63d2ef1d07302d019d57565000357f16c1421237558eba5342e218f36d-updateinfo.xml.zst",
+                       "sha256":  "15785a63d2ef1d07302d019d57565000357f16c1421237558eba5342e218f36d",
+                       "size":  51
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/download.docker.com/linux/centos/9/x86_64/stable/Packages/containerd.io-2.3.6-1.el9.x86_64.rpm",
+                       "sha256":  "853a248973bf89a7b2374d39cf0d0a010a8695156f2d409b1b4a5451e15158b3",
+                       "size":  36538651
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/raw.githubusercontent.com/projectcalico/calico/v3.32.0/manifests/calico.yaml",
+                       "sha256":  "bccabc607685551db918f66da724893eca3e69a50c5a3e3077029b02dbab8d35",
+                       "size":  349123
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/repomd.xml",
+                       "sha256":  "24708d088f7c159d5a73016b72b1498c17658b3a75ec56e0f97d7ca72ab2e94a",
+                       "size":  1733
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/repomd.xml.key",
+                       "sha256":  "7627818cf7bae52f9008c93e8b1f961f53dea11d40891778de216fb1b43be54d",
+                       "size":  1738
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/ee341fd1048332fdf2bc2d0026ec8f08565a2303143b2dea5a96cd6efc240d43-primary.xml.gz",
+                       "sha256":  "ee341fd1048332fdf2bc2d0026ec8f08565a2303143b2dea5a96cd6efc240d43",
+                       "size":  11504
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/3614a953b7fd313b2068012189e9776697d793a7a15828179088b2454fe064f3-filelists.xml.gz",
+                       "sha256":  "3614a953b7fd313b2068012189e9776697d793a7a15828179088b2454fe064f3",
+                       "size":  5870
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/c2bfdb96ac6c94b1720ec95c0ea7dbb2a6cdd20095447df243653bf8148c697f-other.xml.gz",
+                       "sha256":  "c2bfdb96ac6c94b1720ec95c0ea7dbb2a6cdd20095447df243653bf8148c697f",
+                       "size":  4873
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/cri-tools-1.35.0-150500.1.1.x86_64.rpm",
+                       "sha256":  "6fb4a56d7801e96b6cf71939e76021da7596385482323ccff628a1029983f9e6",
+                       "size":  7832992
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/cri-tools-1.36.0-150500.1.1.x86_64.rpm",
+                       "sha256":  "e622a370e92664907b660c7bd7af73831d3d8132be5616be8ec11581a7443970",
+                       "size":  7805276
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubeadm-1.36.0-150500.1.1.x86_64.rpm",
+                       "sha256":  "7b998048c3051be06f62c220c0652cae937153e977616e434c619a67f84392a1",
+                       "size":  12709172
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubeadm-1.36.1-150500.1.1.x86_64.rpm",
+                       "sha256":  "5b8e65fd9da3b51f02c3b9734f4911d4c1899269f80b2523a7b4dfea32eb4e4a",
+                       "size":  12710316
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubeadm-1.36.2-150500.2.1.x86_64.rpm",
+                       "sha256":  "0c5c651a5e6c6d54d7840d6018f789b2d688e2d937ed4f87ca02cd1927c83414",
+                       "size":  12713152
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubeadm-1.36.3-150500.1.1.x86_64.rpm",
+                       "sha256":  "ba25f33f4db377f1381aabdbdabc1d69a4921afcc44ac3f06825657123651dca",
+                       "size":  12721260
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubeadm-1.36.4-150500.1.1.x86_64.rpm",
+                       "sha256":  "9e4fb880ee6ebad4b206f05a752eb3445a7449ac0c5390d4247bfc148c225891",
+                       "size":  12730116
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubeadm-1.36.5-150500.1.1.x86_64.rpm",
+                       "sha256":  "0f857b25db48cb01e5c69dc1d02a1fc02c125a0d04a5cd58440a4e9adb631f5a",
+                       "size":  12737484
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubectl-1.36.0-150500.1.1.x86_64.rpm",
+                       "sha256":  "c7984d2bfedd51b4d69c789759eb050302b94898e3af0b2bed5d3d40356b9582",
+                       "size":  11866064
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubectl-1.36.1-150500.1.1.x86_64.rpm",
+                       "sha256":  "3abd3018cd13a2e04f1094a2260a38430fa1296e832eb68b2194a22bddddd38f",
+                       "size":  11864680
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubectl-1.36.2-150500.2.1.x86_64.rpm",
+                       "sha256":  "e4c6e7bff5a46d99e86b42dc2042d2c6b9374c46770bd83c22722a69ac25a0fb",
+                       "size":  11875332
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubectl-1.36.3-150500.1.1.x86_64.rpm",
+                       "sha256":  "5cfd2090ba08e5d917e5d2410c169b7acaa15c4ecaef1f2cfd757a60714ec9b2",
+                       "size":  11878680
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubectl-1.36.4-150500.1.1.x86_64.rpm",
+                       "sha256":  "33854d63f2019f7f4582b3292a4ac3a2314befe4e85c21696dfaca4ab8bbaeca",
+                       "size":  11900628
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubectl-1.36.5-150500.1.1.x86_64.rpm",
+                       "sha256":  "9e406829bad036e45e08f6c49176f479c06d239cf64a96befa56f8b1b55a37fc",
+                       "size":  11897980
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubelet-1.36.0-150500.1.1.x86_64.rpm",
+                       "sha256":  "7ef78d28864d46a2b450b561759d6af3268a343ca567d4bd615c1c738ef21f1e",
+                       "size":  13483976
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubelet-1.36.1-150500.1.1.x86_64.rpm",
+                       "sha256":  "fc74dc990dad76e33ffb4278afd68b97083cb6de391a831697b432270f4710b8",
+                       "size":  13486740
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubelet-1.36.2-150500.2.1.x86_64.rpm",
+                       "sha256":  "d1766397f22133f96b141a063855bfe1690770bc8ecf6bdbed4828aa9f4947bd",
+                       "size":  13498116
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubelet-1.36.3-150500.1.1.x86_64.rpm",
+                       "sha256":  "ee5f435131cb0ddd728d0d8bcf3fbce4dce2f63b78502516790331b698c66cbe",
+                       "size":  13500104
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubelet-1.36.4-150500.1.1.x86_64.rpm",
+                       "sha256":  "217fcdd849e623d5cca069c40341797322a0d51ac5db3a60b5d2757bda967007",
+                       "size":  13510392
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubelet-1.36.5-150500.1.1.x86_64.rpm",
+                       "sha256":  "15b55de802c19f1c5b89c065086ad8feec3430fd58da836300f51688ecbbb63b",
+                       "size":  13521112
+                   },
+                   {
+                       "url":  "https://192.168.100.37:8443/cache/pkgs.k8s.io/core:/stable:/v1.36/rpm/x86_64/kubernetes-cni-1.9.1-150500.1.1.x86_64.rpm",
+                       "sha256":  "a228e611f547cf3554873c383078a7ff9abf289e5b7ae315cd38c3811804e2f7",
+                       "size":  9255068
+                   }
+               ]
+}

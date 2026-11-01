@@ -77,6 +77,7 @@ if [ ! -f "$PROJECT_ROOT/data/db.sqlite3" ] && [ -f "$PROJECT_ROOT/backend/db.sq
     echo "      Seeding existing SQLite database to data/db.sqlite3..."
     cp "$PROJECT_ROOT/backend/db.sqlite3" "$PROJECT_ROOT/data/db.sqlite3"
 fi
+mkdir -p "$PROJECT_ROOT/infra/mirror/runtime/manifests"
 
 # 3. Mirror TLS Certificates
 echo "[3/5] Verifying mirror TLS certificates for $DETECTED_IP..."
