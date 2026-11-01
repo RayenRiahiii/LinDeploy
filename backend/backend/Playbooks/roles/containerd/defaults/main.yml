@@ -16,11 +16,27 @@ containerd_repo_timeout: 20
 containerd_repo_retries: 1
 containerd_repo_probe_timeout: 5
 
-containerd_apt_repo_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
-containerd_apt_key_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
-containerd_apt_upstream_repo_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
-containerd_apt_upstream_key_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}/gpg"
-containerd_apt_repo_distribution: "{{ ansible_facts['distribution_release'] }}"
+containerd_apt_repo_distro_name: >-
+  {{
+    'debian' if ansible_facts['distribution'] | default('') == 'Debian'
+    else 'ubuntu'
+  }}
+containerd_apt_repo_distro_release: >-
+  {{
+    {
+      '22': 'noble',
+      '21': 'jammy',
+      '20': 'focal',
+      '19': 'bionic'
+    }.get(ansible_facts['distribution_major_version'] | default('') | string, 'noble')
+    if ansible_facts['distribution'] | default('') == 'Linux Mint'
+    else ansible_facts['distribution_release']
+  }}
+containerd_apt_repo_url: "https://download.docker.com/linux/{{ containerd_apt_repo_distro_name }}"
+containerd_apt_key_url: "https://download.docker.com/linux/{{ containerd_apt_repo_distro_name }}/gpg"
+containerd_apt_upstream_repo_url: "https://download.docker.com/linux/{{ containerd_apt_repo_distro_name }}"
+containerd_apt_upstream_key_url: "https://download.docker.com/linux/{{ containerd_apt_repo_distro_name }}/gpg"
+containerd_apt_repo_distribution: "{{ containerd_apt_repo_distro_release }}"
 containerd_apt_repo_components: stable
 containerd_apt_keyring_dir: /etc/apt/keyrings
 containerd_apt_keyring_path: /etc/apt/keyrings/docker.asc

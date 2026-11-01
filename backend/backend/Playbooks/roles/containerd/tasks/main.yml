@@ -34,6 +34,30 @@
       }}
   when: ansible_facts["os_family"] == "RedHat"
 
+- name: Resolve Debian-family upstream Docker distribution and release
+  set_fact:
+    containerd_apt_repo_distro_name: >-
+      {{
+        'debian' if ansible_facts['distribution'] == 'Debian'
+        else 'ubuntu'
+      }}
+    containerd_apt_repo_distribution: >-
+      {{
+        {
+          '22': 'noble',
+          '21': 'jammy',
+          '20': 'focal',
+          '19': 'bionic'
+        }.get(ansible_facts['distribution_major_version'] | string, 'noble')
+        if ansible_facts['distribution'] == 'Linux Mint'
+        else containerd_apt_repo_distribution
+      }}
+    containerd_apt_upstream_repo_url: >-
+      https://download.docker.com/linux/{{ 'debian' if ansible_facts['distribution'] == 'Debian' else 'ubuntu' }}
+    containerd_apt_upstream_key_url: >-
+      https://download.docker.com/linux/{{ 'debian' if ansible_facts['distribution'] == 'Debian' else 'ubuntu' }}/gpg
+  when: ansible_facts["os_family"] == "Debian"
+
 - name: Probe configured Docker APT repository
   uri:
     url: "{{ containerd_apt_repo_url }}/dists/{{ containerd_apt_repo_distribution }}/Release"
