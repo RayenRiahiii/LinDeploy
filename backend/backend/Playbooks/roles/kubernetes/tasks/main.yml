@@ -122,19 +122,23 @@
       or
       (not kubernetes_apt_keyring_stat.stat.exists | default(false))
 
-- name: Add Kubernetes apt repository
-  apt_repository:
-    repo: "deb [signed-by={{ kubernetes_apt_keyring_path }}] {{ kubernetes_effective_apt_repo_url }} /"
-    filename: kubernetes
-    state: present
-    update_cache: false
+- name: Configure Kubernetes apt repository
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: "deb [signed-by={{ kubernetes_apt_keyring_path }}] {{ kubernetes_effective_apt_repo_url }} /\n"
+    mode: "0644"
+    owner: root
+    group: root
   register: kubernetes_apt_repository
   when: ansible_facts["os_family"] == "Debian"
 
 - name: Refresh apt cache when Kubernetes repository state changed
-  apt:
-    update_cache: true
-    cache_valid_time: 0
+  command: apt-get update -o Acquire::Retries=3
+  register: kubernetes_apt_update
+  changed_when: kubernetes_apt_update.rc == 0
+  retries: 3
+  delay: 5
+  until: kubernetes_apt_update.rc == 0
   when:
     - ansible_facts["os_family"] == "Debian"
     - >

@@ -355,9 +355,9 @@
 # 8. Verify Kubernetes API server readiness
 # ==================================================
 - name: Wait for Kubernetes API server readiness
-  command: >-
-    kubectl --kubeconfig={{ kubeadm_admin_conf_path }} get --raw=/readyz
-    {{ kubeadm_kubectl_binary_path }} --kubeconfig={{ kubeadm_admin_conf_path }} get --raw=/readyz
+  command: "{{ kubeadm_kubectl_binary_path }} --kubeconfig={{ kubeadm_admin_conf_path }} get --raw=/readyz"
+
+
   register: kubeadm_readyz_probe
   changed_when: false
   retries: 30
