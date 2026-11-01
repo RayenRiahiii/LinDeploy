@@ -47,10 +47,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-%bl0h92a7mfj1yp+stcvol&o-803m83=iiytdwkl3-yve_n%ax",
-)
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool("DJANGO_DEBUG", True)
@@ -212,8 +209,8 @@ OPENSHIFT_MIRROR_STORAGE_PATH = os.getenv(
 ).strip()
 OPENSHIFT_MIRROR_CA_FILE = os.getenv("OPENSHIFT_MIRROR_CA_FILE", "").strip()
 
-# Release hosts held by an orphaned queued/SSH-check execution. Running
-# playbooks always have a runner PID and are never expired by this safeguard.
+# Cancel old queued work. An unresponsive running worker never releases hosts
+# automatically; its process stop must be confirmed first.
 INSTALLATION_PRE_EXECUTION_STALE_SECONDS = int(
     os.getenv("INSTALLATION_PRE_EXECUTION_STALE_SECONDS", "900")
 )
@@ -307,6 +304,6 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "auto_K8S.permissions.IsOperator",
     ],
 }

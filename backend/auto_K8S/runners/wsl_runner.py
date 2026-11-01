@@ -1,6 +1,8 @@
 import time
 import shlex
 from types import SimpleNamespace
+import tempfile
+import subprocess
 from pathlib import Path
 
 from django.conf import settings
@@ -88,36 +90,13 @@ class WslRunner(BaseRunner):
             command_suffix=f"exec ansible-playbook -i '{inventory_path_wsl}' '{playbook_relative_path}'{extra_vars_suffix}",
         )
 
-        pid_file = Path(inventory_path).with_suffix(".wsl-runner.pid")
-        pid_file_wsl = self.windows_to_wsl_path(pid_file)
-        wrapped_command = (
-            f"printf '%s\\n' \"$$\" > '{pid_file_wsl}'; "
-            "exec sh -c "
-            + shlex.quote(shell_command)
-        )
-
-        def report_process_start(process):
-            if not on_process_start:
-                return
-            for _ in range(50):
-                try:
-                    wsl_pid = int(pid_file.read_text(encoding="utf-8").strip())
-                    on_process_start(SimpleNamespace(pid=-wsl_pid))
-                    return
-                except (FileNotFoundError, ValueError, OSError):
-                    time.sleep(0.05)
-            on_process_start(process)
-
         started_at = time.perf_counter()
-        try:
-            result = self.run_streaming_subprocess(
-                ["wsl", "-d", self.distro_name, "sh", "-lc", wrapped_command],
-                on_stdout_line=on_stdout_line,
-                on_stderr_line=on_stderr_line,
-                on_process_start=report_process_start,
-            )
-        finally:
-            pid_file.unlink(missing_ok=True)
+        result = self.run_streaming_subprocess(
+            ["wsl", "-d", self.distro_name, "sh", "-lc", shell_command],
+            on_stdout_line=on_stdout_line,
+            on_stderr_line=on_stderr_line,
+            on_process_start=on_process_start,
+        )
         execution_seconds = round(time.perf_counter() - started_at, 3)
 
         return result, {
@@ -190,3 +169,52 @@ class WslRunner(BaseRunner):
             "runner_backend": "wsl",
             "runner_target": self.distro_name,
         }
+
+    def run_subprocess(self, command, cwd=None, env=None):
+        return self.run_streaming_subprocess(command, cwd=cwd, env=env)
+
+    def run_streaming_subprocess(self, command, on_process_start=None, **kwargs):
+        # Each WSL invocation owns a Linux session. Stop that session from the
+        # worker, not just the Windows wsl.exe client.
+        with tempfile.TemporaryDirectory(prefix="lindeploy-wsl-") as directory:
+            pid_file = Path(directory) / "runner.pid"
+            pid_wsl = self.windows_to_wsl_path(pid_file)
+            wrapped = "printf '%s\\n' \"$$\" > " + shlex.quote(pid_wsl) + "; exec sh -lc " + shlex.quote(command[-1])
+            wsl_pid = None
+
+            def started(process):
+                nonlocal wsl_pid
+                for _ in range(100):
+                    try:
+                        wsl_pid = int(pid_file.read_text().strip())
+                        if wsl_pid <= 1:
+                            raise ValueError("Invalid WSL process group")
+                        if on_process_start:
+                            on_process_start(SimpleNamespace(pid=-wsl_pid))
+                        return
+                    except (OSError, ValueError):
+                        if process.poll() is not None:
+                            return
+                        time.sleep(0.05)
+                raise RuntimeError("WSL process group could not be identified.")
+
+            def terminate(process):
+                if wsl_pid is None:
+                    if process.poll() is None:
+                        raise RuntimeError("WSL process ownership unknown.")
+                    return
+                script = (
+                    "import os,signal,time\n"
+                    f"pid={wsl_pid}\n"
+                    "for sig in (signal.SIGTERM, signal.SIGKILL):\n"
+                    " try: os.killpg(pid,sig)\n"
+                    " except ProcessLookupError: pass\n"
+                    " time.sleep(1)\n"
+                )
+                subprocess.run(["wsl", "-d", self.distro_name, "python3", "-c", script],
+                               check=True, capture_output=True, timeout=10)
+
+            return BaseRunner.run_streaming_subprocess(
+                ["wsl", "-d", self.distro_name, "setsid", "sh", "-c", wrapped],
+                on_process_start=started, terminate_process=terminate, **kwargs,
+            )

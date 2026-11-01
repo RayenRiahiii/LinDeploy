@@ -4,7 +4,8 @@ include:
   - infra/mirror/compose.yaml
 
 x-backend-environment: &backend-env
-  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-Do7O9LXcHQ2YA3c64TocY1ktmY879q1R4JFkY9rK-23pAzcfqrR3WsWJfKEexF4b9DGjGsX52Oay1x0kvO5VHQ}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Use start.ps1 or start.sh to initialize a private environment file}
+  LINDEPLOY_CREDENTIAL_KEY: ${LINDEPLOY_CREDENTIAL_KEY:?Configure a dedicated credential encryption key}
   DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
   DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
   DJANGO_TIME_ZONE: ${DJANGO_TIME_ZONE:-UTC}

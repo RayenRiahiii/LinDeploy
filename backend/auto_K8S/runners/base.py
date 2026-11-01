@@ -1,6 +1,11 @@
 import subprocess
 import threading
+import os
+import signal
+import time
 from pathlib import Path
+from .control import cancel_check, secret_values, ProcessStopUnconfirmed
+from ..log_safety import OutputRedactor
 
 
 class BaseRunner:
@@ -40,14 +45,7 @@ class BaseRunner:
 
     @staticmethod
     def run_subprocess(command, cwd=None, env=None):
-        return subprocess.run(
-            command,
-            cwd=cwd,
-            env=env,
-            capture_output=True,
-            text=True,
-            shell=False,
-        )
+        return BaseRunner.run_streaming_subprocess(command, cwd=cwd, env=env)
 
     @staticmethod
     def run_streaming_subprocess(
@@ -57,6 +55,7 @@ class BaseRunner:
         on_stdout_line=None,
         on_stderr_line=None,
         on_process_start=None,
+        terminate_process=None,
     ):
         popen_kwargs = {
             "cwd": cwd,
@@ -76,18 +75,21 @@ class BaseRunner:
             command,
             **popen_kwargs,
         )
-        if on_process_start:
-            on_process_start(process)
-
         stdout_chunks = []
         stderr_chunks = []
+        reader_errors = []
+        secrets = secret_values.get()
 
         def reader(stream, chunks, callback):
+            redact = OutputRedactor(secrets)
             try:
                 for line in iter(stream.readline, ""):
+                    line = redact(line)
                     chunks.append(line)
                     if callback:
                         callback(line.rstrip("\r\n"))
+            except Exception as exc:
+                reader_errors.append(exc)
             finally:
                 stream.close()
 
@@ -104,9 +106,52 @@ class BaseRunner:
 
         stdout_thread.start()
         stderr_thread.start()
-        process.wait()
-        stdout_thread.join()
-        stderr_thread.join()
+        check = cancel_check.get()
+
+        def stop_owned_process():
+            try:
+                if terminate_process:
+                    terminate_process(process)
+                elif os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                   check=True, capture_output=True, timeout=10)
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    time.sleep(1)
+                    # Also remove children if their parent exited on SIGTERM.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                process.wait(timeout=10)
+                stdout_thread.join(timeout=5)
+                stderr_thread.join(timeout=5)
+                if stdout_thread.is_alive() or stderr_thread.is_alive():
+                    raise RuntimeError("Process output streams are still open.")
+            except Exception as exc:
+                raise ProcessStopUnconfirmed("Process stop could not be confirmed; hosts remain reserved.") from exc
+
+        stopping = False
+        try:
+            if on_process_start:
+                on_process_start(process)
+            while process.poll() is None or stdout_thread.is_alive() or stderr_thread.is_alive():
+                if reader_errors:
+                    raise reader_errors[0]
+                if check and check():
+                    stopping = True
+                    stop_owned_process()
+                    break
+                time.sleep(0.2)
+        except BaseException:
+            if not stopping:
+                stop_owned_process()
+            raise
+        if reader_errors:
+            raise reader_errors[0]
 
         return subprocess.CompletedProcess(
             args=command,

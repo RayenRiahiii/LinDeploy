@@ -10,6 +10,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .jwt_auth import LinDeployJWTAuthentication, generate_jwt_token
+from .permissions import can_operate
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -25,6 +26,7 @@ def format_user_profile(user):
         "full_name": f"{user.first_name} {user.last_name}".strip() or user.username,
         "is_staff": user.is_staff,
         "is_superuser": user.is_superuser,
+        "can_operate": can_operate(user),
     }
 
 
@@ -40,13 +42,15 @@ def auth_google(request):
         )
 
     client_id = getattr(settings, "GOOGLE_CLIENT_ID", "").strip()
+    if not client_id:
+        return Response({"detail": "Google sign-in is not configured."}, status=503)
 
     try:
         request_transport = google_requests.Request()
         id_info = id_token.verify_oauth2_token(
             credential,
             request_transport,
-            audience=client_id if client_id else None,
+            audience=client_id,
         )
     except Exception as exc:
         logger.warning("Google token verification failed: %s", exc)

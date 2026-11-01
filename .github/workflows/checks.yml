@@ -1,0 +1,44 @@
+name: Isolated checks
+on: [push, pull_request]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      USE_SQLITE: 'True'
+      DJANGO_SECRET_KEY: synthetic-ci-signing-key-never-deploy
+      LINDEPLOY_CREDENTIAL_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CELERY_BROKER_URL: memory://
+      CELERY_RESULT_BACKEND: cache+memory://
+      ANSIBLE_RUNNER_BACKEND: linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt ansible-core==2.17.7
+      - run: python manage.py makemigrations --check --dry-run
+        working-directory: backend
+      - run: python manage.py test auto_K8S --noinput
+        working-directory: backend
+      - run: bash infra/tests/test_initialize_env.sh
+      - run: python -m unittest discover -s tests
+        working-directory: infra/mirror/artifact-cache
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint && node --test src/components/openshift/form.test.mjs && npm run build
+        working-directory: frontend
+  windows-config:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: pwsh
+        run: ./infra/tests/test_initialize_env.ps1

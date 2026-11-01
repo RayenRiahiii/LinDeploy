@@ -10,6 +10,7 @@ export type AuthUser = {
   full_name: string;
   is_staff: boolean;
   is_superuser: boolean;
+  can_operate?: boolean;
 };
 
 export function getStoredAuthToken(): string | null {

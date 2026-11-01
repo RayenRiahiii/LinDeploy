@@ -10,7 +10,7 @@ The current release supports:
 - **Multi-Target Execution**: concurrent preflight verification, per-host live results, and partial-success reporting;
 - **SSH Connectivity Engine**: automated pre-execution checks (Password, SSH Private Key, and SSH Public Key);
 - **Lifecycle & Cleanup**: Kubernetes reset and full uninstall workflows, K3s cleanup, and node purging;
-- **Direct Execution Cancellation**: immediate process termination and host release with a single click;
+- **Direct Execution Cancellation**: worker-confirmed process termination before host release;
 - **Dual Conflict Protection**: cross-platform (K8s vs K3s) and same-platform conflict detection ("Keep existing" vs "Cleanup and reinstall");
 - **User Authentication**: secure JWT and session-based authentication, registration, login, and protected routes;
 - **Bilingual Internationalization (i18n)**: instant on-the-fly language switching between English (`EN`) and French (`FR`);
@@ -68,9 +68,9 @@ chmod +x start.sh stop.sh
 ./start.sh
 ```
 
-#### Or using Docker Compose directly:
+#### Or using Docker Compose after initializing the private environment file:
 ```bash
-docker compose up -d --build
+docker compose --env-file .env.docker up -d --build
 ```
 
 ### What happens automatically:
@@ -202,8 +202,12 @@ LinDeploy deploys onto remote Linux machines with package and service management
 
 ### 1. Initial Setup & Authentication
 1. Open **[http://localhost:5173](http://localhost:5173)** in your browser.
-2. Create an account via **Sign Up** or log in.
-3. Switch language between **English** (`EN`) and **Français** (`FR`) anytime from the top navigation bar.
+2. Create an account via **Sign Up** or log in. New accounts wait for operator authorization.
+   An administrator grants access explicitly with:
+   `docker compose --env-file .env.docker exec backend python manage.py authorize_operator USERNAME`.
+   Existing superusers retain access; other existing accounts also require authorization.
+   See [Safe security upgrade and rollback](docs/SECURITY_UPGRADE.md) before updating an existing instance.
+3. Switch language between **English** (`EN`) and **FranÃ§ais** (`FR`) anytime from the top navigation bar.
 
 ### 2. Register Credentials & Target Hosts
 1. Go to **Credentials** -> **Add Credential**: choose **Password**, **SSH Private Key**, or **SSH Public Key**.
@@ -218,7 +222,7 @@ LinDeploy deploys onto remote Linux machines with package and service management
 3. Click **Verify SSH** to run automated preflight connectivity and privilege checks.
 4. Click **Run Playbook** to start deployment.
 5. Follow real-time streaming logs, task progress bars, and node health status in the **Execution Center**.
-6. **Cancel anytime**: If needed, click **Cancel** to immediately terminate Ansible execution (`SIGTERM`) and release target host locks.
+6. **Cancel anytime**: If needed, click **Cancel** to request worker-side Ansible termination; target host reservations remain until the worker confirms the stop.
 
 ### 4. Deploying OpenShift SNO (Single-Node OpenShift)
 LinDeploy provides a managed disconnected Single Node OpenShift workflow on KVM/libvirt:
@@ -309,7 +313,7 @@ ansible-playbook --syntax-check playbooks/openshift_sno_disconnected.yml
 ## Documentation
 
 - [Installation and local development](docs/INSTALLATION.md)
-- [Manuel d'utilisation (Français)](docs/MANUEL_UTILISATION.md)
+- [Manuel d'utilisation (FranÃ§ais)](docs/MANUEL_UTILISATION.md)
 - [Technical architecture](docs/ARCHITECTURE.md)
 - [Troubleshooting guide](docs/TROUBLESHOOTING.md)
 - [Smart LAN mirror](docs/SMART_MIRROR.md)

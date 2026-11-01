@@ -248,9 +248,9 @@ class CredentialSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         extra_kwargs = {
-            "password": {"write_only": True, "required": False, "allow_blank": True},
-            "private_key": {"write_only": True, "required": False, "allow_blank": True},
-            "become_password": {"write_only": True, "required": False, "allow_blank": True},
+            "password": {"write_only": True, "required": False, "allow_blank": True, "trim_whitespace": False},
+            "private_key": {"write_only": True, "required": False, "allow_blank": True, "trim_whitespace": False},
+            "become_password": {"write_only": True, "required": False, "allow_blank": True, "trim_whitespace": False},
         }
 
     def get_has_password(self, obj) -> bool:
@@ -269,6 +269,11 @@ class CredentialSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        from .vault import _get_fernet, CredentialEncryptionError
+        try:
+            _get_fernet()
+        except CredentialEncryptionError:
+            raise serializers.ValidationError("Credential encryption is not configured. Contact the administrator.")
         auth_type = attrs.get("auth_type", getattr(self.instance, "auth_type", None))
 
         # Preserve existing secrets on edit if not provided or empty

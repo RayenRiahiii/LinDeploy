@@ -1,9 +1,10 @@
 import ipaddress
+import uuid
 from pathlib import Path
 import time
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -43,6 +44,7 @@ from .services import (
 )
 from .mirror import mirror_status_payload, queue_mirror_prewarm, read_mirror_state
 from .runners import get_runner
+from .execution_lock import execution_transaction, ensure_hosts_available
 from .tasks import run_installation_task, run_mirror_prewarm_task
 
 
@@ -138,11 +140,6 @@ def cancel_stale_pre_execution_installations(host_ids):
 
     for installation in stale_installations:
         request_installation_cancellation(installation)
-        installation.summary_message = (
-            "Execution automatically cancelled because it stopped reporting "
-            "progress before Ansible started. The selected hosts were released."
-        )
-        installation.save(update_fields=["summary_message", "updated_at"])
 
 
 def build_default_cluster_config(system_type):
@@ -1015,34 +1012,8 @@ def launch_installation(request):
     overrides_by_host_id = {
         item["host_id"]: item for item in normalized_host_overrides
     }
-    with transaction.atomic():
-        # Lock target hosts in deterministic order to prevent concurrent race conditions
-        list(Host.objects.select_for_update().filter(id__in=host_ids).order_by("id"))
-
-        active_busy = InstallationTarget.objects.filter(
-            host_id__in=host_ids,
-            installation__status__in=(
-                Installation.Status.PENDING,
-                Installation.Status.RUNNING,
-            ),
-        ).select_related("host", "installation")
-        if active_busy.exists():
-            busy_hosts = [
-                {
-                    "host_id": target.host_id,
-                    "host_name": target.host.name,
-                    "installation_id": target.installation_id,
-                    "installation_status": target.installation.status,
-                }
-                for target in active_busy
-            ]
-            return Response(
-                {
-                    "message": "Some selected hosts are already used by an active execution.",
-                    "errors": {"busy_hosts": busy_hosts},
-                },
-                status=409,
-            )
+    with execution_transaction():
+        ensure_hosts_available(host_ids)
 
         installation = Installation.objects.create(
             template=template,
@@ -1081,28 +1052,21 @@ def launch_installation(request):
                 cluster_name=overrides_by_host_id[host.id]["cluster_name"],
             )
 
+    installation.celery_task_id = str(uuid.uuid4())
+    installation.save(update_fields=["celery_task_id", "updated_at"])
     try:
-        celery_result = run_installation_task.delay(installation.id)
-        installation.celery_task_id = celery_result.id
-        installation.save(update_fields=["celery_task_id", "updated_at"])
-    except Exception as exc:
-        installation.status = Installation.Status.FAILED
-        installation.phase = Installation.Phase.FAILED
-        installation.summary_message = f"Failed to dispatch execution task: {str(exc)}"
-        installation.save(update_fields=["status", "phase", "summary_message", "updated_at"])
-        installation.targets.update(status=InstallationTarget.Status.FAILED)
-        return Response(
-            {
-                "message": f"Failed to dispatch execution task: {str(exc)}",
-                "installation_id": installation.id,
-            },
-            status=503,
-        )
+        run_installation_task.apply_async(args=[installation.id], task_id=installation.celery_task_id)
+    except Exception:
+        # Broker delivery may have succeeded before the connection failed. Never
+        # release a host on an ambiguous acknowledgement; cancellation is safe.
+        installation.summary_message = "Task dispatch could not be confirmed. Hosts remain reserved; inspect or cancel this execution before retrying."
+        installation.save(update_fields=["summary_message", "updated_at"])
+        return Response({"message": installation.summary_message, "installation_id": installation.id}, status=503)
 
     return Response(
         {
             "installation_id": installation.id,
-            "celery_task_id": celery_result.id,
+            "celery_task_id": installation.celery_task_id,
             "status": installation.status,
             "phase": installation.phase,
             "progress": installation.progress,
@@ -1211,7 +1175,8 @@ def retry_openshift_installation(request, id):
             status=400,
         )
 
-    with transaction.atomic():
+    with execution_transaction():
+        ensure_hosts_available(host_ids)
         restarted = Installation.objects.create(
             template=source.template,
             topology=source.topology,
@@ -1239,29 +1204,22 @@ def retry_openshift_installation(request, id):
                 cluster_name=target.cluster_name,
             )
 
+    restarted.celery_task_id = str(uuid.uuid4())
+    restarted.save(update_fields=["celery_task_id", "updated_at"])
     try:
-        celery_result = run_installation_task.delay(restarted.id)
-        restarted.celery_task_id = celery_result.id
-        restarted.save(update_fields=["celery_task_id", "updated_at"])
-    except Exception as exc:
-        restarted.status = Installation.Status.FAILED
-        restarted.phase = Installation.Phase.FAILED
-        restarted.summary_message = f"Failed to dispatch retry execution: {str(exc)}"
-        restarted.save(update_fields=["status", "phase", "summary_message", "updated_at"])
-        restarted.targets.update(status=InstallationTarget.Status.FAILED)
-        return Response(
-            {
-                "message": f"Failed to dispatch retry task: {str(exc)}",
-                "installation_id": restarted.id,
-            },
-            status=503,
-        )
+        run_installation_task.apply_async(args=[restarted.id], task_id=restarted.celery_task_id)
+    except Exception:
+        # Broker delivery may have succeeded before the connection failed. Never
+        # release a host on an ambiguous acknowledgement; cancellation is safe.
+        restarted.summary_message = "Task dispatch could not be confirmed. Hosts remain reserved; inspect or cancel this execution before retrying."
+        restarted.save(update_fields=["summary_message", "updated_at"])
+        return Response({"message": restarted.summary_message, "installation_id": restarted.id}, status=503)
 
     return Response(
         {
             "installation_id": restarted.id,
             "retried_installation_id": source.id,
-            "celery_task_id": celery_result.id,
+            "celery_task_id": restarted.celery_task_id,
             "status": restarted.status,
             "phase": restarted.phase,
             "progress": restarted.progress,

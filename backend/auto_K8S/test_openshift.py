@@ -3,6 +3,8 @@ from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+from .permissions import OPERATOR_GROUP
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -30,6 +32,7 @@ class OpenShiftSecurityTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="os_sec_user", password="password")
         self.client = APIClient()
+        self.user.groups.add(Group.objects.get_or_create(name=OPERATOR_GROUP)[0])
         self.client.force_authenticate(user=self.user)
 
     def test_secret_endpoint_encrypts_plaintext_and_returns_only_reference(self):
@@ -80,6 +83,7 @@ class OpenShiftLaunchTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="os_launch_user", password="password")
         self.client = APIClient()
+        self.user.groups.add(Group.objects.get_or_create(name=OPERATOR_GROUP)[0])
         self.client.force_authenticate(user=self.user)
         credential = Credential.objects.create(
             name="openshift-kvm-credential",
@@ -197,7 +201,7 @@ class OpenShiftLaunchTests(TestCase):
     @override_settings(OPENSHIFT_RED_HAT_OFFLINE_TOKEN="")
     @patch("auto_K8S.views.run_installation_task")
     def test_disconnected_launch_does_not_require_assisted_installer_token(self, run_task_mock):
-        run_task_mock.delay.return_value = Mock(id="openshift-disconnected-task")
+        run_task_mock.apply_async.return_value = Mock(id="openshift-disconnected-task")
         bundle = self.create_bundle(disconnected=True)
         payload = self.request_payload(bundle.reference, disconnected=True)
         payload["template_id"] = self.disconnected_template.id
@@ -217,11 +221,11 @@ class OpenShiftLaunchTests(TestCase):
         serialized = json.dumps(installation.cluster_config)
         self.assertNotIn("mirror-password", serialized)
         self.assertNotIn("BEGIN CERTIFICATE", serialized)
-        run_task_mock.delay.assert_called_once_with(installation.id)
+        run_task_mock.apply_async.assert_called_once_with(args=[installation.id], task_id=installation.celery_task_id)
 
     @patch("auto_K8S.views.run_installation_task")
     def test_disconnected_launch_accepts_locally_managed_mirror_ca(self, run_task_mock):
-        run_task_mock.delay.return_value = Mock(id="openshift-local-ca-task")
+        run_task_mock.apply_async.return_value = Mock(id="openshift-local-ca-task")
         bundle = self.create_bundle(disconnected=True, include_mirror_ca=False)
         payload = self.request_payload(bundle.reference, disconnected=True)
         payload["template_id"] = self.disconnected_template.id
@@ -236,11 +240,11 @@ class OpenShiftLaunchTests(TestCase):
         response = self.client.post("/api/installations/launch/", payload, format="json")
 
         self.assertEqual(response.status_code, 202)
-        run_task_mock.delay.assert_called_once()
+        run_task_mock.apply_async.assert_called_once()
 
     @patch("auto_K8S.views.run_installation_task")
     def test_mirror_preparation_does_not_require_sno_network_or_disk_approval(self, run_task_mock):
-        run_task_mock.delay.return_value = Mock(id="openshift-mirror-task")
+        run_task_mock.apply_async.return_value = Mock(id="openshift-mirror-task")
         bundle = self.create_bundle(disconnected=True)
         payload = self.request_payload(bundle.reference, disconnected=True)
         payload["template_id"] = self.mirror_template.id
@@ -258,11 +262,11 @@ class OpenShiftLaunchTests(TestCase):
         response = self.client.post("/api/installations/launch/", payload, format="json")
 
         self.assertEqual(response.status_code, 202)
-        run_task_mock.delay.assert_called_once()
+        run_task_mock.apply_async.assert_called_once()
 
     @patch("auto_K8S.views.run_installation_task")
     def test_cleanup_does_not_require_ephemeral_openshift_secrets(self, run_task_mock):
-        run_task_mock.delay.return_value = Mock(id="openshift-cleanup-task")
+        run_task_mock.apply_async.return_value = Mock(id="openshift-cleanup-task")
         payload = self.request_payload("unused")
         payload["template_id"] = self.cleanup_template.id
         payload["cluster_config"].pop("secret_reference")
@@ -277,11 +281,11 @@ class OpenShiftLaunchTests(TestCase):
         installation = Installation.objects.get(pk=response.json()["installation_id"])
         self.assertEqual(installation.template, self.cleanup_template)
         self.assertTrue(installation.cluster_config["preserve_iso"])
-        run_task_mock.delay.assert_called_once_with(installation.id)
+        run_task_mock.apply_async.assert_called_once_with(args=[installation.id], task_id=installation.celery_task_id)
 
     @patch("auto_K8S.views.run_installation_task")
     def test_full_uninstall_does_not_require_secrets_and_disables_preserve_iso(self, run_task_mock):
-        run_task_mock.delay.return_value = Mock(id="openshift-full-uninstall-task")
+        run_task_mock.apply_async.return_value = Mock(id="openshift-full-uninstall-task")
         payload = self.request_payload("unused")
         payload["template_id"] = self.full_uninstall_template.id
         payload["cluster_config"].pop("secret_reference")
@@ -296,7 +300,7 @@ class OpenShiftLaunchTests(TestCase):
         installation = Installation.objects.get(pk=response.json()["installation_id"])
         self.assertEqual(installation.template, self.full_uninstall_template)
         self.assertFalse(installation.cluster_config["preserve_iso"])
-        run_task_mock.delay.assert_called_once_with(installation.id)
+        run_task_mock.apply_async.assert_called_once_with(args=[installation.id], task_id=installation.celery_task_id)
 
     def test_launch_rejects_network_address_as_node_and_rendezvous_ip(self):
         payload = self.request_payload(self.create_bundle().reference)
@@ -316,7 +320,7 @@ class OpenShiftLaunchTests(TestCase):
     @patch("auto_K8S.views.run_installation_task")
     def test_launch_queues_registered_openshift_template_without_plaintext_secrets(self, run_task_mock):
         bundle = self.create_bundle()
-        run_task_mock.delay.return_value = Mock(id="openshift-task-1")
+        run_task_mock.apply_async.return_value = Mock(id="openshift-task-1")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -331,7 +335,7 @@ class OpenShiftLaunchTests(TestCase):
         self.assertNotIn("AAAAC3", serialized)
         self.assertEqual(installation.template, self.disconnected_template)
         self.assertEqual(installation.host_overrides[0]["installation_disk"], "/dev/vda")
-        run_task_mock.delay.assert_called_once_with(installation.id)
+        run_task_mock.apply_async.assert_called_once_with(args=[installation.id], task_id=installation.celery_task_id)
 
     def test_normalization_preserves_libvirt_contract(self):
         normalized = normalize_host_overrides(
@@ -345,7 +349,7 @@ class OpenShiftLaunchTests(TestCase):
 
     @patch("auto_K8S.views.run_installation_task")
     def test_failed_openshift_installation_can_restart_with_same_configuration(self, run_task_mock):
-        run_task_mock.delay.side_effect = [Mock(id="original-task"), Mock(id="retry-task")]
+        run_task_mock.apply_async.side_effect = [Mock(id="original-task"), Mock(id="retry-task")]
         original_response = self.client.post(
             "/api/installations/launch/",
             self.request_payload(self.create_bundle().reference),
@@ -375,7 +379,7 @@ class OpenShiftLaunchTests(TestCase):
             str(retry_bundle.reference),
         )
         self.assertEqual(original.status, Installation.Status.FAILED)
-        run_task_mock.delay.assert_called_with(restarted.id)
+        run_task_mock.apply_async.assert_called_with(args=[restarted.id], task_id=restarted.celery_task_id)
 
     def test_sanitize_log_line_redacts_tokens_passwords_and_keys(self):
         from auto_K8S.services import sanitize_log_line
@@ -422,7 +426,7 @@ class OpenShiftLaunchTests(TestCase):
 
     @patch("auto_K8S.views.run_installation_task")
     def test_running_openshift_installation_cannot_be_restarted(self, run_task_mock):
-        run_task_mock.delay.return_value = Mock(id="original-task")
+        run_task_mock.apply_async.return_value = Mock(id="original-task")
         original_response = self.client.post(
             "/api/installations/launch/",
             self.request_payload(self.create_bundle().reference),

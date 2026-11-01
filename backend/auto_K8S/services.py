@@ -2,12 +2,11 @@ import os
 import re
 import json
 import stat
-import subprocess
+import shutil
 import tempfile
 import threading
 import time
 import unicodedata
-import yaml
 from collections import deque
 from pathlib import Path
 
@@ -20,6 +19,9 @@ from .models import Host, Installation, InstallationTarget, InstallationTemplate
 from .openshift_secrets import consume_secret_bundle, destroy_secret_bundle
 from .openshift_telemetry import OpenShiftTelemetryPoller
 from .runners import get_runner
+from .runners.control import controlled_installation, ProcessStopUnconfirmed
+from .execution_lock import execution_transaction
+from .inventory_safety import LiteralSecret, dump_inventory, redact_inventory
 
 
 class InstallationCancelled(Exception):
@@ -42,10 +44,8 @@ SECRET_PATTERNS = [
     (re.compile(r'("password":\s*")[^"]+(")'), r'\1<redacted-password>\2'),
     # OpenShift pull secret auths
     (re.compile(r'("auths":\s*\{)[^\}]+(\})'), r'\1"<redacted-pull-secret>"\2'),
-    # Ansible & SSH passwords in quoted format
-    (re.compile(r'(ansible_(?:password|become_password|become_pass|ssh_pass)\s*[:=]\s*)(["\'])(?:(?=(\\?))\3[\s\S])*?\2', re.IGNORECASE), r'\1"<redacted>"'),
-    # Ansible & SSH passwords in unquoted format (including values with spaces)
-    (re.compile(r'(ansible_(?:password|become_password|become_pass|ssh_pass)\s*[:=]\s*)(?!["\'])[^,\r\n]+', re.IGNORECASE), r'\1"<redacted>"'),
+    # Do not guess where a secret ends: commas and whitespace may belong to it.
+    (re.compile(r'ansible_(?:password|become_password|become_pass|ssh_pass)\s*[=:][^\r\n]*', re.IGNORECASE), 'ansible_password: "<redacted>"'),
     # Private keys
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "<redacted-private-key>"),
     # Generic bearer tokens
@@ -67,7 +67,7 @@ def redact_inventory_secrets(inventory_content):
     """Return a diagnostic-safe inventory without SSH or sudo secret values."""
     if not inventory_content:
         return ""
-    return sanitize_log_line(inventory_content)
+    return redact_inventory(inventory_content)
 
 
 def get_live_output_path(installation_id):
@@ -183,99 +183,17 @@ def normalize_cluster_name(value, fallback="cluster"):
     return normalized_fallback.strip("-.")[:253] or "cluster"
 
 
-def revoke_celery_task(task_id, terminate=True):
+def revoke_celery_task(task_id):
     if not task_id:
         return
 
     try:
-        celery_app.control.revoke(task_id, terminate=terminate, signal="SIGTERM")
+        celery_app.control.revoke(task_id, terminate=False)
     except Exception:
         try:
-            AsyncResult(task_id, app=celery_app).revoke(terminate=terminate)
+            AsyncResult(task_id, app=celery_app).revoke(terminate=False)
         except Exception:
             pass
-
-
-def kill_process_tree(pid):
-    if not pid:
-        return
-
-    try:
-        if os.name == "nt" and int(pid) < 0:
-            wsl_pid = abs(int(pid))
-            distro = settings.ANSIBLE_WSL_DISTRO
-            terminate_script = (
-                "import os, signal, time\n"
-                f"root = {wsl_pid}\n"
-                "def children(parent):\n"
-                "    result = []\n"
-                "    for name in os.listdir('/proc'):\n"
-                "        if not name.isdigit():\n"
-                "            continue\n"
-                "        try:\n"
-                "            fields = open(f'/proc/{name}/stat').read().split()\n"
-                "            if int(fields[3]) == parent:\n"
-                "                child = int(name)\n"
-                "                result.extend(children(child))\n"
-                "                result.append(child)\n"
-                "        except (FileNotFoundError, ProcessLookupError, ValueError):\n"
-                "            pass\n"
-                "    return result\n"
-                "pids = children(root) + [root]\n"
-                "for target in pids:\n"
-                "    try: os.kill(target, signal.SIGTERM)\n"
-                "    except ProcessLookupError: pass\n"
-                "time.sleep(1)\n"
-                "for target in pids:\n"
-                "    try: os.kill(target, signal.SIGKILL)\n"
-                "    except ProcessLookupError: pass\n"
-            )
-            subprocess.run(
-                [
-                    "wsl",
-                    "-d",
-                    distro,
-                    "python3",
-                    "-c",
-                    terminate_script,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                shell=False,
-            )
-            # Extra safeguard for lingering ansible/openshift processes
-            subprocess.run(
-                [
-                    "wsl",
-                    "-d",
-                    distro,
-                    "sh",
-                    "-c",
-                    f"pkill -TERM -P {wsl_pid} 2>/dev/null || true; sleep 1; pkill -KILL -P {wsl_pid} 2>/dev/null || true",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                shell=False,
-            )
-            return
-
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True,
-                text=True,
-                check=False,
-                shell=False,
-            )
-            return
-
-        import signal
-
-        os.killpg(pid, signal.SIGTERM)
-    except Exception:
-        pass
 
 
 def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
@@ -385,19 +303,19 @@ def _build_inventory_host_dict(
     if not host.credential:
         return host_dict
 
-    host_dict["ansible_user"] = str(host_override.get("ansible_user", host.credential.username))
+    host_dict["ansible_user"] = LiteralSecret(host_override.get("ansible_user", host.credential.username))
 
     if host.credential.auth_type == "password" and host.credential.password:
-        host_dict["ansible_password"] = str(host.credential.password)
+        host_dict["ansible_password"] = LiteralSecret(host.credential.password)
 
     if host.credential.auth_type == "ssh_key" and host.credential.private_key:
-        key_path = temp_dir / f"{host.name}-{host.credential.id}.pem"
+        key_path = temp_dir / f"credential-{host.credential.id}-{host.stable_id}.pem"
         key_path.write_text(host.credential.private_key, encoding="utf-8")
         os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
         host_dict["ansible_ssh_private_key_file"] = runner.to_runner_path(key_path)
 
     if host.credential.become_password:
-        host_dict["ansible_become_password"] = str(host.credential.become_password)
+        host_dict["ansible_become_password"] = LiteralSecret(host.credential.become_password)
 
     return host_dict
 
@@ -410,116 +328,122 @@ def build_inventory_file(
 ):
     runner = get_runner()
     temp_dir = Path(tempfile.mkdtemp())
-    overrides_by_host_id = {
-        item["host_id"]: item for item in normalize_host_overrides(hosts, host_overrides)
-    }
+    try:
+        overrides_by_host_id = {
+            item["host_id"]: item for item in normalize_host_overrides(hosts, host_overrides)
+        }
 
-    if topology == Installation.Topology.MULTI_NODE:
-        control_plane_hosts = [
-            host
-            for host in hosts
-            if overrides_by_host_id.get(host.id, {}).get("node_role")
-            in {"control_plane", "server"}
-        ]
-        worker_hosts = [
-            host
-            for host in hosts
-            if overrides_by_host_id.get(host.id, {}).get("node_role") in {"worker", "agent"}
-        ]
-        bootstrap_host = next(
-            (host for host in control_plane_hosts if host.id == bootstrap_host_id),
-            None,
-        )
-
-        if not control_plane_hosts:
-            raise ValueError("Multi-node inventory requires at least one control-plane host.")
-        if not worker_hosts:
-            raise ValueError("Multi-node inventory requires at least one worker host.")
-        if bootstrap_host is None:
-            raise ValueError(
-                "Multi-node inventory requires a reachable bootstrap host in the control-plane group."
+        if topology == Installation.Topology.MULTI_NODE:
+            control_plane_hosts = [
+                host
+                for host in hosts
+                if overrides_by_host_id.get(host.id, {}).get("node_role")
+                in {"control_plane", "server"}
+            ]
+            worker_hosts = [
+                host
+                for host in hosts
+                if overrides_by_host_id.get(host.id, {}).get("node_role") in {"worker", "agent"}
+            ]
+            bootstrap_host = next(
+                (host for host in control_plane_hosts if host.id == bootstrap_host_id),
+                None,
             )
 
-        control_plane_dict = {}
-        for host in control_plane_hosts:
-            h_data = _build_inventory_host_dict(
+            if not control_plane_hosts:
+                raise ValueError("Multi-node inventory requires at least one control-plane host.")
+            if not worker_hosts:
+                raise ValueError("Multi-node inventory requires at least one worker host.")
+            if bootstrap_host is None:
+                raise ValueError(
+                    "Multi-node inventory requires a reachable bootstrap host in the control-plane group."
+                )
+
+            control_plane_dict = {}
+            for host in control_plane_hosts:
+                h_data = _build_inventory_host_dict(
+                    host,
+                    overrides_by_host_id[host.id],
+                    runner,
+                    temp_dir,
+                    include_node_metadata=True,
+                )
+                h_data["lindeploy_is_bootstrap"] = (host.id == bootstrap_host_id)
+                h_data["lindeploy_desired_role"] = "control_plane"
+                control_plane_dict[host.name] = h_data
+
+            workers_dict = {}
+            for host in worker_hosts:
+                h_data = _build_inventory_host_dict(
+                    host,
+                    overrides_by_host_id[host.id],
+                    runner,
+                    temp_dir,
+                    include_node_metadata=True,
+                )
+                h_data["lindeploy_is_bootstrap"] = False
+                h_data["lindeploy_desired_role"] = "worker"
+                workers_dict[host.name] = h_data
+
+            inventory_data = {
+                "all": {
+                    "children": {
+                        "selected_hosts": {
+                            "children": {
+                                "control_plane": {
+                                    "hosts": control_plane_dict,
+                                },
+                                "workers": {
+                                    "hosts": workers_dict,
+                                },
+                                "bootstrap": {
+                                    "hosts": {
+                                        bootstrap_host.name: {},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+            inventory_path = temp_dir / "inventory.yml"
+            inventory_path.write_text(
+                dump_inventory(inventory_data),
+                encoding="utf-8",
+            )
+            os.chmod(inventory_path, stat.S_IRUSR | stat.S_IWUSR)
+            return inventory_path
+
+        hosts_dict = {}
+        for host in hosts:
+            host_override = overrides_by_host_id.get(host.id, {})
+            hosts_dict[host.name] = _build_inventory_host_dict(
                 host,
-                overrides_by_host_id[host.id],
+                host_override,
                 runner,
                 temp_dir,
                 include_node_metadata=True,
             )
-            h_data["lindeploy_is_bootstrap"] = (host.id == bootstrap_host_id)
-            h_data["lindeploy_desired_role"] = "control_plane"
-            control_plane_dict[host.name] = h_data
-
-        workers_dict = {}
-        for host in worker_hosts:
-            h_data = _build_inventory_host_dict(
-                host,
-                overrides_by_host_id[host.id],
-                runner,
-                temp_dir,
-                include_node_metadata=True,
-            )
-            h_data["lindeploy_is_bootstrap"] = False
-            h_data["lindeploy_desired_role"] = "worker"
-            workers_dict[host.name] = h_data
 
         inventory_data = {
             "all": {
                 "children": {
                     "selected_hosts": {
-                        "children": {
-                            "control_plane": {
-                                "hosts": control_plane_dict,
-                            },
-                            "workers": {
-                                "hosts": workers_dict,
-                            },
-                            "bootstrap": {
-                                "hosts": {
-                                    bootstrap_host.name: {},
-                                },
-                            },
-                        },
+                        "hosts": hosts_dict,
                     },
                 },
             },
         }
         inventory_path = temp_dir / "inventory.yml"
         inventory_path.write_text(
-            yaml.safe_dump(inventory_data, default_flow_style=False, sort_keys=False),
+            dump_inventory(inventory_data),
             encoding="utf-8",
         )
+        os.chmod(inventory_path, stat.S_IRUSR | stat.S_IWUSR)
         return inventory_path
-
-    hosts_dict = {}
-    for host in hosts:
-        host_override = overrides_by_host_id.get(host.id, {})
-        hosts_dict[host.name] = _build_inventory_host_dict(
-            host,
-            host_override,
-            runner,
-            temp_dir,
-            include_node_metadata=True,
-        )
-
-    inventory_data = {
-        "all": {
-            "children": {
-                "selected_hosts": {
-                    "hosts": hosts_dict,
-                },
-            },
-        },
-    }
-    inventory_path = temp_dir / "inventory.yml"
-    inventory_path.write_text(
-        yaml.safe_dump(inventory_data, default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
-    )
-    return inventory_path
+    except BaseException:
+        shutil.rmtree(temp_dir)
+        raise
 
 
 def build_extra_vars_file(
@@ -1673,48 +1597,36 @@ def finalize_cancelled_installation(
 
 
 def request_installation_cancellation(installation):
-    current_pid = installation.runner_pid
-    has_not_started = not current_pid and (
-        installation.status == Installation.Status.PENDING
-        or installation.phase in (Installation.Phase.QUEUED, Installation.Phase.SSH_CHECK)
-    )
-
-    if has_not_started:
-        update_installation(
-            installation,
-            status=Installation.Status.CANCELLED,
-            phase=Installation.Phase.CANCELLED,
-            progress=100,
-            cancel_requested=True,
-            finished_at=installation.finished_at or timezone.now(),
-            summary_message="Installation cancelled before worker execution started.",
-        )
-        revoke_celery_task(installation.celery_task_id, terminate=False)
-        for target in installation.targets.select_related("host").all():
-            if target.status in (
-                InstallationTarget.Status.PENDING,
-                InstallationTarget.Status.RUNNING,
-            ):
-                update_target(
-                    target,
-                    status=InstallationTarget.Status.CANCELLED,
-                    output="Installation cancelled before worker execution started.",
-                )
-        return installation
-
-    # For running executions, flag cancel_requested so worker cleanly interrupts Ansible
-    # and revokes with SIGTERM. The worker calls finalize_cancelled_installation to safely release hosts.
-    update_installation(
-        installation,
-        cancel_requested=True,
-        summary_message="Installation cancellation requested. Stopping running process...",
-    )
-    revoke_celery_task(installation.celery_task_id, terminate=True)
+    # Claiming a pending task and cancelling it use the same database lock.
+    # The API never signals a process belonging to another container.
+    with execution_transaction():
+        installation.refresh_from_db()
+        if installation.status not in (Installation.Status.PENDING, Installation.Status.RUNNING):
+            return installation
+        if installation.status == Installation.Status.PENDING:
+            update_installation(
+                installation, status=Installation.Status.CANCELLED,
+                phase=Installation.Phase.CANCELLED, progress=100, cancel_requested=True,
+                finished_at=timezone.now(), summary_message="Installation cancelled before worker execution started.",
+            )
+            installation.targets.update(status=InstallationTarget.Status.CANCELLED)
+        else:
+            update_installation(installation, cancel_requested=True,
+                                summary_message="Cancellation requested. Hosts remain reserved until the worker confirms the stop.")
+    # A running worker observes the flag and stops its own process group.
+    if installation.status == Installation.Status.CANCELLED:
+        revoke_celery_task(installation.celery_task_id)
     return installation
 
 
+@controlled_installation
 def execute_installation(installation_id, task=None):
-    installation = Installation.objects.get(id=installation_id)
+    with execution_transaction():
+        installation = Installation.objects.get(id=installation_id)
+        if installation.status != Installation.Status.PENDING or installation.cancel_requested:
+            return {"installation_id": installation_id, "status": installation.status}
+        update_installation(installation, status=Installation.Status.RUNNING,
+                            phase=Installation.Phase.SSH_CHECK, started_at=timezone.now())
     targets = list(
         InstallationTarget.objects.filter(installation=installation).select_related(
             "host", "host__credential"
@@ -1758,7 +1670,6 @@ def execute_installation(installation_id, task=None):
         phase=Installation.Phase.SSH_CHECK,
         progress=5,
         started_at=timezone.now(),
-        cancel_requested=False,
         summary_message="Building inventory and validating SSH connectivity.",
     )
     publish_task_progress(
@@ -2306,7 +2217,6 @@ def execute_installation(installation_id, task=None):
             status=installation_status,
             phase=installation_phase,
             progress=100,
-            cancel_requested=False,
             finished_at=timezone.now(),
             command=playbook_metadata["command"],
             stdout=sanitize_log_line(result.stdout),
@@ -2354,6 +2264,10 @@ def execute_installation(installation_id, task=None):
             bottleneck_hints=playbook_metadata["bottleneck_hints"],
             connectivity=connectivity,
         )
+
+    except ProcessStopUnconfirmed:
+        update_installation(installation, summary_message="Worker could not confirm process stop. Hosts remain reserved; operator verification required.")
+        raise
 
     except InstallationCancelled as exc:
         return finalize_cancelled_installation(

@@ -2397,6 +2397,18 @@ export default function RunDeployment({
         throw new Error(data.message || "Cancellation failed.");
       }
 
+      if (data.installation.status === "running" || data.installation.status === "pending") {
+        await resumeInstallationMonitoring(data.installation.id);
+        notifications.show({
+          title: i18n.language.startsWith("fr") ? "Annulation demandée" : "Cancellation requested",
+          message: i18n.language.startsWith("fr")
+            ? "Les hôtes restent réservés jusqu’à la confirmation de l’arrêt."
+            : "Hosts remain reserved until the worker confirms the stop.",
+          color: "yellow",
+        });
+        return;
+      }
+
       setResult(buildResultFromInstallation(data.installation));
       setResumeCandidate(null);
       persistDismissedInstallationId(null);

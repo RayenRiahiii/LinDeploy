@@ -2,6 +2,7 @@ import uuid
 
 from django.db import models
 from django.db.models import Q
+from .fields import EncryptedSecretField
 
 
 class TimeStampedModel(models.Model):
@@ -20,12 +21,16 @@ class Credential(TimeStampedModel):
     name = models.CharField(max_length=100, unique=True)
     auth_type = models.CharField(max_length=20, choices=AuthType.choices)
     username = models.CharField(max_length=100)
-    private_key = models.TextField(blank=True)
-    password = models.CharField(max_length=255, blank=True)
-    become_password = models.CharField(max_length=255, blank=True)
+    private_key = EncryptedSecretField(blank=True)
+    password = EncryptedSecretField(blank=True)
+    become_password = EncryptedSecretField(blank=True)
 
     def __str__(self):
         return self.name
+
+
+class ExecutionMutex(models.Model):
+    generation = models.BigIntegerField(default=0)
 
 
 class Host(TimeStampedModel):

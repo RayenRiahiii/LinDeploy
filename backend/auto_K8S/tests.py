@@ -2,6 +2,8 @@ import json
 import tempfile
 import threading
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+from .permissions import OPERATOR_GROUP
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -13,6 +15,7 @@ User = get_user_model()
 
 def make_authenticated_client(username="test_api_user"):
     user, _ = User.objects.get_or_create(username=username, defaults={"email": f"{username}@example.com"})
+    user.groups.add(Group.objects.get_or_create(name=OPERATOR_GROUP)[0])
     client = APIClient()
     client.force_authenticate(user=user)
     return client
@@ -592,33 +595,24 @@ class ApiSecurityAndVaultTests(TestCase):
 
     def test_encrypt_credentials_management_command_and_rollback(self):
         from django.core.management import call_command
+        from django.db import connection
         from .vault import is_encrypted
-
-        cred = Credential.objects.create(
-            name="cmd-cred",
-            auth_type=Credential.AuthType.PASSWORD,
-            username="cmduser",
-            password="test-command-password",
-            become_password="test-command-become",
-        )
-
-        # Dry run does not persist
-        call_command("encrypt_credentials", dry_run=True)
-        cred.refresh_from_db()
-        self.assertFalse(is_encrypted(cred.password))
-
-        # Real encryption
-        call_command("encrypt_credentials")
-        cred.refresh_from_db()
-        self.assertTrue(is_encrypted(cred.password))
-        self.assertTrue(is_encrypted(cred.become_password))
-
-        # Rollback decryption
+        cred = Credential.objects.create(name="cmd-cred", auth_type="password", username="cmduser", password="test-command-password")
+        def raw():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT password FROM auto_K8S_credential WHERE id=%s", [cred.pk])
+                return cursor.fetchone()[0]
+        self.assertTrue(is_encrypted(raw()))
         call_command("encrypt_credentials", decrypt=True)
+        self.assertEqual(raw(), "test-command-password")
+        call_command("encrypt_credentials", dry_run=True)
+        self.assertEqual(raw(), "test-command-password")
+        call_command("encrypt_credentials")
+        self.assertTrue(is_encrypted(raw()))
         cred.refresh_from_db()
-        self.assertFalse(is_encrypted(cred.password))
         self.assertEqual(cred.password, "test-command-password")
-        self.assertEqual(cred.become_password, "test-command-become")
+        call_command("encrypt_credentials", decrypt=True)
+        self.assertEqual(raw(), "test-command-password")
 
 
 class TemplateSerializerTests(TestCase):
@@ -1154,6 +1148,23 @@ class LaunchInstallationAutoModeTests(TestCase):
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
+    def test_ambiguous_broker_failure_keeps_hosts_reserved(self, select_template, task):
+        select_template.return_value = {"template": self.template, "strategy": "prepared", "detections": []}
+        task.apply_async.side_effect = ConnectionError("synthetic broker disconnect")
+        response = self.client.post("/api/installations/launch/", {"host_ids": [self.host.pk]}, format="json")
+        self.assertEqual(response.status_code, 503)
+        installation = Installation.objects.get(pk=response.data["installation_id"])
+        self.assertEqual(installation.status, "pending")
+        self.assertTrue(installation.celery_task_id)
+        second = self.client.post("/api/installations/launch/", {"host_ids": [self.host.pk]}, format="json")
+        self.assertEqual(second.status_code, 409)
+        with patch("auto_K8S.services.revoke_celery_task"):
+            self.client.post(f"/api/installations/{installation.pk}/cancel/")
+        installation.refresh_from_db()
+        self.assertEqual(installation.status, "cancelled")
+
+    @patch("auto_K8S.views.run_installation_task")
+    @patch("auto_K8S.views.select_installation_template")
     def test_launch_uses_automatic_selection(self, select_template_mock, run_task_mock):
         select_template_mock.return_value = {
             "template": self.template,
@@ -1169,7 +1180,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "detection_command": "ansible selected_hosts -m shell",
             "detection_seconds": 0.9,
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-1")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-1")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1182,7 +1193,7 @@ class LaunchInstallationAutoModeTests(TestCase):
         self.assertEqual(payload["selected_strategy"], "prepared")
         self.assertEqual(payload["selected_playbook"], "playbooks/init_single_node.yml")
         select_template_mock.assert_called_once()
-        run_task_mock.delay.assert_called_once()
+        run_task_mock.apply_async.assert_called_once()
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
@@ -1192,7 +1203,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "full",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-multi")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-multi")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1226,7 +1237,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "detections": [],
             "eligible_host_names": [self.host.name, self.host_two.name],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-multi-node")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-multi-node")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1313,7 +1324,7 @@ class LaunchInstallationAutoModeTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Duplicate node names", response.json()["errors"]["host_overrides"])
         select_template_mock.assert_not_called()
-        run_task_mock.delay.assert_not_called()
+        run_task_mock.apply_async.assert_not_called()
 
     def test_launch_rejects_bootstrap_outside_control_plane_group(self):
         response = self.client.post(
@@ -1382,7 +1393,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "multi_node",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-k3s-multi-node")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-k3s-multi-node")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1440,11 +1451,11 @@ class LaunchInstallationAutoModeTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["errors"]["busy_hosts"][0]["host_id"], self.host.id)
         select_template_mock.assert_not_called()
-        run_task_mock.delay.assert_not_called()
+        run_task_mock.apply_async.assert_not_called()
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
-    def test_launch_releases_host_from_stale_pre_execution_job(
+    def test_launch_keeps_stale_running_host_reserved_until_worker_confirms(
         self,
         select_template_mock,
         run_task_mock,
@@ -1466,7 +1477,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "single_node",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="replacement-task")
+        run_task_mock.apply_async.return_value = Mock(id="replacement-task")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1474,10 +1485,11 @@ class LaunchInstallationAutoModeTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 202, response.json())
+        self.assertEqual(response.status_code, 409, response.json())
         stale_installation.refresh_from_db()
-        self.assertEqual(stale_installation.status, Installation.Status.CANCELLED)
-        self.assertIn("automatically cancelled", stale_installation.summary_message)
+        self.assertEqual(stale_installation.status, Installation.Status.RUNNING)
+        self.assertTrue(stale_installation.cancel_requested)
+        run_task_mock.apply_async.assert_not_called()
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
@@ -1492,7 +1504,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "single_node",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-k3s")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-k3s")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1506,7 +1518,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "playbooks/test_launch_k3s_single_node.yml",
         )
         select_template_mock.assert_called_once()
-        run_task_mock.delay.assert_called_once()
+        run_task_mock.apply_async.assert_called_once()
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
@@ -1522,7 +1534,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "manual",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-k8s-cleanup-multi")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-k8s-cleanup-multi")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1564,7 +1576,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "manual",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-k3s-cleanup-multi")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-k3s-cleanup-multi")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1602,7 +1614,7 @@ class LaunchInstallationAutoModeTests(TestCase):
                 "deployment_type": InstallationTemplate.DeploymentType.CLEANUP,
             },
         )
-        run_task_mock.delay.return_value = Mock(id="celery-task-k3s-multi-cleanup")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-k3s-multi-cleanup")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1649,7 +1661,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "manual",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-cleanup")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-cleanup")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1664,7 +1676,7 @@ class LaunchInstallationAutoModeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 202)
-        self.assertTrue(run_task_mock.delay.called)
+        self.assertTrue(run_task_mock.apply_async.called)
 
     @patch("auto_K8S.views.run_installation_task")
     @patch("auto_K8S.views.select_installation_template")
@@ -1674,7 +1686,7 @@ class LaunchInstallationAutoModeTests(TestCase):
             "strategy": "full",
             "detections": [],
         }
-        run_task_mock.delay.return_value = Mock(id="celery-task-spec")
+        run_task_mock.apply_async.return_value = Mock(id="celery-task-spec")
 
         response = self.client.post(
             "/api/installations/launch/",
@@ -1902,7 +1914,8 @@ class InstallationHistoryApiTests(TestCase):
         inv_path = build_inventory_file([host])
         self.assertTrue(inv_path.exists())
         content = inv_path.read_text(encoding="utf-8")
-        parsed = yaml.safe_load(content)
+        from .inventory_safety import InventoryLoader
+        parsed = yaml.load(content, Loader=InventoryLoader)
         host_dict = parsed["all"]["children"]["selected_hosts"]["hosts"]["test-complex-node"]
         self.assertEqual(
             host_dict["ansible_password"],
