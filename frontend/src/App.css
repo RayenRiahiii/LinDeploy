@@ -168,7 +168,7 @@
   justify-content: center;
   gap: 16px;
   width: 100%;
-  min-height: 50px;
+  min-height: 56px;
   margin: 0 auto;
 }
 
@@ -183,9 +183,9 @@
 
 .topbar-brand-panel {
   border-radius: 9999px;
-  padding: 4px 14px;
-  min-height: 50px;
-  height: 50px;
+  padding: 6px 16px;
+  min-height: 56px;
+  height: 56px;
   align-self: center;
   min-width: 0;
   display: flex;
@@ -197,9 +197,9 @@
 
 .topbar-panel {
   border-radius: 9999px;
-  padding: 4px 10px;
-  min-height: 50px;
-  height: 50px;
+  padding: 5px 12px;
+  min-height: 56px;
+  height: 56px;
   width: max-content;
   max-width: 100%;
   display: flex;
@@ -216,8 +216,8 @@
 
 .brand-wordmark {
   width: auto;
-  max-width: 135px;
-  height: 28px;
+  max-width: 145px;
+  height: 32px;
   display: block;
   object-fit: contain;
 }
@@ -235,8 +235,8 @@
 .orb-nav-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 9px 3px 4px;
+  gap: 7px;
+  padding: 4px 10px 4px 5px;
   border-radius: 999px;
   border: 1px solid var(--surface-border-soft);
   background: var(--soft-bg);
@@ -273,7 +273,7 @@
 }
 
 .orb-nav-title {
-  font-size: 0.77rem;
+  font-size: 0.79rem;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.15;
@@ -281,7 +281,7 @@
 }
 
 .orb-nav-subtitle {
-  font-size: 0.61rem;
+  font-size: 0.62rem;
   color: var(--text-secondary);
   line-height: 1.1;
   white-space: nowrap;
@@ -304,9 +304,9 @@
   min-width: 0;
   margin-top: 0;
   margin-left: 0;
-  padding: 4px 12px;
-  min-height: 50px;
-  height: 50px;
+  padding: 5px 14px;
+  min-height: 56px;
+  height: 56px;
   border-radius: 9999px;
   display: flex;
   align-items: center;
