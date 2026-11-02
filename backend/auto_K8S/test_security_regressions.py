@@ -54,11 +54,15 @@ class CredentialSecurityTests(TestCase):
         self.addCleanup(lambda: __import__('shutil').rmtree(path.parent))
         data = yaml.load(path.read_text(), Loader=InventoryLoader)
         self.assertEqual(data["all"]["children"]["selected_hosts"]["hosts"]["fixture"]["ansible_password"], self.secret)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_ansible_does_not_template_secret(self):
-        from ansible.parsing.dataloader import DataLoader
-        from ansible.template import Templar
+        try:
+            from ansible.parsing.dataloader import DataLoader
+            from ansible.template import Templar
+        except ImportError:
+            self.skipTest("ansible is not installed in current python environment")
         path = build_inventory_file([self.host])
         self.addCleanup(lambda: __import__('shutil').rmtree(path.parent))
         loader = DataLoader()
@@ -85,7 +89,8 @@ class CredentialSecurityTests(TestCase):
         self.addCleanup(lambda: __import__('shutil').rmtree(path.parent))
         key_file = next(path.parent.glob("*.pem"))
         self.assertEqual(key_file.read_text(), key)
-        self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
 
     def test_plaintext_legacy_and_v1_remain_readable(self):
         from django.conf import settings
