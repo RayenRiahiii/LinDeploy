@@ -42,7 +42,12 @@ from .services import (
     run_connectivity_check,
     select_installation_template,
 )
-from .mirror import mirror_status_payload, queue_mirror_prewarm, read_mirror_state
+from .mirror import (
+    mark_mirror_prewarm_failed,
+    mirror_status_payload,
+    queue_mirror_prewarm,
+    read_mirror_state,
+)
 from .runners import get_runner
 from .execution_lock import execution_transaction, ensure_hosts_available
 from .tasks import run_installation_task, run_mirror_prewarm_task
@@ -272,18 +277,26 @@ def get_celery_progress(installation, offset=None):
     if not installation.celery_task_id:
         return None
 
+    state = "PENDING"
+    meta = {}
     try:
         result = AsyncResult(installation.celery_task_id, app=celery_app)
-        payload = {
-            "task_id": installation.celery_task_id,
-            "state": result.state,
-        }
-
+        state = result.state
         if isinstance(result.info, dict):
-            payload["meta"] = {**result.info}
+            meta = {**result.info}
         elif result.info:
-            payload["meta"] = {"detail": str(result.info)}
+            meta = {"detail": str(result.info)}
+    except Exception as exc:
+        state = "UNAVAILABLE"
+        meta = {"detail": str(exc)}
 
+    payload = {
+        "task_id": installation.celery_task_id,
+        "state": state,
+        "meta": meta,
+    }
+
+    try:
         if offset is not None:
             chunk = read_live_output_chunk(installation.id, offset=offset)
             live_output = chunk["lines"]
@@ -324,7 +337,6 @@ def get_celery_progress(installation, offset=None):
                 next_offset = len(fallback_lines)
                 total_lines = len(fallback_lines)
 
-        meta = payload.setdefault("meta", {})
         meta["output_lines"] = live_output
         if offset is not None:
             meta["next_offset"] = next_offset
@@ -332,11 +344,8 @@ def get_celery_progress(installation, offset=None):
 
         return payload
     except Exception as exc:
-        return {
-            "task_id": installation.celery_task_id,
-            "state": "UNAVAILABLE",
-            "meta": {"detail": str(exc)},
-        }
+        meta["detail"] = str(exc)
+        return payload
 
 
 @api_view(["GET", "POST"])
@@ -584,9 +593,25 @@ def prewarm_mirror(request):
 
     job, created = queue_mirror_prewarm(force=force)
     if created:
-        task = run_mirror_prewarm_task.delay(job_id=str(job.job_id), force=force)
-        job.celery_task_id = task.id
-        job.save(update_fields=["celery_task_id", "updated_at"])
+        try:
+            task = run_mirror_prewarm_task.delay(job_id=str(job.job_id), force=force)
+            job.celery_task_id = task.id
+            job.save(update_fields=["celery_task_id", "updated_at"])
+        except Exception as exc:
+            job.state = "failed"
+            job.error = f"Dispatch failed: background task broker unreachable ({exc})"
+            job.finished_at = timezone.now()
+            job.save(update_fields=["state", "error", "finished_at", "updated_at"])
+            mark_mirror_prewarm_failed(job.error)
+            return Response(
+                {
+                    "message": "Mirror prewarm task dispatch failed because the Celery/Redis worker broker is unreachable.",
+                    "error": str(exc),
+                    "job_id": str(job.job_id),
+                    "state": read_mirror_state(),
+                },
+                status=503,
+            )
     return Response(
         {
             "message": "Mirror prewarm queued." if created else "An equivalent mirror prewarm is already active.",

@@ -1,3 +1,4 @@
+import sys
 import os
 import json
 from datetime import timedelta
@@ -198,6 +199,9 @@ OPENSHIFT_SECRET_TTL_SECONDS = int(os.getenv("OPENSHIFT_SECRET_TTL_SECONDS", "18
 OPENSHIFT_RED_HAT_OFFLINE_TOKEN = os.getenv("OPENSHIFT_RED_HAT_OFFLINE_TOKEN", "")
 OPENSHIFT_DEFAULT_VERSION = os.getenv("OPENSHIFT_DEFAULT_VERSION", "4.20")
 LINDEPLOY_CREDENTIAL_KEY = os.getenv("LINDEPLOY_CREDENTIAL_KEY", "")
+if not LINDEPLOY_CREDENTIAL_KEY and ("test" in sys.argv or os.getenv("DJANGO_TESTING") == "1"):
+    # Deterministic 32-byte Fernet key for automated test suites
+    LINDEPLOY_CREDENTIAL_KEY = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" 
 # The disconnected SNO workflow always uses the server-managed mirror. Keep
 # these values outside the request payload so users cannot redirect installs.
 OPENSHIFT_MIRROR_REGISTRY = os.getenv("OPENSHIFT_MIRROR_REGISTRY", "registry.lab.test:8443").strip()

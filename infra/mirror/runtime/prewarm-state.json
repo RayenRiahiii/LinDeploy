@@ -1,14 +1,14 @@
 {
-  "updated_at": "2026-11-01T13:00:54.354221+00:00",
+  "updated_at": "2026-11-02T22:14:34.409771+00:00",
   "components": {
     "kubernetes": {
       "profile": "verified-assets-v3",
       "status": "ready",
       "active_version": "v1.36.5",
       "available_version": "v1.36.5",
-      "last_checked_at": "2026-11-01T13:00:54.325154+00:00",
+      "last_checked_at": "2026-11-02T22:14:34.409771+00:00",
       "last_prewarm_at": "2026-11-01T13:00:54.325154+00:00",
-      "manifest_path": "/infra/mirror/runtime/manifests/kubernetes-v1.36.5-amd64.json",
+      "manifest_path": "C:\\Users\\riahi\\LinDeploy\\infra\\mirror\\runtime\\manifests\\kubernetes-v1.36.5-amd64.json",
       "manifest_sha256": "0bd232a143d7823ca5e69510a315bf772ab6939494821bf5b288d4aa3f195895",
       "error": ""
     },
@@ -17,9 +17,9 @@
       "status": "ready",
       "active_version": "v1.36.4+k3s1",
       "available_version": "v1.36.4+k3s1",
-      "last_checked_at": "2026-11-01T13:00:54.325154+00:00",
+      "last_checked_at": "2026-11-02T22:14:34.409771+00:00",
       "last_prewarm_at": "2026-11-01T13:00:54.325154+00:00",
-      "manifest_path": "/infra/mirror/runtime/manifests/k3s-v1.36.4+k3s1-amd64.json",
+      "manifest_path": "C:\\Users\\riahi\\LinDeploy\\infra\\mirror\\runtime\\manifests\\k3s-v1.36.4+k3s1-amd64.json",
       "manifest_sha256": "ff5207eb1a39592e2a79828e5304adbb4518ba4c67eab7ee819e7f98b842a9a4",
       "error": ""
     }
