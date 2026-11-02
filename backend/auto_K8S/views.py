@@ -690,11 +690,39 @@ def precheck_installation_hosts(request):
     )
     ansible_repo_root = get_ansible_repo_root()
 
-    result, metadata = run_connectivity_check(
-        repo_root=ansible_repo_root,
-        inventory_path=inventory_path,
-        expected_hosts=[host.name for host in hosts],
-    )
+    try:
+        result, metadata = run_connectivity_check(
+            repo_root=ansible_repo_root,
+            inventory_path=inventory_path,
+            expected_hosts=[host.name for host in hosts],
+        )
+    except Exception as exc:
+        total_request_seconds = round(time.perf_counter() - request_started_at, 3)
+        return Response(
+            {
+                "message": f"Precheck runner error: {exc}",
+                "detail": str(exc),
+                "summary": {
+                    "selected_hosts": len(hosts),
+                    "reachable_hosts": 0,
+                    "failed_hosts": len(hosts),
+                },
+                "connectivity": [
+                    {
+                        "host": host.name,
+                        "ip": host.ip_address,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                    for host in hosts
+                ],
+                "timings": {
+                    "ssh_check_seconds": 0,
+                    "total_request_seconds": total_request_seconds,
+                },
+            },
+            status=400,
+        )
 
     total_request_seconds = round(time.perf_counter() - request_started_at, 3)
     connectivity = metadata["connectivity"]

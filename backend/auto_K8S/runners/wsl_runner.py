@@ -194,14 +194,25 @@ class WslRunner(BaseRunner):
                         return
                     except (OSError, ValueError):
                         if process.poll() is not None:
+                            try:
+                                wsl_pid = int(pid_file.read_text().strip())
+                                if on_process_start:
+                                    on_process_start(SimpleNamespace(pid=-wsl_pid))
+                            except (OSError, ValueError):
+                                pass
                             return
                         time.sleep(0.05)
-                raise RuntimeError("WSL process group could not be identified.")
+                if process.poll() is None:
+                    raise RuntimeError("WSL process group could not be identified.")
 
             def terminate(process):
                 if wsl_pid is None:
                     if process.poll() is None:
-                        raise RuntimeError("WSL process ownership unknown.")
+                        process.terminate()
+                        try:
+                            process.wait(timeout=3)
+                        except Exception:
+                            process.kill()
                     return
                 script = (
                     "import os,signal,time\n"
@@ -215,6 +226,6 @@ class WslRunner(BaseRunner):
                                check=True, capture_output=True, timeout=10)
 
             return BaseRunner.run_streaming_subprocess(
-                ["wsl", "-d", self.distro_name, "setsid", "sh", "-c", wrapped],
+                ["wsl", "-d", self.distro_name, "setsid", "-w", "sh", "-c", wrapped],
                 on_process_start=started, terminate_process=terminate, **kwargs,
             )
