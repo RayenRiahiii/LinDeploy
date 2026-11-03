@@ -298,7 +298,10 @@ CELERY_BEAT_SCHEDULE = {
 
 
 # Google OAuth
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_ID = os.getenv(
+    "GOOGLE_CLIENT_ID",
+    "529009135237-nknqmqhqui1k6ce14tcecruaoubtot4b.apps.googleusercontent.com",
+).strip() or "529009135237-nknqmqhqui1k6ce14tcecruaoubtot4b.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 
 # Django REST Framework Security & Permissions

@@ -167,6 +167,7 @@ Initialize-LinDeployEnvironment -Path $EnvDockerPath -Defaults ([ordered]@{
     DJANGO_ALLOWED_HOSTS = "*"
     DJANGO_TIME_ZONE = "UTC"
     LINDEPLOY_MIRROR_ENABLED = "True"
+    GOOGLE_CLIENT_ID = "529009135237-nknqmqhqui1k6ce14tcecruaoubtot4b.apps.googleusercontent.com"
 })
 
 # 5. Launch Docker Compose

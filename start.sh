@@ -104,7 +104,8 @@ initialize_lindeploy_env "$PROJECT_ROOT/.env.docker" \
     "LINDEPLOY_HOST_IP=$DETECTED_IP" "FRONTEND_PORT=$FRONTEND_PORT" \
     "BACKEND_PORT=$BACKEND_PORT" "REDIS_PORT=$REDIS_PORT" \
     "DJANGO_DEBUG=False" "DJANGO_ALLOWED_HOSTS=*" "DJANGO_TIME_ZONE=UTC" \
-    "LINDEPLOY_MIRROR_ENABLED=True"
+    "LINDEPLOY_MIRROR_ENABLED=True" \
+    "GOOGLE_CLIENT_ID=529009135237-nknqmqhqui1k6ce14tcecruaoubtot4b.apps.googleusercontent.com"
 
 # 5. Launch Docker Compose
 echo "[5/5] Starting Docker Compose services..."
