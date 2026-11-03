@@ -8,6 +8,7 @@ import {
   Code,
   Divider,
   Group,
+  Loader,
   Modal,
   Radio,
   ScrollArea,
@@ -859,6 +860,8 @@ export default function RunDeployment({
   >({});
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [installations, setInstallations] = useState<InstallationDetailResponse[]>([]);
+  const [historyLimit, setHistoryLimit] = useState<number | "all">(50);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedHostIds, setSelectedHostIds] = useState<number[]>([]);
   const [topology, setTopology] = useState<DeploymentTopology>("single_node");
   const [controlPlaneHostIds, setControlPlaneHostIds] = useState<number[]>([]);
@@ -1024,6 +1027,17 @@ export default function RunDeployment({
       ),
     [installations]
   );
+
+  const totalCompletedRuns = useMemo(() => {
+    if (dashboard?.installations) {
+      return Math.max(
+        0,
+        dashboard.installations.total -
+          (dashboard.installations.running + dashboard.installations.pending)
+      );
+    }
+    return historyInstallations.length;
+  }, [dashboard, historyInstallations.length]);
 
   const precheckSucceeded = useMemo(
     () =>
@@ -1322,15 +1336,21 @@ export default function RunDeployment({
     return data;
   }
 
-  async function fetchInstallations() {
-    const response = await fetch(`${BASE_URL}/api/installations/?limit=all`);
-    if (!response.ok) {
-      throw new Error("Failed to load installation history.");
-    }
+  async function fetchInstallations(limit: number | "all" = historyLimit) {
+    setLoadingHistory(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/installations/?limit=${limit}`);
+      if (!response.ok) {
+        throw new Error("Failed to load installation history.");
+      }
 
-    const data = await parseJsonResponse<InstallationDetailResponse[]>(response);
-    setInstallations(data);
-    return data;
+      const data = await parseJsonResponse<InstallationDetailResponse[]>(response);
+      setInstallations(data);
+      setHistoryLimit(limit);
+      return data;
+    } finally {
+      setLoadingHistory(false);
+    }
   }
 
   function persistActiveInstallationId(installationId: number | null) {
@@ -1419,11 +1439,15 @@ export default function RunDeployment({
   }
 
   async function refreshOperationalData() {
-    const [dashboardData, installationsData] = await Promise.all([
-      fetchDashboard(),
-      fetchInstallations(),
-    ]);
-    return { dashboardData, installationsData };
+    if (showHistory || mode === "history") {
+      const [dashboardData, installationsData] = await Promise.all([
+        fetchDashboard(),
+        fetchInstallations(historyLimit),
+      ]);
+      return { dashboardData, installationsData };
+    }
+    const dashboardData = await fetchDashboard();
+    return { dashboardData, installationsData: installations };
   }
 
   useEffect(() => {
@@ -1437,8 +1461,8 @@ export default function RunDeployment({
         fetchDashboard(),
       ]);
 
-      if (mode === "history" || mode === "full") {
-        void fetchInstallations();
+      if (mode === "history") {
+        void fetchInstallations(50);
       }
 
       if (effectiveTargetInstallationId) {
@@ -2509,7 +2533,9 @@ export default function RunDeployment({
           </div>
           <Group gap="sm">
             <Badge color="red" variant="light">
-              {t("history.savedRuns", { count: historyInstallations.length, defaultValue: `saved ${historyInstallations.length}` })}
+              {historyLimit !== "all" && totalCompletedRuns > historyInstallations.length
+                ? `${historyInstallations.length} / ${totalCompletedRuns}`
+                : t("history.savedRuns", { count: historyInstallations.length, defaultValue: `saved ${historyInstallations.length}` })}
             </Badge>
             <Button
               color="red"
@@ -2523,7 +2549,14 @@ export default function RunDeployment({
           </Group>
         </Group>
 
-        {historyInstallations.length === 0 ? (
+        {loadingHistory && historyInstallations.length === 0 ? (
+          <Group justify="center" p="xl">
+            <Loader size="sm" color="red" />
+            <Text size="sm" c="dimmed">
+              {t("history.loading", "Loading installation history...")}
+            </Text>
+          </Group>
+        ) : historyInstallations.length === 0 ? (
           <Alert color="gray" variant="light">
             {t("history.noHistory", "No saved installation history remains.")}
           </Alert>
@@ -2637,6 +2670,22 @@ export default function RunDeployment({
             </Table>
           </ScrollArea.Autosize>
         )}
+        {historyLimit !== "all" && totalCompletedRuns > historyInstallations.length && (
+          <Group justify="center" pt="xs">
+            <Button
+              variant="light"
+              color="red"
+              size="xs"
+              loading={loadingHistory}
+              onClick={() => void fetchInstallations("all")}
+            >
+              {t("history.loadAll", {
+                count: totalCompletedRuns,
+                defaultValue: `Afficher tout l'historique (${totalCompletedRuns} exécutions)`,
+              })}
+            </Button>
+          </Group>
+        )}
       </Stack>
     </Card>
   );
@@ -2699,13 +2748,13 @@ export default function RunDeployment({
           ) : mode === "history" ? (
             <>
               <Badge color="red" variant="light">
-                Total Runs: {historyInstallations.length}
+                Total Runs: {totalCompletedRuns}
               </Badge>
               <Badge color="teal" variant="light">
-                Passed: {historyInstallations.filter((i) => i.status === "success").length}
+                Passed: {dashboard ? dashboard.installations.success : historyInstallations.filter((i) => i.status === "success").length}
               </Badge>
               <Badge color="gray" variant="outline">
-                Failed: {historyInstallations.filter((i) => i.status === "failed").length}
+                Failed: {dashboard ? dashboard.installations.failed : historyInstallations.filter((i) => i.status === "failed").length}
               </Badge>
             </>
           ) : undefined
@@ -2735,9 +2784,15 @@ export default function RunDeployment({
                 variant={showHistory ? "filled" : "default"}
                 color="red"
                 leftSection={showHistory ? <IconChevronUp size={16} /> : <IconHistory size={16} />}
-                onClick={() => setShowHistory(true)}
+                onClick={() => {
+                  const nextState = !showHistory;
+                  setShowHistory(nextState);
+                  if (nextState && installations.length === 0) {
+                    void fetchInstallations(50);
+                  }
+                }}
               >
-                {showHistory ? "History Open" : `History (${historyInstallations.length})`}
+                {showHistory ? "History Open" : `History (${totalCompletedRuns})`}
               </Button>
             ) : null}
           </Group>
