@@ -1308,7 +1308,7 @@ export default function RunDeployment({
     try {
       const response = await fetch(`${BASE_URL}/api/templates/`);
       if (!response.ok) {
-        return;
+        return {};
       }
       const allTemplates = await parseJsonResponse<Template[]>(response);
       const bySystem: Partial<Record<InstallerId, CleanupTemplateMap>> = {};
@@ -1320,8 +1320,9 @@ export default function RunDeployment({
         }
       }
       setCleanupTemplatesBySystem(bySystem);
+      return bySystem;
     } catch {
-      // ignore template fetch errors
+      return {};
     }
   }
 
@@ -1452,9 +1453,9 @@ export default function RunDeployment({
 
   useEffect(() => {
     async function initializePage() {
-      const [, , activeData] = await Promise.all([
-        fetchHosts(),
-        fetchCleanupTemplates(),
+      const isWizardMode = mode === "full" || mode === "installer";
+      const [, activeData] = await Promise.all([
+        isWizardMode ? fetchHosts() : Promise.resolve([]),
         fetch(`${BASE_URL}/api/installations/active/`)
           .then(async (r) => (r.ok ? parseJsonResponse<{ active: number | null; installation: InstallationDetailResponse | null }>(r) : { active: null, installation: null }))
           .catch(() => ({ active: null, installation: null })),
@@ -1463,6 +1464,7 @@ export default function RunDeployment({
 
       if (mode === "history") {
         void fetchInstallations(50);
+        void fetchCleanupTemplates();
       }
 
       if (effectiveTargetInstallationId) {
@@ -2206,10 +2208,14 @@ export default function RunDeployment({
   }
 
   async function handleInstallationCleanupLaunch(installation: InstallationDetailResponse) {
+    let currentCleanupTemplates = cleanupTemplatesBySystem;
+    if (Object.keys(currentCleanupTemplates).length === 0) {
+      currentCleanupTemplates = await fetchCleanupTemplates();
+    }
     const systemType = getInstallationCleanupSystem(installation);
     const cleanupTargets = getInstallationCleanupTargets(installation);
     const cleanupTemplatesForInstallation =
-      (systemType ? cleanupTemplatesBySystem[systemType] : null) || null;
+      (systemType ? currentCleanupTemplates[systemType] : null) || null;
     const hostIds = cleanupTargets.map((target) => target.host);
 
     if (!systemType || !cleanupTemplatesForInstallation || Object.keys(cleanupTemplatesForInstallation).length === 0) {
@@ -2787,8 +2793,13 @@ export default function RunDeployment({
                 onClick={() => {
                   const nextState = !showHistory;
                   setShowHistory(nextState);
-                  if (nextState && installations.length === 0) {
-                    void fetchInstallations(50);
+                  if (nextState) {
+                    if (installations.length === 0) {
+                      void fetchInstallations(50);
+                    }
+                    if (Object.keys(cleanupTemplatesBySystem).length === 0) {
+                      void fetchCleanupTemplates();
+                    }
                   }
                 }}
               >

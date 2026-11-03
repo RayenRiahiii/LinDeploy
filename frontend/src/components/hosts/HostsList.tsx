@@ -190,25 +190,22 @@ export default function HostsList() {
     fetchHosts();
   }, []);
 
-  useEffect(() => {
-    async function fetchCredentials() {
-      setLoadingCredentials(true);
-      try {
-        const response = await fetch(`${BASE_URL}/api/credentials/`);
-        if (!response.ok) {
-          throw new Error("Failed to fetch credentials");
-        }
-        const data = await response.json();
-        setCredentials(data);
-      } catch {
-        setError("Unable to load credentials from backend.");
-      } finally {
-        setLoadingCredentials(false);
+  async function fetchCredentials() {
+    if (credentials.length > 0) return;
+    setLoadingCredentials(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/credentials/`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch credentials");
       }
+      const data = await response.json();
+      setCredentials(data);
+    } catch {
+      setError("Unable to load credentials from backend.");
+    } finally {
+      setLoadingCredentials(false);
     }
-
-    fetchCredentials();
-  }, []);
+  }
 
   function handleChange<K extends keyof HostFormData>(field: K, value: HostFormData[K]) {
     setFormData((prev) => ({
@@ -218,6 +215,7 @@ export default function HostsList() {
   }
 
   function openCreateModal() {
+    void fetchCredentials();
     setEditingId(null);
     setFormData(emptyForm);
     setCustomOsType("");
@@ -226,6 +224,7 @@ export default function HostsList() {
   }
 
   function openEditModal(host: Host) {
+    void fetchCredentials();
     setEditingId(host.id);
     setFormData({
       name: host.name,
