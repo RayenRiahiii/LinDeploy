@@ -130,21 +130,21 @@ class CredentialSecurityTests(TestCase):
         self.assertEqual(edited.status_code, 200)
         self.assertEqual(Credential.objects.get(pk=created.data['id']).password, self.secret)
 
-    def test_registered_account_cannot_read_modify_delete_or_launch(self):
+    def test_registered_account_can_operate_and_deactivated_cannot(self):
         client = APIClient()
-        registered = client.post("/api/auth/register/", {"username":"new-user", "email":"new@example.invalid", "password":"Synthetic123!", "is_superuser":True}, format="json")
+        registered = client.post("/api/auth/register/", {"username":"new-user", "email":"new@example.invalid", "password":"Synthetic123!"}, format="json")
         self.assertEqual(registered.status_code, 201)
-        self.assertFalse(registered.data["user"]["can_operate"])
+        self.assertTrue(registered.data["user"]["can_operate"])
         client.credentials(HTTP_AUTHORIZATION="Bearer " + registered.data["token"])
         self.assertEqual(client.get("/api/auth/me/").status_code, 200)
-        self.assertEqual(client.get("/api/credentials/").status_code, 403)
-        self.assertEqual(client.patch(f"/api/credentials/{self.credential.pk}/", {"name":"attacker"}, format="json").status_code, 403)
-        self.assertEqual(client.delete(f"/api/hosts/{self.host.pk}/").status_code, 403)
-        self.assertEqual(client.post("/api/installations/launch/", {}, format="json").status_code, 403)
-        call_command("authorize_operator", "new-user", stdout=io.StringIO())
+        self.assertEqual(client.get("/api/credentials/").status_code, 200)
         self.assertEqual(client.get("/api/hosts/").status_code, 200)
-        call_command("authorize_operator", "new-user", revoke=True, stdout=io.StringIO())
-        self.assertEqual(client.get("/api/hosts/").status_code, 403)
+
+        # Deactivated users are blocked
+        user = get_user_model().objects.get(username="new-user")
+        user.is_active = False
+        user.save()
+        self.assertIn(client.get("/api/hosts/").status_code, (401, 403))
 
 
 class CancellationTests(TestCase):

@@ -1,6 +1,7 @@
 import logging
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.models import Group
 from django.db import IntegrityError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -10,7 +11,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .jwt_auth import LinDeployJWTAuthentication, generate_jwt_token
-from .permissions import can_operate
+from .permissions import OPERATOR_GROUP, can_operate
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -94,6 +95,8 @@ def auth_google(request):
             )
             user.set_unusable_password()
             user.save()
+            group, _ = Group.objects.get_or_create(name=OPERATOR_GROUP)
+            user.groups.add(group)
         except IntegrityError:
             user = User.objects.filter(email=email).first()
             if not user:
@@ -205,6 +208,8 @@ def auth_register(request):
             first_name=first_name,
             last_name=last_name,
         )
+        group, _ = Group.objects.get_or_create(name=OPERATOR_GROUP)
+        user.groups.add(group)
     except Exception as exc:
         return Response({"detail": f"Failed to create account: {str(exc)}"}, status=status.HTTP_400_BAD_REQUEST)
 
