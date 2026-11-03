@@ -1,40 +1,43 @@
----
-- name: Refuse preparation without a clean or matching manifest state
-  ansible.builtin.assert:
-    that:
-      - >-
-        not lindeploy_ownership_manifest_stat.stat.exists
-        or lindeploy_ownership_existing.state in ['prepared', 'active', 'cleaned']
-      - >-
-        not lindeploy_ownership_manifest_stat.stat.exists
-        or lindeploy_ownership_existing.state == 'cleaned'
-        or lindeploy_ownership_existing.release_profile_id == lindeploy_release_profile_id
-    fail_msg: >-
-      {{ inventory_hostname }} has an unsupported ownership state. LinDeploy will
-      not install over ambiguous platform ownership.
-
-- name: Create ownership manifest directory
-  ansible.builtin.file:
-    path: "{{ lindeploy_ownership_root }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
-
-- name: Mark target as prepared before platform mutation
-  ansible.builtin.template:
-    src: manifest.json.j2
-    dest: "{{ lindeploy_ownership_manifest_path }}"
-    owner: root
-    group: root
-    mode: "0600"
-  vars:
-    lindeploy_ownership_target_state: prepared
-  when: >-
-    not lindeploy_ownership_manifest_stat.stat.exists
-    or lindeploy_ownership_existing.state == 'cleaned'
-
-- name: Publish installation ownership state
-  ansible.builtin.set_fact:
-    lindeploy_platform_state: >-
-      {{ lindeploy_ownership_existing.state | default('prepared') }}
+---
+- name: Refuse preparation without a clean or matching manifest state
+  ansible.builtin.assert:
+    that:
+      - >-
+        not lindeploy_ownership_manifest_stat.stat.exists
+        or (lindeploy_ownership_target_is_clean | default(false) | bool)
+        or lindeploy_ownership_existing.state in ['prepared', 'active', 'cleaned']
+      - >-
+        not lindeploy_ownership_manifest_stat.stat.exists
+        or lindeploy_ownership_existing.state == 'cleaned'
+        or (lindeploy_ownership_target_is_clean | default(false) | bool)
+        or lindeploy_ownership_existing.release_profile_id == lindeploy_release_profile_id
+    fail_msg: >-
+      {{ inventory_hostname }} has an unsupported ownership state. LinDeploy will
+      not install over ambiguous platform ownership.
+
+- name: Create ownership manifest directory
+  ansible.builtin.file:
+    path: "{{ lindeploy_ownership_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Mark target as prepared before platform mutation
+  ansible.builtin.template:
+    src: manifest.json.j2
+    dest: "{{ lindeploy_ownership_manifest_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    lindeploy_ownership_target_state: prepared
+  when: >-
+    not lindeploy_ownership_manifest_stat.stat.exists
+    or lindeploy_ownership_existing.state == 'cleaned'
+    or (lindeploy_ownership_target_is_clean | default(false) | bool)
+
+- name: Publish installation ownership state
+  ansible.builtin.set_fact:
+    lindeploy_platform_state: >-
+      {{ 'prepared' if (lindeploy_ownership_target_is_clean | default(false) | bool) else lindeploy_ownership_existing.state | default('prepared') }}

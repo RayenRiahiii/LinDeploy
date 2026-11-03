@@ -100,10 +100,32 @@ def classify_installation_target_issue(target: InstallationTarget):
     issue_definition = None
     artifact_stop_marker = None
 
-    if (
+    has_k3s_conflict = (
         "K3s installation artifacts are still present" in failure_context
         or "an existing K3s cluster is already present" in failure_context
-    ):
+    )
+    has_k8s_conflict = (
+        "Kubernetes installation artifacts are still present" in failure_context
+        or "an existing Kubernetes cluster is already present" in failure_context
+        or "K3s requires a clean target host. Conflicting artifacts were detected" in failure_context
+    )
+
+    if has_k3s_conflict and has_k8s_conflict:
+        issue_definition = {
+            "code": "multiple_platform_conflict",
+            "title": "K3s and Kubernetes are both installed",
+            "detail": (
+                "Both K3s and Kubernetes installation artifacts were detected on this target. "
+                "LinDeploy safely stopped the installation to prevent cluster corruption and port conflicts."
+            ),
+            "recommended_action": (
+                "Run the cleanup workflow for both K3s and Kubernetes on this target to install a clean cluster."
+            ),
+            "cleanup_system": InstallationTemplate.SystemType.K3S,
+            "secondary_cleanup_system": InstallationTemplate.SystemType.KUBERNETES,
+        }
+        artifact_stop_marker = "No"
+    elif has_k3s_conflict:
         issue_definition = {
             "code": "k3s_conflict",
             "title": "K3s is already installed",
@@ -117,11 +139,7 @@ def classify_installation_target_issue(target: InstallationTarget):
             "cleanup_system": InstallationTemplate.SystemType.K3S,
         }
         artifact_stop_marker = "No"
-    elif (
-        "Kubernetes installation artifacts are still present" in failure_context
-        or "an existing Kubernetes cluster is already present" in failure_context
-        or "K3s requires a clean target host. Conflicting artifacts were detected" in failure_context
-    ):
+    elif has_k8s_conflict:
         issue_definition = {
             "code": "kubernetes_conflict",
             "title": "Kubernetes is already installed",

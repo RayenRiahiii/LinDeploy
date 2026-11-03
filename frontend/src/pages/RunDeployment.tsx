@@ -83,6 +83,20 @@ type Host = {
   enabled: boolean;
   node_role: string;
   credential_username?: string | null;
+  baseline_state?: string;
+  baseline_facts?: {
+    containerd_installed?: boolean;
+    containerd_active?: boolean;
+    kubelet_installed?: boolean;
+    kubeadm_installed?: boolean;
+    kubectl_installed?: boolean;
+    swap_disabled?: boolean;
+    modules_configured?: boolean;
+    sysctl_configured?: boolean;
+    admin_conf_exists?: boolean;
+    k3s_installed?: boolean;
+    k8s_installed?: boolean;
+  };
 };
 
 type Template = {
@@ -2101,10 +2115,17 @@ export default function RunDeployment({
     return `CLEAN ${clusterName} ON ${stableTargetIds}`;
   }
 
-  function handlePlatformConflictCleanupLaunch() {
-    const conflictHostIds = conflictCleanupTargetIds;
+  function handlePlatformConflictCleanupLaunch(
+    targetSystem?: InstallerId,
+    targetHostIds?: number[]
+  ) {
+    const effectiveSystem = targetSystem || conflictCleanupSystem;
+    const conflictHostIds =
+      targetHostIds && targetHostIds.length > 0
+        ? targetHostIds
+        : conflictCleanupTargetIds;
 
-    if (!conflictCleanupSystem || !hasConflictCleanupOption) {
+    if (!effectiveSystem) {
       setError("The required cleanup workflow is not registered. Refresh installer data and try again.");
       return;
     }
@@ -2114,9 +2135,10 @@ export default function RunDeployment({
       return;
     }
 
+    const effectiveCleanupLabel = getInstallerOption(effectiveSystem).label;
     const conflictClusterConfig =
       (result?.cluster_config as ClusterConfig | undefined) ||
-      buildDefaultClusterConfig(conflictCleanupSystem);
+      buildDefaultClusterConfig(effectiveSystem);
 
     const conflictHostOverrides =
       result?.host_overrides && result.host_overrides.length > 0
@@ -2124,7 +2146,7 @@ export default function RunDeployment({
         : hosts
             .filter((host) => conflictHostIds.includes(host.id))
             .map((host) => {
-              const hostOverride = buildDefaultHostOverride(host, conflictCleanupSystem);
+              const hostOverride = buildDefaultHostOverride(host, effectiveSystem);
               return {
                 ...hostOverride,
                 labels: splitListInput(hostOverride.labels),
@@ -2132,18 +2154,21 @@ export default function RunDeployment({
               };
             });
 
+    const targetHostObj = hosts.find((h) => h.id === conflictHostIds[0]);
+    const targetHostName = targetHostObj?.name || `Host ${conflictHostIds[0]}`;
+
     setSelectedHostIds(conflictHostIds);
     openCleanupDialog({
-      systemType: conflictCleanupSystem,
+      systemType: effectiveSystem,
       hostIds: conflictHostIds,
       clusterConfig: conflictClusterConfig,
       hostOverrides: conflictHostOverrides,
       title:
-        hasKubernetesIdentityConflict
+        hasKubernetesIdentityConflict && effectiveSystem === "kubernetes"
           ? `Reset Kubernetes identity on ${conflictHostIds.length} cluster target(s)`
           : conflictHostIds.length === 1
-          ? `Cleanup ${conflictCleanupLabel} on ${platformConflictTargets[0].host_name}`
-          : `Cleanup ${conflictCleanupLabel} on ${conflictHostIds.length} affected targets`,
+          ? `Cleanup ${effectiveCleanupLabel} on ${targetHostName}`
+          : `Cleanup ${effectiveCleanupLabel} on ${conflictHostIds.length} affected targets`,
       purpose: "platform_switch",
     });
   }
@@ -2772,7 +2797,7 @@ export default function RunDeployment({
               leftSection={<IconRefresh size={16} />}
               onClick={() => void refreshOperationalData()}
             >
-              Refresh
+              {t("common.refresh", "Refresh")}
             </Button>
             {mode === "history" ? (
               <Button
@@ -2783,7 +2808,7 @@ export default function RunDeployment({
                 loading={clearingHistory}
                 disabled={historyInstallations.length === 0}
               >
-                Delete All History
+                {t("history.deleteAll", "Delete All History")}
               </Button>
             ) : showHistoryButton ? (
               <Button
@@ -2803,7 +2828,7 @@ export default function RunDeployment({
                   }
                 }}
               >
-                {showHistory ? "History Open" : `History (${totalCompletedRuns})`}
+                {showHistory ? t("history.historyOpen", "History Open") : `${t("nav.history", "History")} (${totalCompletedRuns})`}
               </Button>
             ) : null}
           </Group>
@@ -2815,7 +2840,7 @@ export default function RunDeployment({
             <Card className="console-panel dashboard-stat-card" padding="lg">
               <Group justify="space-between" align="flex-start">
                 <div>
-                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Hosts</Text>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>{t("dashboard.hostsInventory", "Hosts Inventory")}</Text>
                   <Title order={2} mt={4}>{dashboard.hosts.total}</Title>
                 </div>
                 <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -2823,16 +2848,13 @@ export default function RunDeployment({
                 </ThemeIcon>
               </Group>
               <Text size="xs" c="dimmed" mt="xs">
-                enabled {dashboard.hosts.enabled} | cp {dashboard.hosts.control_plane} | workers {dashboard.hosts.worker}
-              </Text>
-              <Text size="xs" c="dimmed">
-                installer-ready inventory overview
+                {t("dashboard.hostsStats", { enabled: dashboard.hosts.enabled, cp: dashboard.hosts.control_plane, worker: dashboard.hosts.worker, defaultValue: `enabled ${dashboard.hosts.enabled} | cp ${dashboard.hosts.control_plane} | workers ${dashboard.hosts.worker}` })}
               </Text>
             </Card>
             <Card className="console-panel dashboard-stat-card" padding="lg">
               <Group justify="space-between" align="flex-start">
                 <div>
-                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Credentials</Text>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>{t("dashboard.credentials", "Credentials")}</Text>
                   <Title order={2} mt={4}>{dashboard.credentials.total}</Title>
                 </div>
                 <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -2840,13 +2862,13 @@ export default function RunDeployment({
                 </ThemeIcon>
               </Group>
               <Text size="xs" c="dimmed" mt="xs">
-                password {dashboard.credentials.password} | ssh key {dashboard.credentials.ssh_key}
+                {t("dashboard.credStats", { password: dashboard.credentials.password, sshKey: dashboard.credentials.ssh_key, defaultValue: `password ${dashboard.credentials.password} | ssh key ${dashboard.credentials.ssh_key}` })}
               </Text>
             </Card>
             <Card className="console-panel dashboard-stat-card" padding="lg">
               <Group justify="space-between" align="flex-start">
                 <div>
-                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Installations</Text>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>{t("dashboard.totalDeployments", "Total Deployments")}</Text>
                   <Title order={2} mt={4}>{dashboard.installations.total}</Title>
                 </div>
                 <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -2854,13 +2876,13 @@ export default function RunDeployment({
                 </ThemeIcon>
               </Group>
               <Text size="xs" c="dimmed" mt="xs">
-                success {dashboard.installations.success} | failed {dashboard.installations.failed} | cancelled {dashboard.installations.cancelled ?? 0}
+                {t("dashboard.deployStats", { passed: dashboard.installations.success, failed: dashboard.installations.failed, defaultValue: `success ${dashboard.installations.success} | failed ${dashboard.installations.failed}` })}
               </Text>
             </Card>
             <Card className="console-panel dashboard-stat-card" padding="lg">
               <Group justify="space-between" align="flex-start">
                 <div>
-                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>Active Queue</Text>
+                  <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>{t("dashboard.activeQueue", "Active Queue")}</Text>
                   <Title order={2} mt={4}>{dashboard.installations.running + dashboard.installations.pending}</Title>
                 </div>
                 <ThemeIcon color="red" variant="light" size={36} radius="md">
@@ -2868,7 +2890,7 @@ export default function RunDeployment({
                 </ThemeIcon>
               </Group>
               <Text size="xs" c="dimmed" mt="xs">
-                running {dashboard.installations.running} | pending {dashboard.installations.pending}
+                {t("dashboard.pipelineStats", { running: dashboard.installations.running, queued: dashboard.installations.pending, defaultValue: `running ${dashboard.installations.running} | pending ${dashboard.installations.pending}` })}
               </Text>
             </Card>
           </SimpleGrid>
@@ -3296,6 +3318,7 @@ export default function RunDeployment({
                       })}
                   </div>
                 )}
+
                 {showGuidedInstaller && (
                   <Group className="wizard-stage-actions" justify="space-between">
                     <Button
@@ -3378,13 +3401,11 @@ export default function RunDeployment({
                             )}
                           </SimpleGrid>
 
-                          <Alert color={topologyReady ? "blue" : "yellow"} variant="light">
-                            {topology === "multi_node"
-                              ? topologyReady
-                                ? `The backend will generate one inventory with ${controlPlaneHostIds.length} control-plane host(s), ${workerHostIds.length} worker host(s), and ${bootstrapHost?.name} as bootstrap.`
-                                : "Complete the control-plane, worker, and bootstrap assignments before starting the shared cluster installation."
-                              : "The playbook will run on every selected target in the generated inventory. Host access settings remain managed from the Hosts inventory."}
-                          </Alert>
+                          {!topologyReady && topology === "multi_node" && (
+                            <Alert color="yellow" variant="light">
+                              Complete the control-plane, worker, and bootstrap assignments before starting the shared cluster installation.
+                            </Alert>
+                          )}
                         </>
                       ) : (
                         <Text c="dimmed">Select at least one host to unlock SSH verification and playbook execution.</Text>
@@ -3541,17 +3562,17 @@ export default function RunDeployment({
                 <Group gap="xs">
                   {canRetryFailedTargets && (
                     <Button size="xs" variant="light" onClick={() => void handleRetryFailedTargets()}>
-                      Retry Failed Targets
+                      {t("execution.retryFailed", "Retry Failed Targets")}
                     </Button>
                   )}
                   {canCleanupResult && (
                     <Button size="xs" color="orange" variant="light" onClick={() => void handleResultCleanupLaunch()}>
-                      {isResetExecution ? "Reset Cluster" : "Cleanup Cluster"}
+                      {isResetExecution ? t("execution.resetCluster", "Reset Cluster") : t("execution.cleanupClusterBtn", "Cleanup Cluster")}
                     </Button>
                   )}
                   {showGuidedInstaller && (
                     <Button size="xs" leftSection={<IconRefresh size={14} />} onClick={handleStartAnotherInstallation}>
-                      Start Another Installation
+                      {t("execution.startAnotherInstallation", "Start Another Installation")}
                     </Button>
                   )}
                   <Button
@@ -3563,7 +3584,7 @@ export default function RunDeployment({
                       persistDismissedInstallationId(result.installation_id);
                     }}
                   >
-                    Dismiss
+                    {t("common.dismiss", "Dismiss")}
                   </Button>
                 </Group>
               ) : undefined

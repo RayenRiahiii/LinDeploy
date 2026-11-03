@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Badge,
+  Box,
   Button,
   Card,
+  Drawer,
   Group,
+  Progress,
   SimpleGrid,
   Stack,
   Text,
@@ -13,7 +16,9 @@ import {
 } from "@mantine/core";
 import {
   IconActivity,
-  IconFolders,
+  IconArrowRight,
+  IconCheck,
+  IconDatabase,
   IconKey,
   IconLayoutDashboard,
   IconPlayerPlay,
@@ -63,6 +68,7 @@ function getStatusColor(status?: string | null) {
   if (status === "partial_success") return "yellow";
   if (status === "failed") return "red";
   if (status === "cancelled") return "yellow";
+  if (status === "running") return "blue";
   return "gray";
 }
 
@@ -71,6 +77,7 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [mirrorDrawerOpened, setMirrorDrawerOpened] = useState(false);
 
   async function fetchSummary() {
     setLoading(true);
@@ -94,43 +101,66 @@ export default function DashboardPage() {
     void fetchSummary();
   }, []);
 
+  const activeRunsCount = (summary?.installations.running ?? 0) + (summary?.installations.pending ?? 0);
+
   return (
     <Stack gap="lg">
       <PageHeader
         icon={<IconLayoutDashboard size={22} />}
-        badge={t("dashboard.badge", "Platform Overview")}
+        badge={t("dashboard.badge", "Vue d'ensemble")}
         badgeColor="red"
-        title={t("dashboard.title", "Operational Summary")}
-        subtitle={t("dashboard.subtitle", "Real-time status of your infrastructure inventory, saved credentials, and deployment pipelines.")}
+        title={t("dashboard.title", "Résumé Opérationnel")}
+        subtitle={t(
+          "dashboard.subtitle",
+          "Surveillance en temps réel de votre inventaire, identifiants d'accès et pipelines de déploiement."
+        )}
         stats={
           summary ? (
             <>
               <Badge color="red" variant="light">
-                {t("nav.hosts", "Hosts")}: {summary.hosts.total}
+                {t("nav.hosts", "Hôtes")}: {summary.hosts.total}
               </Badge>
-              <Badge color="teal" variant="light">
-                {t("dashboard.activeQueue", "Active Queue")}: {summary.installations.running + summary.installations.pending}
+              <Badge color={activeRunsCount > 0 ? "blue" : "gray"} variant="light">
+                {t("dashboard.activeQueue", "Pipeline actif")}: {activeRunsCount}
               </Badge>
               <Badge color="gray" variant="outline">
-                {t("dashboard.totalRuns", "Total Runs")}: {summary.installations.total}
+                {t("dashboard.totalRuns", "Exécutions")}: {summary.installations.total}
               </Badge>
             </>
           ) : undefined
         }
         actions={
-          <Button
-            variant="default"
-            leftSection={<IconRefresh size={16} />}
-            onClick={() => void fetchSummary()}
-            loading={loading}
-          >
-            {t("common.refresh", "Refresh")}
-          </Button>
+          <Group gap="sm" wrap="wrap">
+            <Button
+              color="red"
+              leftSection={<IconPlayerPlay size={16} />}
+              component={Link}
+              to="/installers"
+            >
+              {t("dashboard.newDeployment", "+ Nouveau Déploiement")}
+            </Button>
+            <Button
+              variant="default"
+              leftSection={<IconServer size={16} />}
+              component={Link}
+              to="/hosts"
+            >
+              {t("hosts.addHost", "+ Ajouter un hôte")}
+            </Button>
+            <Button
+              variant="subtle"
+              leftSection={<IconRefresh size={16} />}
+              onClick={() => void fetchSummary()}
+              loading={loading}
+            >
+              {t("common.refresh", "Actualiser")}
+            </Button>
+          </Group>
         }
       />
 
       {error && (
-        <Alert color="red" variant="light" title={t("common.error", "Dashboard error")}>
+        <Alert color="red" variant="light" title={t("common.error", "Erreur Dashboard")}>
           {error}
         </Alert>
       )}
@@ -141,7 +171,7 @@ export default function DashboardPage() {
             <Group justify="space-between" align="flex-start">
               <div>
                 <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
-                  {t("dashboard.hostsInventory", "Hosts Inventory")}
+                  {t("dashboard.hostsInventory", "Hôtes Détectés")}
                 </Text>
                 <Title order={2} mt={4}>{summary.hosts.total}</Title>
               </div>
@@ -154,7 +184,7 @@ export default function DashboardPage() {
                 enabled: summary.hosts.enabled,
                 cp: summary.hosts.control_plane,
                 worker: summary.hosts.worker,
-                defaultValue: `${summary.hosts.enabled} enabled · ${summary.hosts.control_plane} CP · ${summary.hosts.worker} worker`,
+                defaultValue: `${summary.hosts.enabled} activés · ${summary.hosts.control_plane} CP · ${summary.hosts.worker} worker`,
               })}
             </Text>
           </Card>
@@ -163,7 +193,7 @@ export default function DashboardPage() {
             <Group justify="space-between" align="flex-start">
               <div>
                 <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
-                  {t("dashboard.credentials", "Credentials")}
+                  {t("dashboard.credentials", "Accès SSH")}
                 </Text>
                 <Title order={2} mt={4}>{summary.credentials.total}</Title>
               </div>
@@ -175,7 +205,7 @@ export default function DashboardPage() {
               {t("dashboard.credStats", {
                 password: summary.credentials.password,
                 sshKey: summary.credentials.ssh_key,
-                defaultValue: `${summary.credentials.password} password · ${summary.credentials.ssh_key} SSH key`,
+                defaultValue: `${summary.credentials.password} mot de passe · ${summary.credentials.ssh_key} clé SSH`,
               })}
             </Text>
           </Card>
@@ -184,7 +214,7 @@ export default function DashboardPage() {
             <Group justify="space-between" align="flex-start">
               <div>
                 <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
-                  {t("dashboard.totalDeployments", "Total Deployments")}
+                  {t("dashboard.totalDeployments", "Déploiements Totaux")}
                 </Text>
                 <Title order={2} mt={4}>{summary.installations.total}</Title>
               </div>
@@ -196,7 +226,7 @@ export default function DashboardPage() {
               {t("dashboard.deployStats", {
                 passed: summary.installations.success,
                 failed: summary.installations.failed,
-                defaultValue: `${summary.installations.success} passed · ${summary.installations.failed} failed`,
+                defaultValue: `${summary.installations.success} réussis · ${summary.installations.failed} échoués`,
               })}
             </Text>
           </Card>
@@ -205,9 +235,9 @@ export default function DashboardPage() {
             <Group justify="space-between" align="flex-start">
               <div>
                 <Text c="dimmed" size="xs" fw={700} tt="uppercase" style={{ letterSpacing: "0.5px" }}>
-                  {t("dashboard.activePipeline", "Active Pipeline")}
+                  {t("dashboard.activePipeline", "Pipeline Actif")}
                 </Text>
-                <Title order={2} mt={4}>{summary.installations.running + summary.installations.pending}</Title>
+                <Title order={2} mt={4}>{activeRunsCount}</Title>
               </div>
               <ThemeIcon color="red" variant="light" size={36} radius="md">
                 <IconActivity size={18} />
@@ -217,79 +247,212 @@ export default function DashboardPage() {
               {t("dashboard.pipelineStats", {
                 running: summary.installations.running,
                 queued: summary.installations.pending,
-                defaultValue: `${summary.installations.running} running · ${summary.installations.pending} queued`,
+                defaultValue: `${summary.installations.running} en cours · ${summary.installations.pending} en attente`,
               })}
             </Text>
           </Card>
         </SimpleGrid>
       )}
 
-      <MirrorStatusPanel />
-
-      <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
-        <Card className="installer-card" padding="lg" component={Link} to="/installers">
-          <Group gap="sm" mb="sm">
-            <ThemeIcon color="red" variant="light" size={36} radius="md">
-              <IconPlayerPlay size={18} />
-            </ThemeIcon>
-            <Title order={4}>{t("installers.title", "Installer Catalog")}</Title>
-          </Group>
-          <Text c="dimmed" size="sm">
-            {t("dashboard.installerCatalogDesc", "Choose the target system, then move into the dedicated Kubernetes or K3s configuration page.")}
+      {/* How LinDeploy works (Workflow moderne inspire du modele SaaS) */}
+      <Card className="console-panel" padding="xl" radius="md">
+        <Group justify="space-between" align="flex-end" wrap="wrap" gap="md" mb={32}>
+          <div>
+            <Title order={2} style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.4px" }}>
+              {t("dashboard.howItWorksTitle", "How LinDeploy works")}
+            </Title>
+          </div>
+          <Text size="sm" c="dimmed">
+            {t("dashboard.howItWorksSubtitle", "Deploy clusters easily in minutes.")}
           </Text>
-        </Card>
+        </Group>
 
-        <Card className="installer-card" padding="lg" component={Link} to="/executions">
-          <Group gap="sm" mb="sm">
-            <ThemeIcon color="red" variant="light" size={36} radius="md">
-              <IconTerminal2 size={18} />
-            </ThemeIcon>
-            <Title order={4}>{t("sections.executions.badge", "Execution Center")}</Title>
-          </Group>
-          <Text c="dimmed" size="sm">
-            {t("dashboard.executionCenterDesc", "Resume active installations, inspect the live pipeline, and review final playbook output.")}
-          </Text>
-        </Card>
+        <SimpleGrid cols={{ base: 1, md: 3 }} spacing="xl">
+          {/* Etape 01 : Prepare Inventory */}
+          <Box
+            component={Link}
+            to="/hosts"
+            className="workflow-step-item"
+          >
+            <Group wrap="nowrap" align="center" mb="lg">
+              <Box className="workflow-step-circle">01</Box>
+              <Box className="workflow-step-line" visibleFrom="md" />
+            </Group>
+            <Text fw={700} size="lg" className="workflow-step-title" mb={6}>
+              {t("dashboard.step1Title", "Prepare Inventory")}
+            </Text>
+            <Text size="sm" c="dimmed" style={{ lineHeight: 1.6 }}>
+              {t(
+                "dashboard.step1Desc",
+                "Register your target host machines and SSH credentials with automatic reachability validation."
+              )}
+            </Text>
+          </Box>
 
-        <Card className="installer-card" padding="lg" component={Link} to="/history">
-          <Group gap="sm" mb="sm">
-            <ThemeIcon color="red" variant="light" size={36} radius="md">
-              <IconFolders size={18} />
-            </ThemeIcon>
-            <Title order={4}>{t("nav.history", "History")}</Title>
-          </Group>
-          <Text c="dimmed" size="sm">
-            {t("dashboard.historyDesc", "Review completed runs separately from the live execution workspace and delete obsolete records.")}
-          </Text>
-        </Card>
-      </SimpleGrid>
+          {/* Etape 02 : Select Installer */}
+          <Box
+            component={Link}
+            to="/installers"
+            className="workflow-step-item"
+          >
+            <Group wrap="nowrap" align="center" mb="lg">
+              <Box className="workflow-step-circle">02</Box>
+              <Box className="workflow-step-line" visibleFrom="md" />
+            </Group>
+            <Text fw={700} size="lg" className="workflow-step-title" mb={6}>
+              {t("dashboard.step2Title", "Select Installer")}
+            </Text>
+            <Text size="sm" c="dimmed" style={{ lineHeight: 1.6 }}>
+              {t(
+                "dashboard.step2Desc",
+                "Choose the cluster orchestrator and topology for your infrastructure with optional local mirror caching."
+              )}
+            </Text>
+          </Box>
 
+          {/* Etape 03 : Deploy & Monitor */}
+          <Box
+            component={Link}
+            to="/executions"
+            className="workflow-step-item"
+          >
+            <Group wrap="nowrap" align="center" mb="lg">
+              <Box className="workflow-step-circle">03</Box>
+            </Group>
+            <Text fw={700} size="lg" className="workflow-step-title" mb={6}>
+              {t("dashboard.step3Title", "Deploy & Monitor")}
+            </Text>
+            <Text size="sm" c="dimmed" style={{ lineHeight: 1.6 }}>
+              {t(
+                "dashboard.step3Desc",
+                "Launch the automated deployment pipeline and monitor task-by-task execution with live logs in real time."
+              )}
+            </Text>
+          </Box>
+        </SimpleGrid>
+      </Card>
+
+      {/* Carte du Dernier Déploiement / Activité Récente */}
       {summary?.latest_installation && (
-        <Card className="console-panel" padding="lg">
-          <Group justify="space-between" align="center">
-            <div>
-              <Title order={3}>{t("dashboard.latestInstallation", "Latest Installation")}</Title>
-              <Text c="dimmed" size="sm" mt={4}>
-                {t("dashboard.installationNum", {
-                  id: summary.latest_installation.id,
-                  name: summary.latest_installation.template_name,
-                  defaultValue: `installation #${summary.latest_installation.id} | ${summary.latest_installation.template_name}`,
-                })}
-              </Text>
-            </div>
-            <Badge color={getStatusColor(summary.latest_installation.status)} variant="light">
-              {summary.latest_installation.status}
-            </Badge>
+        <Card className="console-panel" padding="lg" radius="md">
+          <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+            <Group gap="sm">
+              <ThemeIcon
+                color={getStatusColor(summary.latest_installation.status)}
+                variant="light"
+                size={36}
+                radius="md"
+              >
+                {summary.latest_installation.status === "running" ? (
+                  <IconActivity size={18} />
+                ) : summary.latest_installation.status === "success" ? (
+                  <IconCheck size={18} />
+                ) : (
+                  <IconTerminal2 size={18} />
+                )}
+              </ThemeIcon>
+              <div>
+                <Group gap="xs">
+                  <Title order={4}>
+                    {t("dashboard.latestInstallation", "Dernière Exécution")} #{summary.latest_installation.id}
+                  </Title>
+                  <Badge color={getStatusColor(summary.latest_installation.status)} variant="light">
+                    {summary.latest_installation.status === "running"
+                      ? t("execution.statusRunning", "Running")
+                      : summary.latest_installation.status === "success"
+                        ? t("execution.statusSuccess", "Success")
+                        : summary.latest_installation.status === "failed"
+                          ? t("execution.statusFailed", "Failed")
+                          : summary.latest_installation.status === "cancelled"
+                            ? t("execution.statusCancelled", "Cancelled")
+                            : summary.latest_installation.status.toUpperCase()}
+                  </Badge>
+                </Group>
+                <Text c="dimmed" size="xs" mt={2}>
+                  {summary.latest_installation.template_name} · {t("dashboard.phaseLabel", "Phase")} : {summary.latest_installation.phase} ({summary.latest_installation.progress}%)
+                </Text>
+              </div>
+            </Group>
+            <Button
+              component={Link}
+              to={`/executions/${summary.latest_installation.id}`}
+              variant="light"
+              color="red"
+              size="xs"
+              rightSection={<IconArrowRight size={14} />}
+            >
+              {t("dashboard.viewExecution", "Voir l'exécution")}
+            </Button>
           </Group>
-          <Text size="sm" c="dimmed" mt="md">
-            {t("dashboard.phaseProgress", {
-              phase: summary.latest_installation.phase,
-              progress: summary.latest_installation.progress,
-              defaultValue: `phase ${summary.latest_installation.phase} | progress ${summary.latest_installation.progress}%`,
-            })}
-          </Text>
+
+          <Progress
+            value={summary.latest_installation.progress}
+            color={getStatusColor(summary.latest_installation.status)}
+            size="sm"
+            radius="xl"
+            striped={summary.latest_installation.status === "running"}
+            animated={summary.latest_installation.status === "running"}
+            mt="md"
+          />
         </Card>
       )}
+
+      {/* Option A : Bandeau compact pour le Miroir Local */}
+      <Card className="console-panel" padding="md" radius="md">
+        <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+          <Group gap="sm">
+            <ThemeIcon color="teal" variant="light" size={32} radius="md">
+              <IconDatabase size={18} />
+            </ThemeIcon>
+            <div>
+              <Group gap="xs">
+                <Text size="sm" fw={700}>
+                  {t("mirror.compactTitle", "Cache & Miroir Local LAN")}
+                </Text>
+                <Badge color="teal" size="xs" variant="light">
+                  {t("common.ready", "Prêt (Actif)")}
+                </Badge>
+              </Group>
+              <Text size="xs" c="dimmed">
+                {t(
+                  "mirror.compactSub",
+                  "Paquets Kubernetes et K3s mis en cache sur le réseau local pour accélérer les installations"
+                )}
+              </Text>
+            </div>
+          </Group>
+          <Button
+            variant="light"
+            color="red"
+            size="xs"
+            leftSection={<IconDatabase size={14} />}
+            onClick={() => setMirrorDrawerOpened(true)}
+          >
+            {t("mirror.manageDrawer", "Gérer le cache & préchauffage")} →
+          </Button>
+        </Group>
+      </Card>
+
+      {/* Drawer Latéral pour la gestion du Miroir Local */}
+      <Drawer
+        opened={mirrorDrawerOpened}
+        onClose={() => setMirrorDrawerOpened(false)}
+        position="right"
+        size="lg"
+        title={
+          <Group gap="xs">
+            <ThemeIcon color="red" variant="light" size={28} radius="md">
+              <IconDatabase size={16} />
+            </ThemeIcon>
+            <Text fw={700} size="sm">
+              {t("mirror.drawerTitle", "Gestion du Miroir Local & Préchauffage")}
+            </Text>
+          </Group>
+        }
+        padding="md"
+      >
+        <MirrorStatusPanel />
+      </Drawer>
     </Stack>
   );
 }

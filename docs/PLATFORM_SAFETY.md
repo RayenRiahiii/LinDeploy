@@ -27,9 +27,9 @@ Reset, cleanup and uninstall require all of the following:
 
 Missing or inconsistent ownership stops the play before destructive work. A
 successful cleanup keeps a `cleaned` tombstone. Repeating the same cleanup is a
-no-op. There is deliberately no implicit force mode. Legacy installations made
-before ownership manifests were introduced must be reinstalled under the new
-contract or adopted through a separately reviewed administrative procedure.
+no-op. There is deliberately no implicit force mode. When a target host has no
+active cluster runtime present, LinDeploy safely adopts the host for the new
+deployment without failing on stale machine identities.
 
 ## Linux security
 

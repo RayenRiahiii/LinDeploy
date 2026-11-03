@@ -11,3 +11,15 @@ lindeploy_ownership_required_resources: []
 lindeploy_release_profile_id: ""
 lindeploy_release_profile_mode: production
 lindeploy_emergency_force_enabled: false
+lindeploy_ownership_runtime_indicators:
+  kubernetes:
+    - /etc/kubernetes/admin.conf
+    - /etc/kubernetes/manifests/kube-apiserver.yaml
+    - /var/lib/kubelet/config.yaml
+    - /var/lib/etcd/member
+  k3s:
+    - /etc/rancher/k3s/k3s.yaml
+    - /usr/local/bin/k3s
+    - /etc/systemd/system/k3s.service
+    - /var/lib/rancher/k3s/server
+

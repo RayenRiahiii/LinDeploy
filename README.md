@@ -11,7 +11,7 @@ The current release supports:
 - **SSH Connectivity Engine**: automated pre-execution checks (Password, SSH Private Key, and SSH Public Key);
 - **Lifecycle & Cleanup**: Kubernetes reset and full uninstall workflows, K3s cleanup, and node purging;
 - **Direct Execution Cancellation**: worker-confirmed process termination before host release;
-- **Dual Conflict Protection**: cross-platform (K8s vs K3s) and same-platform conflict detection ("Keep existing" vs "Cleanup and reinstall");
+- **Dual & Multi-Node Conflict Protection**: cross-platform (K8s vs K3s) and same-platform conflict detection across single and multi-node topologies, with targeted remediation and one-click uninstallation workflows;
 - **User Authentication**: secure JWT and session-based authentication, registration, login, and protected routes;
 - **Bilingual Internationalization (i18n)**: instant on-the-fly language switching between English (`EN`) and French (`FR`);
 - **Smart LAN Pull-Through Mirror**: integrated caching for OCI images (Docker, Quay, K8s registries), K3s binaries, Calico manifests, and RPM/DEB repositories;

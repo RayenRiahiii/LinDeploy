@@ -1459,3 +1459,87 @@
     display: none;
   }
 }
+
+/* LinDeploy Modern Footer Styles */
+.footer-link {
+  text-decoration: none;
+  transition: color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.footer-link:hover {
+  color: #ffffff !important;
+}
+
+/* How LinDeploy works modern open stepper (style Photo 2) */
+.workflow-step-item {
+  text-decoration: none;
+  cursor: pointer;
+  display: block;
+  padding: 6px 8px;
+  border-radius: 10px;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.workflow-step-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  transform: translateY(-2px);
+}
+
+.workflow-step-circle {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.workflow-step-item:hover .workflow-step-circle {
+  border-color: var(--mantine-color-red-6);
+  color: var(--mantine-color-red-6);
+  background: rgba(224, 49, 49, 0.12);
+}
+
+.workflow-step-line {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  flex: 1;
+  margin-left: 18px;
+}
+
+.workflow-step-title {
+  color: #ffffff;
+  font-size: 19px;
+  font-weight: 700;
+  transition: color 0.15s ease;
+  letter-spacing: -0.2px;
+}
+
+.workflow-step-item:hover .workflow-step-title {
+  color: #ff6b6b;
+}
+
+[data-mantine-color-scheme="light"] .workflow-step-circle {
+  border-color: rgba(0, 0, 0, 0.22);
+  color: #111827;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-mantine-color-scheme="light"] .workflow-step-line {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-mantine-color-scheme="light"] .workflow-step-title {
+  color: #111827;
+}

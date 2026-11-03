@@ -7,6 +7,7 @@
 import { Badge, Box, Group, Progress, Text, ThemeIcon } from "@mantine/core";
 import { IconCheck, IconClockHour4, IconLoader2 } from "@tabler/icons-react";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   OPENSHIFT_INSTALLATION_STAGES,
   detectOpenShiftPhaseFromTask,
@@ -27,6 +28,7 @@ type Props = {
 };
 
 export default function OpenShiftPhaseBar({ currentTask, currentRole, isRunning, overridePhase }: Props) {
+  const { t } = useTranslation();
   const detectedPhase = useMemo(
     () => overridePhase ?? detectOpenShiftPhaseFromTask(currentTask, currentRole),
     [currentTask, currentRole, overridePhase]
@@ -43,10 +45,10 @@ export default function OpenShiftPhaseBar({ currentTask, currentRole, isRunning,
   return (
     <Box className="openshift-phase-bar" mt="sm">
       <Group justify="space-between" mb={6}>
-        <Text size="xs" fw={700} c="dimmed">SNO INSTALLATION PHASES</Text>
+        <Text size="xs" fw={700} c="dimmed">{t("openshift.snoPhases", "SNO INSTALLATION PHASES")}</Text>
         {isRunning && currentPhaseIndex >= 0 && (
           <Badge color="blue" variant="light" size="xs" leftSection={<IconClockHour4 size={10} />}>
-            ~{remainingMinutes}m remaining
+            {t("openshift.minutesRemaining", { count: remainingMinutes, defaultValue: `~${remainingMinutes}m remaining` })}
           </Badge>
         )}
       </Group>
@@ -62,7 +64,7 @@ export default function OpenShiftPhaseBar({ currentTask, currentRole, isRunning,
             <div
               key={stage.phase}
               className={`openshift-phase-step${completed ? " is-completed" : ""}${current ? " is-current" : ""}${pending ? " is-pending" : ""}`}
-              title={stage.detail}
+              title={t(`openshift.stages.${stage.phase}.detail`, stage.detail)}
             >
               <ThemeIcon
                 size={20}
@@ -80,7 +82,7 @@ export default function OpenShiftPhaseBar({ currentTask, currentRole, isRunning,
               </ThemeIcon>
               <div className="openshift-phase-label">
                 <Text size="xs" fw={current ? 700 : completed ? 500 : 400} c={pending ? "dimmed" : undefined}>
-                  {stage.label}
+                  {t(`openshift.stages.${stage.phase}.label`, stage.label)}
                 </Text>
                 {current && (
                   <Text size="10px" c="dimmed">~{stage.estimatedMinutes}m</Text>

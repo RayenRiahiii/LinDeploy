@@ -25,6 +25,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
 import LanguageSelector from "../components/common/LanguageSelector";
+import AppFooter from "../components/common/AppFooter";
 import lindeployWordmark from "../assets/logo.png";
 import lindeployWordmarkDark from "../assets/darkmodeLogo.png";
 
@@ -371,6 +372,8 @@ export default function AppShellLayout({ colorScheme, onToggleColorScheme }: App
             <Outlet />
           </Box>
         </main>
+
+        {location.pathname === "/dashboard" && <AppFooter colorScheme={colorScheme} />}
       </div>
     </Box>
   );

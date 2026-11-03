@@ -848,6 +848,54 @@ class InstallationTargetOperatorIssueTests(TestCase):
             ["/etc/kubernetes/admin.conf", "/etc/cni/net.d/10-calico.conflist"],
         )
 
+    def test_serializes_mixed_conflicts_across_multiple_targets(self):
+        host1 = Host.objects.create(name="node-mixed-k3s", ip_address="192.0.2.22")
+        host2 = Host.objects.create(name="node-mixed-k8s", ip_address="192.0.2.23")
+        template = InstallationTemplate.objects.create(
+            name="kubernetes-multi-node-mixed-issue-test",
+            system_type=InstallationTemplate.SystemType.KUBERNETES,
+            playbook_path="playbooks/test_mixed_conflicts.yml",
+            deployment_type=InstallationTemplate.DeploymentType.MULTI_NODE,
+        )
+        installation = Installation.objects.create(
+            template=template,
+            status=Installation.Status.FAILED,
+            phase=Installation.Phase.FAILED,
+        )
+        InstallationTarget.objects.create(
+            installation=installation,
+            host=host1,
+            status=InstallationTarget.Status.FAILED,
+            stderr=(
+                'fatal: [node-mixed-k3s]: FAILED! => {"msg": "Kubernetes cannot be installed '
+                "because K3s installation artifacts are still present. Detected artifacts: "
+                '/usr/local/bin/k3s. No Kubernetes system changes were applied."}'
+            ),
+            return_code=2,
+        )
+        InstallationTarget.objects.create(
+            installation=installation,
+            host=host2,
+            status=InstallationTarget.Status.FAILED,
+            stderr=(
+                'fatal: [node-mixed-k8s]: FAILED! => {"msg": "Kubernetes cannot be installed '
+                "because an existing Kubernetes cluster is already present on this host. "
+                'Detected artifacts: /etc/kubernetes/admin.conf. No Kubernetes system changes were applied."}'
+            ),
+            return_code=2,
+        )
+
+        payload = InstallationSerializer(installation).data
+        targets = payload["targets"]
+        self.assertEqual(len(targets), 2)
+        issue1 = next(t["operator_issue"] for t in targets if t["host_name"] == "node-mixed-k3s")
+        issue2 = next(t["operator_issue"] for t in targets if t["host_name"] == "node-mixed-k8s")
+
+        self.assertEqual(issue1["code"], "k3s_conflict")
+        self.assertEqual(issue1["cleanup_system"], InstallationTemplate.SystemType.K3S)
+        self.assertEqual(issue2["code"], "kubernetes_conflict")
+        self.assertEqual(issue2["cleanup_system"], InstallationTemplate.SystemType.KUBERNETES)
+
     def test_serializes_kubernetes_identity_conflict_as_reset_action(self):
         host = Host.objects.create(
             name="renamed-node",

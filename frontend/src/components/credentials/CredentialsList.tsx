@@ -75,7 +75,7 @@ const credentialApiErrorOptions = {
     name: "Credential name",
     auth_type: "Authentication type",
     username: "Username",
-    private_key: "SSH public key",
+    private_key: "SSH private key",
     password: "SSH password",
     become_password: "Become password",
   },
@@ -591,12 +591,12 @@ export default function CredentialsList() {
               />
             ) : (
               <Textarea
-                label={t("credentials.sshPublicKey", "SSH Public Key")}
-                description={t("credentials.sshPublicKeyDesc", "Paste the SSH public key installed on the host.")}
+                label={t("credentials.sshPrivateKey", "SSH Private Key")}
+                description={t("credentials.sshPrivateKeyDesc", "Paste the OpenSSH private key used to connect to target hosts.")}
                 placeholder={
                   editingId !== null
                     ? t("credentials.leaveBlankToKeepKey", "Leave blank to keep existing SSH key")
-                    : t("credentials.sshPublicKeyPlaceholder", "ssh-ed25519 AAAAC3... or ssh-rsa AAAAB3...")
+                    : t("credentials.sshPrivateKeyPlaceholder", "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----")
                 }
                 value={formData.private_key}
                 onChange={(event) => handleChange("private_key", event.currentTarget.value)}

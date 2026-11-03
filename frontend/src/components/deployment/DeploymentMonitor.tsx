@@ -122,6 +122,26 @@ export default function DeploymentMonitor({
   const { t } = useTranslation();
 
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const translateStatus = (s?: string) => {
+    if (!s) return "";
+    switch (s.toLowerCase()) {
+      case "running":
+        return t("execution.statusRunning", "Running");
+      case "success":
+        return t("execution.statusSuccess", "Success");
+      case "failed":
+        return t("execution.statusFailed", "Failed");
+      case "pending":
+        return t("execution.statusPending", "Pending");
+      case "cancelled":
+        return t("execution.statusCancelled", "Cancelled");
+      case "partial_success":
+        return t("execution.statusSuccess", "Partial Success");
+      default:
+        return s;
+    }
+  };
+
   const status = loading ? live.status : result?.status;
   const statusColor = getStatusColor(status) === "gray" ? "teal" : getStatusColor(status);
   const progress = loading ? live.progress : result ? 100 : 0;
@@ -475,7 +495,7 @@ export default function DeploymentMonitor({
                 <Group gap="xs" mt={10}>
                   {status && (
                     <Badge color={getStatusColor(status)} variant="light">
-                      {loading ? `${status} | ${formatPhaseLabel(stages, live.phase)}` : status}
+                      {loading ? `${translateStatus(status)} | ${formatPhaseLabel(stages, live.phase)}` : translateStatus(status)}
                     </Badge>
                   )}
                   {installationId && (
@@ -573,7 +593,7 @@ export default function DeploymentMonitor({
                       <Group gap="xs">
                         <span>{t("monitor.ansibleOutput", "ANSIBLE PLAYBOOK OUTPUT")}</span>
                         <Badge color="gray" variant="light" size="xs">
-                          {filteredLines.length} / {outputLines.length} lines
+                          {t("monitor.linesCount", { filtered: filteredLines.length, total: outputLines.length, defaultValue: `${filteredLines.length} / ${outputLines.length} lines` })}
                         </Badge>
                       </Group>
                       <Group gap="xs">
@@ -647,7 +667,7 @@ export default function DeploymentMonitor({
                       leftSection={<IconChevronDown size={14} />}
                       onClick={scrollToBottom}
                     >
-                      {unreadCount > 0 ? `${unreadCount} new lines · ${t("monitor.jumpToLatest", "Jump to latest")}` : t("monitor.jumpToLatest", "Jump to latest")}
+                      {unreadCount > 0 ? t("monitor.newLinesJump", { count: unreadCount, defaultValue: `${unreadCount} new lines · Jump to latest` }) : t("monitor.jumpToLatest", "Jump to latest")}
                     </Button>
                   )}
                 </div>

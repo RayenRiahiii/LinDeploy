@@ -196,7 +196,7 @@ def revoke_celery_task(task_id):
             pass
 
 
-def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
+def normalize_host_overrides(hosts, host_overrides=None, system_type=None, default_cluster_name=None):
     overrides_by_host_id = {}
     default_role = (
         "server"
@@ -226,6 +226,7 @@ def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
             if system_type == InstallationTemplate.SystemType.K3S
             else ("openshift" if system_type == InstallationTemplate.SystemType.OPENSHIFT_SNO else "kubernetes")
         )
+        fallback_cluster = default_cluster_name or f"{system_prefix}-{node_name}"
         normalized_item = {
                 "host_id": host.id,
                 "host_name": host.name,
@@ -236,9 +237,9 @@ def normalize_host_overrides(hosts, host_overrides=None, system_type=None):
                 "node_name": node_name,
                 "cluster_name": normalize_cluster_name(
                     raw.get("cluster_name"),
-                    fallback=f"{system_prefix}-{node_name}",
+                    fallback=fallback_cluster,
                 ),
-                "cluster_name_explicit": bool(str(raw.get("cluster_name") or "").strip()),
+                "cluster_name_explicit": bool(str(raw.get("cluster_name") or default_cluster_name or "").strip()),
                 "node_role": (raw.get("node_role") or default_role).strip(),
                 "advertise_address": (raw.get("advertise_address") or host.ip_address).strip(),
                 "labels": raw.get("labels") or [],
@@ -958,16 +959,19 @@ def build_baseline_detection_script():
         "modules_configured=false; [ -f /etc/modules-load.d/k8s.conf ] && modules_configured=true; "
         "sysctl_configured=false; [ -f /etc/sysctl.d/k8s.conf ] && sysctl_configured=true; "
         "admin_conf_exists=false; [ -f /etc/kubernetes/admin.conf ] && admin_conf_exists=true; "
+        "k3s_installed=false; ([ -f /usr/local/bin/k3s ] || [ -f /etc/systemd/system/k3s.service ] || [ -f /etc/rancher/k3s/k3s.yaml ]) && k3s_installed=true; "
+        "k8s_installed=false; ([ -f /etc/kubernetes/admin.conf ] || [ -f /etc/kubernetes/manifests/kube-apiserver.yaml ] || [ -d /var/lib/etcd/member ]) && k8s_installed=true; "
         "printf 'BASELINE_FACTS containerd_installed=%s containerd_active=%s kubelet_installed=%s "
         "kubeadm_installed=%s kubectl_installed=%s swap_disabled=%s modules_configured=%s "
-        "sysctl_configured=%s admin_conf_exists=%s\n' "
+        "sysctl_configured=%s admin_conf_exists=%s k3s_installed=%s k8s_installed=%s\n' "
         "\"$containerd_installed\" \"$containerd_active\" \"$kubelet_installed\" \"$kubeadm_installed\" "
-        "\"$kubectl_installed\" \"$swap_disabled\" \"$modules_configured\" \"$sysctl_configured\" \"$admin_conf_exists\""
+        "\"$kubectl_installed\" \"$swap_disabled\" \"$modules_configured\" \"$sysctl_configured\" \"$admin_conf_exists\" "
+        "\"$k3s_installed\" \"$k8s_installed\""
     )
 
 
 def classify_baseline_facts(facts):
-    if facts.get("admin_conf_exists"):
+    if facts.get("admin_conf_exists") or facts.get("k8s_installed") or facts.get("k3s_installed"):
         return Host.BaselineState.INITIALIZED
 
     prepared_requirements = (
@@ -1693,6 +1697,7 @@ def execute_installation(installation_id, task=None):
             hosts,
             installation.host_overrides,
             installation.template.system_type,
+            default_cluster_name=installation.cluster_name,
         )
         overrides_by_host_id = {
             item["host_id"]: item for item in normalized_host_overrides

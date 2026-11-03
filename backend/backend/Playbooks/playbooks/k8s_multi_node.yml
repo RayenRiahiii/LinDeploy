@@ -41,16 +41,6 @@
       register: kubernetes_k3s_conflict_artifacts
       changed_when: false
 
-    - name: Refuse Kubernetes installation while K3s is present
-      fail:
-        msg: >-
-          Kubernetes cannot be installed on {{ inventory_hostname }} because
-          K3s installation artifacts are still present. Run the K3s cleanup
-          workflow for this target and retry. Detected artifacts:
-          {{ kubernetes_k3s_conflict_artifacts.stdout_lines | join(', ') }}.
-          No Kubernetes system changes were applied.
-      when: kubernetes_k3s_conflict_artifacts.stdout_lines | length > 0
-
     - name: Probe conflicting existing Kubernetes installation artifacts
       command:
         argv:
@@ -71,18 +61,19 @@
       changed_when: false
       when: k8s_fail_on_existing_cluster | default(true) | bool
 
-    - name: Refuse Kubernetes installation while Kubernetes is already present
+    - name: Refuse Kubernetes installation when conflicting platform is present
       fail:
         msg: >-
-          Kubernetes cannot be installed on {{ inventory_hostname }} because
-          an existing Kubernetes cluster is already present on this host. Run
-          the Kubernetes cleanup workflow on this target, verify that Kubernetes is
-          removed, and retry the installation. Detected artifacts:
-          {{ kubernetes_existing_conflict_artifacts.stdout_lines | join(', ') }}.
-          No Kubernetes system changes were applied.
-      when:
-        - k8s_fail_on_existing_cluster | default(true) | bool
-        - (kubernetes_existing_conflict_artifacts.stdout_lines | default([]) | length) > 0
+          {% if (kubernetes_k3s_conflict_artifacts.stdout_lines | default([]) | length > 0) and ((kubernetes_existing_conflict_artifacts.stdout_lines | default([]) | length) > 0) %}
+          Kubernetes cannot be installed on {{ inventory_hostname }} because K3s installation artifacts are still present and an existing Kubernetes cluster is already present on this host. Run the K3s cleanup workflow and the Kubernetes cleanup workflow for this target and retry. Detected K3s: {{ kubernetes_k3s_conflict_artifacts.stdout_lines | join(', ') }}. Detected Kubernetes: {{ kubernetes_existing_conflict_artifacts.stdout_lines | join(', ') }}. No Kubernetes system changes were applied.
+          {% elif kubernetes_k3s_conflict_artifacts.stdout_lines | default([]) | length > 0 %}
+          Kubernetes cannot be installed on {{ inventory_hostname }} because K3s installation artifacts are still present. Run the K3s cleanup workflow for this target and retry. Detected artifacts: {{ kubernetes_k3s_conflict_artifacts.stdout_lines | join(', ') }}. No Kubernetes system changes were applied.
+          {% else %}
+          Kubernetes cannot be installed on {{ inventory_hostname }} because an existing Kubernetes cluster is already present on this host. Run the Kubernetes cleanup workflow on this target, verify that Kubernetes is removed, and retry the installation. Detected artifacts: {{ kubernetes_existing_conflict_artifacts.stdout_lines | join(', ') }}. No Kubernetes system changes were applied.
+          {% endif %}
+      when: >-
+        ((kubernetes_k3s_conflict_artifacts.stdout_lines | default([]) | length) > 0) or
+        ((k8s_fail_on_existing_cluster | default(true) | bool) and ((kubernetes_existing_conflict_artifacts.stdout_lines | default([]) | length) > 0))
 
 - name: Prepare Kubernetes multi-node hosts
   hosts: selected_hosts

@@ -73,6 +73,32 @@
       {{ lindeploy_ownership_manifest_content.content | b64decode | from_json }}
   when: lindeploy_ownership_manifest_stat.stat.exists
 
+- name: Inspect active platform runtime on host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ lindeploy_ownership_runtime_indicators[lindeploy_ownership_platform] | default([]) }}"
+  register: lindeploy_ownership_runtime_probes
+  when:
+    - lindeploy_ownership_manifest_stat.stat.exists
+    - lindeploy_ownership_action == 'prepare'
+
+- name: Determine whether host is free of active platform runtime
+  ansible.builtin.set_fact:
+    lindeploy_ownership_target_is_clean: >-
+      {{
+        (
+          lindeploy_ownership_runtime_probes.results
+          | default([])
+          | selectattr('stat.exists', 'defined')
+          | selectattr('stat.exists')
+          | list
+          | length
+        ) == 0
+      }}
+  when:
+    - lindeploy_ownership_manifest_stat.stat.exists
+    - lindeploy_ownership_action == 'prepare'
+
 - name: Validate existing ownership identity
   ansible.builtin.assert:
     that:
@@ -82,18 +108,22 @@
       - >-
         lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
         or (lindeploy_ownership_existing.state | default('') == 'cleaned')
+        or (lindeploy_ownership_target_is_clean | default(false) | bool)
         or lindeploy_ownership_existing.target_id == (lindeploy_target_id | string)
       - >-
         lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
         or (lindeploy_ownership_existing.state | default('') == 'cleaned')
+        or (lindeploy_ownership_target_is_clean | default(false) | bool)
         or lindeploy_ownership_existing.cluster_id == (lindeploy_ownership_cluster_id | string)
       - >-
         lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
         or (lindeploy_ownership_existing.state | default('') == 'cleaned')
+        or (lindeploy_ownership_target_is_clean | default(false) | bool)
         or (lindeploy_ownership_existing.machine_id | default('') | trim | lower) == (lindeploy_ownership_machine_id | trim | lower)
       - >-
         lindeploy_ownership_action in ['validate_cleanup', 'finalize_cleanup']
         or (lindeploy_ownership_existing.state | default('') == 'cleaned')
+        or (lindeploy_ownership_target_is_clean | default(false) | bool)
         or (lindeploy_ownership_existing.system_uuid | default('') | trim | lower) == (lindeploy_ownership_system_uuid | trim | lower)
       - lindeploy_ownership_existing.managed_resources is sequence
     fail_msg: >-
