@@ -568,12 +568,39 @@ class InstallationTargetSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class InstallationTargetSummarySerializer(serializers.ModelSerializer):
+    host_name = serializers.CharField(source="host.name", read_only=True)
+    operator_issue = serializers.SerializerMethodField()
+
+    def get_operator_issue(self, obj):
+        return classify_installation_target_issue(obj)
+
+    class Meta:
+        model = InstallationTarget
+        fields = [
+            "id",
+            "installation",
+            "host",
+            "host_name",
+            "status",
+            "desired_role",
+            "is_bootstrap",
+            "join_status",
+            "node_name",
+            "cluster_name",
+            "return_code",
+            "operator_issue",
+            "created_at",
+            "updated_at",
+        ]
+
+
 class InstallationListSerializer(serializers.ModelSerializer):
     template_name = serializers.CharField(source="template.name", read_only=True)
     template_system_type = serializers.CharField(source="template.system_type", read_only=True)
     deployment_type = serializers.CharField(source="template.deployment_type", read_only=True)
     duration_seconds = serializers.FloatField(read_only=True)
-    targets = InstallationTargetSerializer(many=True, read_only=True)
+    targets = InstallationTargetSummarySerializer(many=True, read_only=True)
 
     class Meta:
         model = Installation

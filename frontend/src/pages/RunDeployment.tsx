@@ -1291,32 +1291,24 @@ export default function RunDeployment({
   }
 
   async function fetchCleanupTemplates() {
-    const cleanupEntries = await Promise.all(
-      installerOptions.map(async (installer) => {
-        const response = await fetch(`${BASE_URL}/api/templates/?system_type=${installer.id}`);
-        if (!response.ok) {
-          return null;
+    try {
+      const response = await fetch(`${BASE_URL}/api/templates/`);
+      if (!response.ok) {
+        return;
+      }
+      const allTemplates = await parseJsonResponse<Template[]>(response);
+      const bySystem: Partial<Record<InstallerId, CleanupTemplateMap>> = {};
+      for (const installer of installerOptions) {
+        const templatesForInstaller = allTemplates.filter((t) => t.system_type === installer.id);
+        const cleanupMap = getCleanupTemplatesForInstaller(templatesForInstaller);
+        if (Object.keys(cleanupMap).length > 0) {
+          bySystem[installer.id] = cleanupMap;
         }
-
-        const data = await parseJsonResponse<Template[]>(response);
-        const cleanupTemplatesForInstaller = getCleanupTemplatesForInstaller(data);
-
-        if (Object.keys(cleanupTemplatesForInstaller).length === 0) {
-          return null;
-        }
-
-        return [installer.id, cleanupTemplatesForInstaller] as const;
-      })
-    );
-
-    setCleanupTemplatesBySystem(
-      cleanupEntries.reduce<Partial<Record<InstallerId, CleanupTemplateMap>>>((acc, entry) => {
-        if (entry) {
-          acc[entry[0]] = entry[1];
-        }
-        return acc;
-      }, {})
-    );
+      }
+      setCleanupTemplatesBySystem(bySystem);
+    } catch {
+      // ignore template fetch errors
+    }
   }
 
   async function fetchDashboard() {
@@ -1436,12 +1428,18 @@ export default function RunDeployment({
 
   useEffect(() => {
     async function initializePage() {
-      const [, , , operationalData] = await Promise.all([
+      const [, , activeData] = await Promise.all([
         fetchHosts(),
-        fetchTemplates(selectedInstaller),
         fetchCleanupTemplates(),
-        refreshOperationalData(),
+        fetch(`${BASE_URL}/api/installations/active/`)
+          .then(async (r) => (r.ok ? parseJsonResponse<{ active: number | null; installation: InstallationDetailResponse | null }>(r) : { active: null, installation: null }))
+          .catch(() => ({ active: null, installation: null })),
+        fetchDashboard(),
       ]);
+
+      if (mode === "history" || mode === "full") {
+        void fetchInstallations();
+      }
 
       if (effectiveTargetInstallationId) {
         await resumeInstallationMonitoring(effectiveTargetInstallationId);
@@ -1469,14 +1467,8 @@ export default function RunDeployment({
         }
       }
 
-      if (!candidateToResume) {
-        const latestActiveInstallation = operationalData.installationsData.find(
-          (installation) => isInstallationActive(installation)
-        );
-
-        if (latestActiveInstallation) {
-          candidateToResume = latestActiveInstallation;
-        }
+      if (!candidateToResume && activeData.installation && isInstallationActive(activeData.installation)) {
+        candidateToResume = activeData.installation;
       }
 
       if (candidateToResume) {
@@ -1512,11 +1504,11 @@ export default function RunDeployment({
             return;
           }
         }
-        await refreshOperationalData();
+        await fetchDashboard();
       } catch {
         // ignore background poll errors
       }
-    }, 1500);
+    }, 2500);
 
     return () => {
       window.clearInterval(intervalId);

@@ -5,6 +5,7 @@ import time
 
 from django.conf import settings
 from django.db import IntegrityError
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -431,7 +432,7 @@ def installations_list(request):
             "cluster_config",
             "host_overrides",
         )
-        .order_by("-created_at")
+        .order_by("-id")
     )
     if limit_param and limit_param.lower() not in ("all", "none", "0", "-1"):
         try:
@@ -464,7 +465,7 @@ def active_installation(request):
             "cluster_config",
             "host_overrides",
         )
-        .order_by("-created_at")
+        .order_by("-id")
         .first()
     )
     if not active:
@@ -531,37 +532,53 @@ def installation_detail(request, id):
 
 @api_view(["GET"])
 def dashboard_summary(request):
-    installations = Installation.objects.all()
-    hosts = Host.objects.all()
-
-    latest_installation = installations.order_by("-created_at").first()
+    host_stats = Host.objects.aggregate(
+        total=Count("id"),
+        enabled=Count("id", filter=Q(enabled=True)),
+        control_plane=Count("id", filter=Q(node_role=Host.NodeRole.CONTROL_PLANE)),
+        worker=Count("id", filter=Q(node_role=Host.NodeRole.WORKER)),
+        unknown=Count("id", filter=Q(baseline_state=Host.BaselineState.UNKNOWN)),
+        fresh=Count("id", filter=Q(baseline_state=Host.BaselineState.FRESH)),
+        prepared=Count("id", filter=Q(baseline_state=Host.BaselineState.PREPARED)),
+        initialized=Count("id", filter=Q(baseline_state=Host.BaselineState.INITIALIZED)),
+    )
+    cred_stats = Credential.objects.aggregate(
+        total=Count("id"),
+        password=Count("id", filter=Q(auth_type=Credential.AuthType.PASSWORD)),
+        ssh_key=Count("id", filter=Q(auth_type=Credential.AuthType.SSH_KEY)),
+    )
+    inst_stats = Installation.objects.aggregate(
+        total=Count("id"),
+        success=Count("id", filter=Q(status=Installation.Status.SUCCESS)),
+        partial_success=Count("id", filter=Q(status=Installation.Status.PARTIAL_SUCCESS)),
+        failed=Count("id", filter=Q(status=Installation.Status.FAILED)),
+        cancelled=Count("id", filter=Q(status=Installation.Status.CANCELLED)),
+        running=Count("id", filter=Q(status=Installation.Status.RUNNING)),
+        pending=Count("id", filter=Q(status=Installation.Status.PENDING)),
+    )
+    latest_installation = (
+        Installation.objects.select_related("template")
+        .prefetch_related("targets__host")
+        .defer(
+            "stdout",
+            "stderr",
+            "inventory_content",
+            "command",
+            "task_profile",
+            "timings",
+            "bottleneck_hints",
+            "cluster_config",
+            "host_overrides",
+        )
+        .order_by("-id")
+        .first()
+    )
 
     return Response(
         {
-            "hosts": {
-                "total": hosts.count(),
-                "enabled": hosts.filter(enabled=True).count(),
-                "control_plane": hosts.filter(node_role=Host.NodeRole.CONTROL_PLANE).count(),
-                "worker": hosts.filter(node_role=Host.NodeRole.WORKER).count(),
-                "unknown": hosts.filter(baseline_state=Host.BaselineState.UNKNOWN).count(),
-                "fresh": hosts.filter(baseline_state=Host.BaselineState.FRESH).count(),
-                "prepared": hosts.filter(baseline_state=Host.BaselineState.PREPARED).count(),
-                "initialized": hosts.filter(baseline_state=Host.BaselineState.INITIALIZED).count(),
-            },
-            "credentials": {
-                "total": Credential.objects.count(),
-                "password": Credential.objects.filter(auth_type=Credential.AuthType.PASSWORD).count(),
-                "ssh_key": Credential.objects.filter(auth_type=Credential.AuthType.SSH_KEY).count(),
-            },
-            "installations": {
-                "total": installations.count(),
-                "success": installations.filter(status=Installation.Status.SUCCESS).count(),
-                "partial_success": installations.filter(status=Installation.Status.PARTIAL_SUCCESS).count(),
-                "failed": installations.filter(status=Installation.Status.FAILED).count(),
-                "cancelled": installations.filter(status=Installation.Status.CANCELLED).count(),
-                "running": installations.filter(status=Installation.Status.RUNNING).count(),
-                "pending": installations.filter(status=Installation.Status.PENDING).count(),
-            },
+            "hosts": host_stats,
+            "credentials": cred_stats,
+            "installations": inst_stats,
             "latest_installation": InstallationListSerializer(latest_installation).data
             if latest_installation
             else None,
